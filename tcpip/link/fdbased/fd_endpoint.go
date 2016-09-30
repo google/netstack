@@ -1,3 +1,7 @@
+// Copyright 2016 The Netstack Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
 // Package fdbased provides the implemention of data-link layer endpoints
 // backed by boundary-preserving file descriptors (e.g., TUN devices,
 // seqpacket/datagram sockets).

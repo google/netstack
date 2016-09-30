@@ -1,3 +1,7 @@
+// Copyright 2016 The Netstack Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
 // Package waiter provides the implementation of a wait queue, where waiters can
 // be enqueued to be notified when an event of interest happens.
 //

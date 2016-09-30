@@ -1,3 +1,7 @@
+// Copyright 2016 The Netstack Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
 // This sample creates a stack with TCP and IPv4 protocols on top of a TUN
 // device, and listens on a port. Data received by the server in the accepted
 // connections is echoed back to the clients.

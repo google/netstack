@@ -1,3 +1,7 @@
+// Copyright 2016 The Netstack Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
 // Package seqnum defines the types and methods for TCP sequence numbers such
 // that they fit in 32-bit words and work properly when overflows occur.
 package seqnum

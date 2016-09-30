@@ -1,3 +1,7 @@
+// Copyright 2016 The Netstack Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
 // Package ipv4 contains the implementation of the ipv4 network protocol. To use
 // it in the networking stack, this package must be added to the project, and
 // activated on the stack by passing ipv4.ProtocolName (or "ipv4") as one of the

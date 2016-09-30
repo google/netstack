@@ -1,3 +1,7 @@
+// Copyright 2016 The Netstack Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
 // Package udp contains the implementation of the UDP transport protocol. To use
 // it in the networking stack, this package must be added to the project, and
 // activated on the stack by passing udp.ProtocolName (or "udp") as one of the
