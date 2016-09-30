@@ -1,0 +1,14 @@
+# This is the official list of people who can contribute
+# (and typically have contributed) code to the Netstack repository.
+# The AUTHORS file lists the copyright holders; this file
+# lists people.  For example, Google employees are listed here
+# but not in AUTHORS, because Google holds the copyright.
+
+Adin Scannell <ascannell@google.com>
+Ben Karas <benkaras@google.com>
+David Crawshaw <crawshaw@golang.org>
+Ian Gudger <igudger@google.com>
+Nicolas Lacasse <nlacasse@google.com>
+Sebastiano Spicuglia <spicuglia@google.com>
+Wedson Almeida Filho <wedsonaf@google.com>
+Zhaozhong Ni <nzz@google.com>
