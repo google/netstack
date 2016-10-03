@@ -1,6 +1,9 @@
 Want to contribute? Great! First, read this page.
 
 ### Before you contribute
+First, contact us! Tell us what you are working on, we will figure out how
+to set up a contribution system.
+
 Before we can use your code, you must sign the
 [Google Individual Contributor License Agreement]
 (https://cla.developers.google.com/about/google-individual)
@@ -17,8 +20,9 @@ possibly guide you. Coordinating up front makes it much easier to avoid
 frustration later on.
 
 ### Code reviews
-All submissions, including submissions by project members, require review. We
-use Github pull requests for this purpose.
+All submissions, including submissions by project members, require review.
+We have not worked out how to handle this yet, please contact the authors
+before sending any contributions.
 
 ### The small print
 Contributions made by corporations are covered by a different agreement than
