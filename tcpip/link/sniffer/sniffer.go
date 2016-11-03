@@ -12,12 +12,12 @@ package sniffer
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/stack"
+	"log"
 )
 
 type endpoint struct {

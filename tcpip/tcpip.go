@@ -7,7 +7,7 @@
 // data over the network stack.
 //
 // The starting point is the creation and configuration of a stack. A stack can
-// be created by calling the New() function of the tcpip/stack package;
+// be created by calling the New() function of the tcpip/stack/stack package;
 // configuring a stack involves creating NICs (via calls to Stack.CreateNIC()),
 // adding network addresses (via calls to Stack.AddAddress()), and
 // setting a route table (via a call to Stack.SetRouteTable()).
