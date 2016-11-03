@@ -5,9 +5,9 @@
 package stack
 
 import (
+	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
-	"github.com/google/netstack/tcpip"
 )
 
 // Route represents a route through the networking stack to a given destination.

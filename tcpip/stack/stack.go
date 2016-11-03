@@ -24,7 +24,7 @@ import (
 
 type transportProtocolState struct {
 	proto          TransportProtocol
-	defaultHandler func(*Route, TransportEndpointID, buffer.View) bool
+	defaultHandler func(*Route, TransportEndpointID, *buffer.VectorisedView) bool
 }
 
 // Stack is a networking stack, with all supported protocols, NICs, and route
@@ -91,7 +91,7 @@ func New(network []string, transport []string) tcpip.Stack {
 //
 // It must be called only during initialization of the stack. Changing it as the
 // stack is operating is not supported.
-func (s *Stack) SetTransportProtocolHandler(p tcpip.TransportProtocolNumber, h func(*Route, TransportEndpointID, buffer.View) bool) {
+func (s *Stack) SetTransportProtocolHandler(p tcpip.TransportProtocolNumber, h func(*Route, TransportEndpointID, *buffer.VectorisedView) bool) {
 	state := s.transportProtocols[p]
 	if state != nil {
 		state.defaultHandler = h
@@ -176,6 +176,19 @@ func (s *Stack) EnableNIC(id tcpip.NICID) error {
 	return nil
 }
 
+// NICSubnets returns a map of NICIDs to their associated subnets.
+func (s *Stack) NICSubnets() map[tcpip.NICID][]tcpip.Subnet {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	nics := map[tcpip.NICID][]tcpip.Subnet{}
+
+	for id, nic := range s.nics {
+		nics[id] = append(nics[id], nic.Subnets()...)
+	}
+	return nics
+}
+
 // AddAddress adds a new network-layer address to the specified NIC.
 func (s *Stack) AddAddress(id tcpip.NICID, protocol tcpip.NetworkProtocolNumber, addr tcpip.Address) error {
 	s.mu.RLock()
@@ -187,6 +200,20 @@ func (s *Stack) AddAddress(id tcpip.NICID, protocol tcpip.NetworkProtocolNumber,
 	}
 
 	return nic.AddAddress(protocol, addr)
+}
+
+// AddSubnet adds a subnet range to the specified NIC.
+func (s *Stack) AddSubnet(id tcpip.NICID, protocol tcpip.NetworkProtocolNumber, subnet tcpip.Subnet) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	nic := s.nics[id]
+	if nic == nil {
+		return tcpip.ErrUnknownNICID
+	}
+
+	nic.AddSubnet(protocol, subnet)
+	return nil
 }
 
 // RemoveAddress removes an existing network-layer address from the specified
@@ -234,6 +261,13 @@ func (s *Stack) FindRoute(id tcpip.NICID, localAddr, remoteAddr tcpip.Address, n
 	}
 
 	return Route{}, tcpip.ErrNoRoute
+}
+
+// CheckNetworkProtocol checks if a given network protocol is enabled in the
+// stack.
+func (s *Stack) CheckNetworkProtocol(protocol tcpip.NetworkProtocolNumber) bool {
+	_, ok := s.networkProtocols[protocol]
+	return ok
 }
 
 // CheckLocalAddress determines if the given local address exists, and if it
@@ -289,11 +323,11 @@ func (s *Stack) SetPromiscuousMode(nicID tcpip.NICID, enable bool) error {
 
 // RegisterTransportEndpoint registers the given endpoint with the stack
 // transport dispatcher. Received packets that match the provided id will be
-// delivered to the given endpoint; specifying a nic is optinal, but
+// delivered to the given endpoint; specifying a nic is optional, but
 // nic-specific IDs have precedence over global ones.
-func (s *Stack) RegisterTransportEndpoint(nicID tcpip.NICID, protocol tcpip.TransportProtocolNumber, id TransportEndpointID, ep TransportEndpoint) error {
+func (s *Stack) RegisterTransportEndpoint(nicID tcpip.NICID, netProtos []tcpip.NetworkProtocolNumber, protocol tcpip.TransportProtocolNumber, id TransportEndpointID, ep TransportEndpoint) error {
 	if nicID == 0 {
-		return s.demux.registerEndpoint(protocol, id, ep)
+		return s.demux.registerEndpoint(netProtos, protocol, id, ep)
 	}
 
 	s.mu.RLock()
@@ -304,14 +338,14 @@ func (s *Stack) RegisterTransportEndpoint(nicID tcpip.NICID, protocol tcpip.Tran
 		return tcpip.ErrUnknownNICID
 	}
 
-	return nic.demux.registerEndpoint(protocol, id, ep)
+	return nic.demux.registerEndpoint(netProtos, protocol, id, ep)
 }
 
 // UnregisterTransportEndpoint removes the endpoint with the given id from the
 // stack transport dispatcher.
-func (s *Stack) UnregisterTransportEndpoint(nicID tcpip.NICID, protocol tcpip.TransportProtocolNumber, id TransportEndpointID) {
+func (s *Stack) UnregisterTransportEndpoint(nicID tcpip.NICID, netProtos []tcpip.NetworkProtocolNumber, protocol tcpip.TransportProtocolNumber, id TransportEndpointID) {
 	if nicID == 0 {
-		s.demux.unregisterEndpoint(protocol, id)
+		s.demux.unregisterEndpoint(netProtos, protocol, id)
 		return
 	}
 
@@ -320,6 +354,6 @@ func (s *Stack) UnregisterTransportEndpoint(nicID tcpip.NICID, protocol tcpip.Tr
 
 	nic := s.nics[nicID]
 	if nic != nil {
-		nic.demux.unregisterEndpoint(protocol, id)
+		nic.demux.unregisterEndpoint(netProtos, protocol, id)
 	}
 }

@@ -19,7 +19,10 @@ import (
 type udpPacket struct {
 	udpPacketEntry
 	senderAddress tcpip.FullAddress
-	view          buffer.View
+	data          buffer.VectorisedView
+	// views is used as buffer for data when its length is large
+	// enough to store a VectorisedView.
+	views [8]buffer.View
 }
 
 type endpointState int
@@ -63,6 +66,15 @@ type endpoint struct {
 	regNICID   tcpip.NICID
 	route      stack.Route
 	dstPort    uint16
+	v6only     bool
+
+	// effectiveNetProtos contains the network protocols actually in use. In
+	// most cases it will only contain "netProto", but in cases like IPv6
+	// endpoints with v6only set to false, this could include multiple
+	// protocols (e.g., IPv6 and IPv4) or a single different protocol (e.g.,
+	// IPv4 when IPv6 endpoint is bound or connected to an IPv4 mapped
+	// address).
+	effectiveNetProtos []tcpip.NetworkProtocolNumber
 }
 
 func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waiterQueue *waiter.Queue) *endpoint {
@@ -71,6 +83,7 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 		stack:         stack,
 		netProto:      netProto,
 		waiterQueue:   waiterQueue,
+		v6only:        true,
 		rcvBufSizeMax: 32 * 1024,
 		sndBufSize:    32 * 1024,
 	}
@@ -82,7 +95,7 @@ func NewConnectedEndpoint(stack *stack.Stack, r *stack.Route, id stack.Transport
 	ep := newEndpoint(stack, r.NetProto, waiterQueue)
 
 	// Register new endpoint so that packets are routed to it.
-	if err := stack.RegisterTransportEndpoint(r.NICID(), ProtocolNumber, id, ep); err != nil {
+	if err := stack.RegisterTransportEndpoint(r.NICID(), []tcpip.NetworkProtocolNumber{r.NetProto}, ProtocolNumber, id, ep); err != nil {
 		ep.Close()
 		return nil, err
 	}
@@ -105,7 +118,7 @@ func (e *endpoint) Close() {
 
 	switch e.state {
 	case stateBound, stateConnected:
-		e.stack.UnregisterTransportEndpoint(e.regNICID, ProtocolNumber, e.id)
+		e.stack.UnregisterTransportEndpoint(e.regNICID, e.effectiveNetProtos, ProtocolNumber, e.id)
 	}
 
 	// Close the receive list and drain it.
@@ -140,7 +153,7 @@ func (e *endpoint) Read(addr *tcpip.FullAddress) (buffer.View, error) {
 
 	p := e.rcvList.Front()
 	e.rcvList.Remove(p)
-	e.rcvBufSize -= len(p.view)
+	e.rcvBufSize -= p.data.Size()
 
 	e.rcvMu.Unlock()
 
@@ -148,7 +161,7 @@ func (e *endpoint) Read(addr *tcpip.FullAddress) (buffer.View, error) {
 		*addr = p.senderAddress
 	}
 
-	return p.view, nil
+	return p.data.ToView(), nil
 }
 
 // RecvMsg implements tcpip.RecvMsg.
@@ -229,8 +242,15 @@ func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, error) 
 			nicid = e.bindNICID
 		}
 
+		toCopy := *to
+		to = &toCopy
+		netProto, err := e.checkV4Mapped(to, true)
+		if err != nil {
+			return 0, err
+		}
+
 		// Find the enpoint.
-		r, err := e.stack.FindRoute(nicid, e.bindAddr, to.Addr, e.netProto)
+		r, err := e.stack.FindRoute(nicid, e.bindAddr, to.Addr, netProto)
 		if err != nil {
 			return 0, err
 		}
@@ -260,8 +280,25 @@ func (e *endpoint) Peek(io.Writer) (uintptr, error) {
 }
 
 // SetSockOpt sets a socket option. Currently not supported.
-func (*endpoint) SetSockOpt(interface{}) error {
+func (e *endpoint) SetSockOpt(opt interface{}) error {
 	// TODO: Actually implement this.
+	switch v := opt.(type) {
+	case tcpip.V6OnlyOption:
+		// We only recognize this option on v6 endpoints.
+		if e.netProto != header.IPv6ProtocolNumber {
+			return tcpip.ErrInvalidEndpointState
+		}
+
+		e.mu.Lock()
+		defer e.mu.Unlock()
+
+		// We only allow this to be set when we're in the initial state.
+		if e.state != stateInitial {
+			return tcpip.ErrInvalidEndpointState
+		}
+
+		e.v6only = v != 0
+	}
 	return nil
 }
 
@@ -281,6 +318,22 @@ func (e *endpoint) GetSockOpt(opt interface{}) error {
 		e.rcvMu.Lock()
 		*o = tcpip.ReceiveBufferSizeOption(e.rcvBufSizeMax)
 		e.rcvMu.Unlock()
+		return nil
+
+	case *tcpip.V6OnlyOption:
+		// We only recognize this option on v6 endpoints.
+		if e.netProto != header.IPv6ProtocolNumber {
+			return tcpip.ErrInvalidEndpointState
+		}
+
+		e.mu.Lock()
+		v := e.v6only
+		e.mu.Unlock()
+
+		*o = 0
+		if v {
+			*o = 1
+		}
 		return nil
 	}
 
@@ -314,6 +367,30 @@ func sendUDP(r *stack.Route, data buffer.View, localPort, remotePort uint16) err
 	return r.WritePacket(&hdr, data, ProtocolNumber)
 }
 
+func (e *endpoint) checkV4Mapped(addr *tcpip.FullAddress, allowMismatch bool) (tcpip.NetworkProtocolNumber, error) {
+	netProto := e.netProto
+	if header.IsV4MappedAddress(addr.Addr) {
+		// Fail if using a v4 mapped address on a v6only endpoint.
+		if e.v6only {
+			return 0, tcpip.ErrNoRoute
+		}
+
+		netProto = header.IPv4ProtocolNumber
+		addr.Addr = addr.Addr[header.IPv6AddressSize-header.IPv4AddressSize:]
+		if addr.Addr == "\x00\x00\x00\x00" {
+			addr.Addr = ""
+		}
+	}
+
+	// Fail if we're bound to an address length different from the one we're
+	// checking.
+	if l := len(e.id.LocalAddress); !allowMismatch && l != 0 && l != len(addr.Addr) {
+		return 0, tcpip.ErrInvalidEndpointState
+	}
+
+	return netProto, nil
+}
+
 // Connect connects the endpoint to its peer. Specifying a NIC is optional.
 func (e *endpoint) Connect(addr tcpip.FullAddress) error {
 	if addr.Port == 0 {
@@ -343,8 +420,13 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) error {
 		return tcpip.ErrInvalidEndpointState
 	}
 
+	netProto, err := e.checkV4Mapped(&addr, false)
+	if err != nil {
+		return err
+	}
+
 	// Find a route to the desired destination.
-	r, err := e.stack.FindRoute(nicid, e.bindAddr, addr.Addr, e.netProto)
+	r, err := e.stack.FindRoute(nicid, e.bindAddr, addr.Addr, netProto)
 	if err != nil {
 		return err
 	}
@@ -357,20 +439,32 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) error {
 		RemoteAddress: addr.Addr,
 	}
 
-	id, err = e.registerWithStack(nicid, id)
+	// Even if we're connected, this endpoint can still be used to send
+	// packets on a different network protocol, so we register both even if
+	// v6only is set to false and this is an ipv6 endpoint.
+	netProtos := []tcpip.NetworkProtocolNumber{netProto}
+	if e.netProto == header.IPv6ProtocolNumber && !e.v6only {
+		netProtos = []tcpip.NetworkProtocolNumber{
+			header.IPv4ProtocolNumber,
+			header.IPv6ProtocolNumber,
+		}
+	}
+
+	id, err = e.registerWithStack(nicid, netProtos, id)
 	if err != nil {
 		return err
 	}
 
 	// Remove the old registration.
 	if e.id.LocalPort != 0 {
-		e.stack.UnregisterTransportEndpoint(e.regNICID, ProtocolNumber, e.id)
+		e.stack.UnregisterTransportEndpoint(e.regNICID, e.effectiveNetProtos, ProtocolNumber, e.id)
 	}
 
 	e.id = id
 	e.route = r.Clone()
 	e.dstPort = addr.Port
 	e.regNICID = nicid
+	e.effectiveNetProtos = netProtos
 
 	e.state = stateConnected
 
@@ -420,18 +514,18 @@ func (*endpoint) Accept() (tcpip.Endpoint, *waiter.Queue, error) {
 	return nil, nil, tcpip.ErrNotSupported
 }
 
-func (e *endpoint) registerWithStack(nicid tcpip.NICID, id stack.TransportEndpointID) (stack.TransportEndpointID, error) {
+func (e *endpoint) registerWithStack(nicid tcpip.NICID, netProtos []tcpip.NetworkProtocolNumber, id stack.TransportEndpointID) (stack.TransportEndpointID, error) {
 	if id.LocalPort != 0 {
 		// The endpoint already has a local port, just attempt to
 		// register it.
-		err := e.stack.RegisterTransportEndpoint(nicid, ProtocolNumber, id, e)
+		err := e.stack.RegisterTransportEndpoint(nicid, netProtos, ProtocolNumber, id, e)
 		return id, err
 	}
 
 	// We need to find a port for the endpoint.
 	_, err := e.stack.PickEphemeralPort(func(p uint16) (bool, error) {
 		id.LocalPort = p
-		err := e.stack.RegisterTransportEndpoint(nicid, ProtocolNumber, id, e)
+		err := e.stack.RegisterTransportEndpoint(nicid, netProtos, ProtocolNumber, id, e)
 		switch err {
 		case nil:
 			return true, nil
@@ -452,6 +546,22 @@ func (e *endpoint) bindLocked(addr tcpip.FullAddress, commit func() error) error
 		return tcpip.ErrInvalidEndpointState
 	}
 
+	netProto, err := e.checkV4Mapped(&addr, false)
+	if err != nil {
+		return err
+	}
+
+	// Expand netProtos to include v4 and v6 if the caller is binding to a
+	// wildcard (empty) address, and this is an IPv6 endpoint with v6only
+	// set to false.
+	netProtos := []tcpip.NetworkProtocolNumber{netProto}
+	if netProto == header.IPv6ProtocolNumber && !e.v6only && addr.Addr == "" {
+		netProtos = []tcpip.NetworkProtocolNumber{
+			header.IPv6ProtocolNumber,
+			header.IPv4ProtocolNumber,
+		}
+	}
+
 	if len(addr.Addr) != 0 {
 		// A local address was specified, verify that it's valid.
 		if e.stack.CheckLocalAddress(addr.NIC, addr.Addr) == 0 {
@@ -463,20 +573,21 @@ func (e *endpoint) bindLocked(addr tcpip.FullAddress, commit func() error) error
 		LocalPort:    addr.Port,
 		LocalAddress: addr.Addr,
 	}
-	id, err := e.registerWithStack(addr.NIC, id)
+	id, err = e.registerWithStack(addr.NIC, netProtos, id)
 	if err != nil {
 		return err
 	}
 	if commit != nil {
 		if err := commit(); err != nil {
 			// Unregister, the commit failed.
-			e.stack.UnregisterTransportEndpoint(addr.NIC, ProtocolNumber, id)
+			e.stack.UnregisterTransportEndpoint(addr.NIC, netProtos, ProtocolNumber, id)
 			return err
 		}
 	}
 
 	e.id = id
 	e.regNICID = addr.NIC
+	e.effectiveNetProtos = netProtos
 
 	// Mark endpoint as bound.
 	e.state = stateBound
@@ -553,15 +664,15 @@ func (e *endpoint) Readiness(mask waiter.EventMask) waiter.EventMask {
 
 // HandlePacket is called by the stack when new packets arrive to this transport
 // endpoint.
-func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, v buffer.View) {
+func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv *buffer.VectorisedView) {
 	// Get the header then trim it from the view.
-	hdr := header.UDP(v)
-	if int(hdr.Length()) > len(v) {
+	hdr := header.UDP(vv.First())
+	if int(hdr.Length()) > vv.Size() {
 		// Malformed packet.
 		return
 	}
 
-	v.TrimFront(header.UDPMinimumSize)
+	vv.TrimFront(header.UDPMinimumSize)
 
 	e.rcvMu.Lock()
 
@@ -574,15 +685,16 @@ func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, v 
 	wasEmpty := e.rcvBufSize == 0
 
 	// Push new packet into receive list and increment the buffer size.
-	e.rcvList.PushBack(&udpPacket{
-		view: v,
+	pkt := &udpPacket{
 		senderAddress: tcpip.FullAddress{
 			NIC:  r.NICID(),
 			Addr: id.RemoteAddress,
 			Port: hdr.SourcePort(),
 		},
-	})
-	e.rcvBufSize += len(v)
+	}
+	pkt.data = vv.Clone(pkt.views[:])
+	e.rcvList.PushBack(pkt)
+	e.rcvBufSize += vv.Size()
 
 	e.rcvMu.Unlock()
 

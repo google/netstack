@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
+	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/seqnum"
 	"github.com/google/netstack/tcpip/stack"
 	"github.com/google/netstack/waiter"
@@ -72,6 +73,15 @@ type endpoint struct {
 	isRegistered   bool
 	boundNICID     tcpip.NICID
 	route          stack.Route
+	v6only         bool
+
+	// effectiveNetProtos contains the network protocols actually in use. In
+	// most cases it will only contain "netProto", but in cases like IPv6
+	// endpoints with v6only set to false, this could include multiple
+	// protocols (e.g., IPv6 and IPv4) or a single different protocol (e.g.,
+	// IPv4 when IPv6 endpoint is bound or connected to an IPv4 mapped
+	// address).
+	effectiveNetProtos []tcpip.NetworkProtocolNumber
 
 	// hardError is meaningful only when state is stateError, it stores the
 	// error to be returned when read/write syscalls are called and the
@@ -134,6 +144,7 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 		stack:       stack,
 		netProto:    netProto,
 		waiterQueue: waiterQueue,
+		v6only:      true,
 		segmentChan: make(chan *segment, 10),
 		rcvBufSize:  208 * 1024,
 		sndBufSize:  208 * 1024,
@@ -258,11 +269,11 @@ func (e *endpoint) cleanup() {
 	}
 
 	if e.isPortReserved {
-		e.stack.ReleasePort(e.netProto, ProtocolNumber, e.id.LocalPort)
+		e.stack.ReleasePort(e.effectiveNetProtos, ProtocolNumber, e.id.LocalPort)
 	}
 
 	if e.isRegistered {
-		e.stack.UnregisterTransportEndpoint(e.boundNICID, ProtocolNumber, e.id)
+		e.stack.UnregisterTransportEndpoint(e.boundNICID, e.effectiveNetProtos, ProtocolNumber, e.id)
 	}
 
 	e.route.Release()
@@ -296,15 +307,20 @@ func (e *endpoint) Read(*tcpip.FullAddress) (buffer.View, error) {
 	}
 
 	s := e.rcvList.Front()
-	v := s.data
+	views := s.data.Views()
+	v := views[s.viewToDeliver]
+	s.viewToDeliver++
 
-	e.rcvList.Remove(s)
+	if s.viewToDeliver >= len(views) {
+		e.rcvList.Remove(s)
+		s.decRef()
+	}
+
 	wasZero := e.rcvBufUsed >= e.rcvBufSize
-	e.rcvBufUsed -= len(s.data)
+	e.rcvBufUsed -= len(v)
 	if wasZero && e.rcvBufUsed < e.rcvBufSize {
 		e.notifyProtocolGoroutine(notifyNonZeroReceiveWindow)
 	}
-	s.decRef()
 
 	return v, nil
 }
@@ -334,7 +350,9 @@ func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, error) 
 		}
 	}
 
-	s := newSegment(&e.route, e.id, v)
+	var views [1]buffer.View
+	vv := v.ToVectorisedView(views)
+	s := newSegment(&e.route, e.id, &vv)
 
 	e.sndBufMu.Lock()
 
@@ -410,7 +428,10 @@ func (e *endpoint) Peek(w io.Writer) (uintptr, error) {
 	var num uintptr
 
 	for s := e.rcvList.Front(); s != nil; s = s.Next() {
-		n, err := w.Write(s.data)
+		if len(s.data.Views()) > 1 {
+			panic("send path does not support views with multiple buffers")
+		}
+		n, err := w.Write(s.data.First())
 		num += uintptr(n)
 		if err != nil {
 			return num, err
@@ -422,6 +443,7 @@ func (e *endpoint) Peek(w io.Writer) (uintptr, error) {
 
 // SetSockOpt sets a socket option. Currently not supported.
 func (e *endpoint) SetSockOpt(opt interface{}) error {
+	// TODO: Actually implement this.
 	switch v := opt.(type) {
 	case tcpip.NoDelayOption:
 		e.mu.Lock()
@@ -448,6 +470,22 @@ func (e *endpoint) SetSockOpt(opt interface{}) error {
 
 		e.notifyProtocolGoroutine(mask)
 		return nil
+
+	case tcpip.V6OnlyOption:
+		// We only recognize this option on v6 endpoints.
+		if e.netProto != header.IPv6ProtocolNumber {
+			return tcpip.ErrInvalidEndpointState
+		}
+
+		e.mu.Lock()
+		defer e.mu.Unlock()
+
+		// We only allow this to be set when we're in the initial state.
+		if e.state != stateInitial {
+			return tcpip.ErrInvalidEndpointState
+		}
+
+		e.v6only = v != 0
 	}
 
 	return nil
@@ -521,15 +559,60 @@ func (e *endpoint) GetSockOpt(opt interface{}) error {
 			*o = 1
 		}
 		return nil
+
+	case *tcpip.V6OnlyOption:
+		// We only recognize this option on v6 endpoints.
+		if e.netProto != header.IPv6ProtocolNumber {
+			return tcpip.ErrInvalidEndpointState
+		}
+
+		e.mu.Lock()
+		v := e.v6only
+		e.mu.Unlock()
+
+		*o = 0
+		if v {
+			*o = 1
+		}
+		return nil
 	}
 
 	return tcpip.ErrInvalidEndpointState
+}
+
+func (e *endpoint) checkV4Mapped(addr *tcpip.FullAddress) (tcpip.NetworkProtocolNumber, error) {
+	netProto := e.netProto
+	if header.IsV4MappedAddress(addr.Addr) {
+		// Fail if using a v4 mapped address on a v6only endpoint.
+		if e.v6only {
+			return 0, tcpip.ErrNoRoute
+		}
+
+		netProto = header.IPv4ProtocolNumber
+		addr.Addr = addr.Addr[header.IPv6AddressSize-header.IPv4AddressSize:]
+		if addr.Addr == "\x00\x00\x00\x00" {
+			addr.Addr = ""
+		}
+	}
+
+	// Fail if we're bound to an address length different from the one we're
+	// checking.
+	if l := len(e.id.LocalAddress); l != 0 && l != len(addr.Addr) {
+		return 0, tcpip.ErrInvalidEndpointState
+	}
+
+	return netProto, nil
 }
 
 // Connect connects the endpoint to its peer.
 func (e *endpoint) Connect(addr tcpip.FullAddress) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	netProto, err := e.checkV4Mapped(&addr)
+	if err != nil {
+		return err
+	}
 
 	nicid := addr.NIC
 	switch e.state {
@@ -564,19 +647,20 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) error {
 	}
 
 	// Find a route to the desired destination.
-	r, err := e.stack.FindRoute(nicid, e.id.LocalAddress, addr.Addr, e.netProto)
+	r, err := e.stack.FindRoute(nicid, e.id.LocalAddress, addr.Addr, netProto)
 	if err != nil {
 		return err
 	}
 	defer r.Release()
 
+	netProtos := []tcpip.NetworkProtocolNumber{netProto}
 	e.id.LocalAddress = r.LocalAddress
 	e.id.RemoteAddress = addr.Addr
 	e.id.RemotePort = addr.Port
 
 	if e.id.LocalPort != 0 {
 		// The endpoint is bound to a port, attempt to register it.
-		err := e.stack.RegisterTransportEndpoint(nicid, ProtocolNumber, e.id, e)
+		err := e.stack.RegisterTransportEndpoint(nicid, netProtos, ProtocolNumber, e.id, e)
 		if err != nil {
 			return err
 		}
@@ -585,7 +669,7 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) error {
 		// one.
 		_, err := e.stack.PickEphemeralPort(func(p uint16) (bool, error) {
 			e.id.LocalPort = p
-			err := e.stack.RegisterTransportEndpoint(nicid, ProtocolNumber, e.id, e)
+			err := e.stack.RegisterTransportEndpoint(nicid, netProtos, ProtocolNumber, e.id, e)
 			switch err {
 			case nil:
 				return true, nil
@@ -600,10 +684,19 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) error {
 		}
 	}
 
+	// Remove the port reservation. This can happen when Bind is called
+	// before Connect: in such a case we don't want to hold on to
+	// reservations anymore.
+	if e.isPortReserved {
+		e.stack.ReleasePort(e.effectiveNetProtos, ProtocolNumber, e.id.LocalPort)
+		e.isPortReserved = false
+	}
+
 	e.isRegistered = true
 	e.state = stateConnecting
 	e.route = r.Clone()
 	e.boundNICID = nicid
+	e.effectiveNetProtos = netProtos
 	e.workerRunning = true
 
 	go e.protocolMainLoop(false)
@@ -660,7 +753,7 @@ func (e *endpoint) Listen(backlog int) error {
 	}
 
 	// Register the endpoint.
-	if err := e.stack.RegisterTransportEndpoint(e.boundNICID, ProtocolNumber, e.id, e); err != nil {
+	if err := e.stack.RegisterTransportEndpoint(e.boundNICID, e.effectiveNetProtos, ProtocolNumber, e.id, e); err != nil {
 		return err
 	}
 
@@ -720,20 +813,38 @@ func (e *endpoint) Bind(addr tcpip.FullAddress, commit func() error) (retErr err
 		return tcpip.ErrAlreadyBound
 	}
 
+	netProto, err := e.checkV4Mapped(&addr)
+	if err != nil {
+		return err
+	}
+
+	// Expand netProtos to include v4 and v6 if the caller is binding to a
+	// wildcard (empty) address, and this is an IPv6 endpoint with v6only
+	// set to false.
+	netProtos := []tcpip.NetworkProtocolNumber{netProto}
+	if netProto == header.IPv6ProtocolNumber && !e.v6only && addr.Addr == "" {
+		netProtos = []tcpip.NetworkProtocolNumber{
+			header.IPv6ProtocolNumber,
+			header.IPv4ProtocolNumber,
+		}
+	}
+
 	// Reserve the port.
-	port, err := e.stack.ReservePort(e.netProto, ProtocolNumber, addr.Port)
+	port, err := e.stack.ReservePort(netProtos, ProtocolNumber, addr.Port)
 	if err != nil {
 		return err
 	}
 
 	e.isPortReserved = true
+	e.effectiveNetProtos = netProtos
 	e.id.LocalPort = port
 
 	// Any failures beyond this point must remove the port registration.
 	defer func() {
 		if retErr != nil {
-			e.stack.ReleasePort(e.netProto, ProtocolNumber, port)
+			e.stack.ReleasePort(netProtos, ProtocolNumber, port)
 			e.isPortReserved = false
+			e.effectiveNetProtos = nil
 			e.id.LocalPort = 0
 			e.id.LocalAddress = ""
 			e.boundNICID = 0
@@ -796,8 +907,8 @@ func (e *endpoint) GetRemoteAddress() (tcpip.FullAddress, error) {
 
 // HandlePacket is called by the stack when new packets arrive to this transport
 // endpoint.
-func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, v buffer.View) {
-	s := newSegment(r, id, v)
+func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv *buffer.VectorisedView) {
+	s := newSegment(r, id, vv)
 	if !s.parse() {
 		// TODO: Inform the stack that the packet is malformed.
 		s.decRef()
@@ -835,7 +946,7 @@ func (e *endpoint) readyToRead(s *segment) {
 	e.rcvListMu.Lock()
 	if s != nil {
 		s.incRef()
-		e.rcvBufUsed += len(s.data)
+		e.rcvBufUsed += s.data.Size()
 		e.rcvList.PushBack(s)
 	} else {
 		e.rcvClosed = true

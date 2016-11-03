@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/seqnum"
 	"github.com/google/netstack/tcpip/stack"
 	"github.com/google/netstack/waiter"
@@ -61,6 +62,8 @@ type listenContext struct {
 
 	hasherMu sync.Mutex
 	hasher   hash.Hash
+	v6only   bool
+	netProto tcpip.NetworkProtocolNumber
 }
 
 // timeStamp returns an 8-bit timestamp with a granularity of 64 seconds.
@@ -95,11 +98,13 @@ func decSynRcvdCount() {
 }
 
 // newListenContext creates a new listen context.
-func newListenContext(stack *stack.Stack, rcvWnd seqnum.Size) *listenContext {
+func newListenContext(stack *stack.Stack, rcvWnd seqnum.Size, v6only bool, netProto tcpip.NetworkProtocolNumber) *listenContext {
 	l := &listenContext{
-		stack:  stack,
-		rcvWnd: rcvWnd,
-		hasher: sha1.New(),
+		stack:    stack,
+		rcvWnd:   rcvWnd,
+		hasher:   sha1.New(),
+		v6only:   v6only,
+		netProto: netProto,
 	}
 
 	rand.Read(l.nonce[0][:])
@@ -160,13 +165,19 @@ func (l *listenContext) isCookieValid(id stack.TransportEndpointID, cookie seqnu
 // parameters given by the arguments.
 func (l *listenContext) createConnectedEndpoint(s *segment, iss seqnum.Value, irs seqnum.Value) (*endpoint, error) {
 	// Create a new endpoint.
-	n := newEndpoint(l.stack, s.route.NetProto, nil)
+	netProto := l.netProto
+	if netProto == 0 {
+		netProto = s.route.NetProto
+	}
+	n := newEndpoint(l.stack, netProto, nil)
+	n.v6only = l.v6only
 	n.id = s.id
 	n.boundNICID = s.route.NICID()
 	n.route = s.route.Clone()
+	n.effectiveNetProtos = []tcpip.NetworkProtocolNumber{s.route.NetProto}
 
 	// Register new endpoint so that packets are routed to it.
-	if err := n.stack.RegisterTransportEndpoint(n.boundNICID, ProtocolNumber, n.id, n); err != nil {
+	if err := n.stack.RegisterTransportEndpoint(n.boundNICID, n.effectiveNetProtos, ProtocolNumber, n.id, n); err != nil {
 		n.Close()
 		return nil, err
 	}
@@ -280,7 +291,11 @@ func (e *endpoint) protocolListenLoop(rcvWnd seqnum.Size) error {
 		e.completeWorker()
 	}()
 
-	ctx := newListenContext(e.stack, rcvWnd)
+	e.mu.Lock()
+	v6only := e.v6only
+	e.mu.Unlock()
+
+	ctx := newListenContext(e.stack, rcvWnd, v6only, e.netProto)
 
 	for {
 		select {

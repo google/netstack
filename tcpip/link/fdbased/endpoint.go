@@ -14,12 +14,15 @@ package fdbased
 import (
 	"syscall"
 
+	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/link/rawfile"
 	"github.com/google/netstack/tcpip/stack"
-	"github.com/google/netstack/tcpip"
 )
+
+// BufConfig defines the shape of the vectorised view used to read packets from the NIC.
+var BufConfig = []int{128, 256, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768}
 
 type endpoint struct {
 	// fd is the file descriptor used to send and receive packets.
@@ -31,17 +34,26 @@ type endpoint struct {
 	// closed is a function to be called when the FD's peer (if any) closes
 	// its end of the communication pipe.
 	closed func(error)
+
+	vv     *buffer.VectorisedView
+	iovecs []syscall.Iovec
+	views  []buffer.View
 }
 
 // New creates a new fd-based endpoint.
 func New(fd int, mtu int, closed func(error)) tcpip.LinkEndpointID {
 	syscall.SetNonblock(fd, true)
 
-	return stack.RegisterLinkEndpoint(&endpoint{
+	e := &endpoint{
 		fd:     fd,
 		mtu:    mtu,
 		closed: closed,
-	})
+		views:  make([]buffer.View, len(BufConfig)),
+		iovecs: make([]syscall.Iovec, len(BufConfig)),
+	}
+	vv := buffer.NewVectorisedView(0, e.views)
+	e.vv = &vv
+	return stack.RegisterLinkEndpoint(e)
 }
 
 // Attach launches the goroutine that reads packets from the file descriptor and
@@ -73,9 +85,37 @@ func (e *endpoint) WritePacket(_ *stack.Route, hdr *buffer.Prependable, payload 
 	return rawfile.NonBlockingWrite2(e.fd, hdr.UsedBytes(), payload)
 }
 
+func (e *endpoint) capViews(n int, buffers []int) int {
+	c := 0
+	for i, s := range buffers {
+		c += s
+		if c >= n {
+			e.views[i].CapLength(s - (c - n))
+			return i + 1
+		}
+	}
+	return len(buffers)
+}
+
+func (e *endpoint) allocateViews(bufConfig []int) {
+	for i, v := range e.views {
+		if v != nil {
+			break
+		}
+		b := buffer.NewView(bufConfig[i])
+		e.views[i] = b
+		e.iovecs[i] = syscall.Iovec{
+			Base: &b[0],
+			Len:  uint64(len(b)),
+		}
+	}
+}
+
 // dispatch reads one packet from the file descriptor and dispatches it.
 func (e *endpoint) dispatch(d stack.NetworkDispatcher, largeV buffer.View) (bool, error) {
-	n, err := rawfile.BlockingRead(e.fd, largeV)
+	e.allocateViews(BufConfig)
+
+	n, err := rawfile.BlockingReadv(e.fd, e.iovecs)
 	if err != nil {
 		return false, err
 	}
@@ -84,13 +124,14 @@ func (e *endpoint) dispatch(d stack.NetworkDispatcher, largeV buffer.View) (bool
 		return false, nil
 	}
 
-	v := buffer.NewView(n)
-	copy(v, largeV)
+	used := e.capViews(n, BufConfig)
+	e.vv.SetViews(e.views[:used])
+	e.vv.SetSize(n)
 
 	// We don't get any indication of what the packet is, so try to guess
 	// if it's an IPv4 or IPv6 packet.
 	var p tcpip.NetworkProtocolNumber
-	switch header.IPVersion(v) {
+	switch header.IPVersion(e.views[0]) {
 	case header.IPv4Version:
 		p = header.IPv4ProtocolNumber
 	case header.IPv6Version:
@@ -99,7 +140,12 @@ func (e *endpoint) dispatch(d stack.NetworkDispatcher, largeV buffer.View) (bool
 		return true, nil
 	}
 
-	d.DeliverNetworkPacket(e, p, v)
+	d.DeliverNetworkPacket(e, p, e.vv)
+
+	// Prepare e.views for another packet: release used views.
+	for i := 0; i < used; i++ {
+		e.views[i] = nil
+	}
 
 	return true, nil
 }

@@ -5,12 +5,13 @@
 package stack
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/google/netstack/ilist"
-	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip"
+	"github.com/google/netstack/tcpip/buffer"
 )
 
 // NIC represents a "network interface card" to which the networking stack is
@@ -26,6 +27,7 @@ type NIC struct {
 	promiscuous bool
 	primary     map[tcpip.NetworkProtocolNumber]*ilist.List
 	endpoints   map[NetworkEndpointID]*referencedNetworkEndpoint
+	subnets     []tcpip.Subnet
 }
 
 func newNIC(stack *Stack, id tcpip.NICID, ep LinkEndpoint) *NIC {
@@ -133,6 +135,31 @@ func (n *NIC) AddAddress(protocol tcpip.NetworkProtocolNumber, addr tcpip.Addres
 	return err
 }
 
+// AddSubnet adds a new subnet to n, so that it starts accepting packets
+// targeted at the given address and network protocol.
+func (n *NIC) AddSubnet(protocol tcpip.NetworkProtocolNumber, subnet tcpip.Subnet) {
+	n.mu.Lock()
+	n.subnets = append(n.subnets, subnet)
+	n.mu.Unlock()
+}
+
+// Subnets returns the Subnets associated with this NIC.
+func (n *NIC) Subnets() []tcpip.Subnet {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	sns := make([]tcpip.Subnet, 0, len(n.subnets)+len(n.endpoints))
+	for nid := range n.endpoints {
+		sn, err := tcpip.NewSubnet(nid.LocalAddress, tcpip.AddressMask(strings.Repeat("\xff", len(nid.LocalAddress))))
+		if err != nil {
+			// This should never happen as the mask has been carefully crafted to
+			// match the address.
+			panic("Invalid endpoint subnet: " + err.Error())
+		}
+		sns = append(sns, sn)
+	}
+	return append(sns, n.subnets...)
+}
+
 func (n *NIC) removeEndpointLocked(r *referencedNetworkEndpoint) {
 	id := *r.ep.ID()
 
@@ -176,19 +203,22 @@ func (n *NIC) RemoveAddress(addr tcpip.Address) error {
 // DeliverNetworkPacket finds the appropriate network protocol endpoint and
 // hands the packet over for further processing. This function is called when
 // the NIC receives a packet from the physical interface.
-func (n *NIC) DeliverNetworkPacket(linkEP LinkEndpoint, protocol tcpip.NetworkProtocolNumber, v buffer.View) {
+// Note that the ownership of the slice backing vv is retained by the caller.
+// This rule applies only to the slice itself, not to the items of the slice;
+// the ownership of the items is not retained by the caller.
+func (n *NIC) DeliverNetworkPacket(linkEP LinkEndpoint, protocol tcpip.NetworkProtocolNumber, vv *buffer.VectorisedView) {
 	netProto, ok := n.stack.networkProtocols[protocol]
 	if !ok {
 		atomic.AddUint64(&n.stack.stats.UnknownProtocolRcvdPackets, 1)
 		return
 	}
 
-	if len(v) < netProto.MinimumPacketSize() {
+	if len(vv.First()) < netProto.MinimumPacketSize() {
 		atomic.AddUint64(&n.stack.stats.MalformedRcvdPackets, 1)
 		return
 	}
 
-	src, dst := netProto.ParseAddresses(v)
+	src, dst := netProto.ParseAddresses(vv.First())
 	id := NetworkEndpointID{dst}
 
 	n.mu.RLock()
@@ -197,21 +227,33 @@ func (n *NIC) DeliverNetworkPacket(linkEP LinkEndpoint, protocol tcpip.NetworkPr
 		ref = nil
 	}
 	promiscuous := n.promiscuous
+	subnets := n.subnets
 	n.mu.RUnlock()
 
-	if ref == nil && promiscuous {
-		// Try again with the lock in exclusive mode. If we still can't
-		// get the endpoint, create a new "temporary" one. It will only
-		// exist while there's a route through it.
-		n.mu.Lock()
-		ref = n.endpoints[id]
-		if ref == nil || !ref.tryIncRef() {
-			ref, _ = n.addAddressLocked(protocol, dst, true)
-			if ref != nil {
-				ref.holdsInsertRef = false
+	if ref == nil {
+		// Check if the packet is for a subnet this NIC cares about.
+		if !promiscuous {
+			for _, sn := range subnets {
+				if sn.Contains(dst) {
+					promiscuous = true
+					break
+				}
 			}
 		}
-		n.mu.Unlock()
+		if promiscuous {
+			// Try again with the lock in exclusive mode. If we still can't
+			// get the endpoint, create a new "temporary" one. It will only
+			// exist while there's a route through it.
+			n.mu.Lock()
+			ref = n.endpoints[id]
+			if ref == nil || !ref.tryIncRef() {
+				ref, _ = n.addAddressLocked(protocol, dst, true)
+				if ref != nil {
+					ref.holdsInsertRef = false
+				}
+			}
+			n.mu.Unlock()
+		}
 	}
 
 	if ref == nil {
@@ -220,13 +262,13 @@ func (n *NIC) DeliverNetworkPacket(linkEP LinkEndpoint, protocol tcpip.NetworkPr
 	}
 
 	r := makeRoute(protocol, dst, src, ref)
-	ref.ep.HandlePacket(&r, v)
+	ref.ep.HandlePacket(&r, vv)
 	ref.decRef()
 }
 
 // DeliverTransportPacket delivers the packets to the appropriate transport
 // protocol endpoint.
-func (n *NIC) DeliverTransportPacket(r *Route, protocol tcpip.TransportProtocolNumber, v buffer.View) {
+func (n *NIC) DeliverTransportPacket(r *Route, protocol tcpip.TransportProtocolNumber, vv *buffer.VectorisedView) {
 	state, ok := n.stack.transportProtocols[protocol]
 	if !ok {
 		atomic.AddUint64(&n.stack.stats.UnknownProtocolRcvdPackets, 1)
@@ -234,33 +276,35 @@ func (n *NIC) DeliverTransportPacket(r *Route, protocol tcpip.TransportProtocolN
 	}
 
 	transProto := state.proto
-	if len(v) < transProto.MinimumPacketSize() {
+	if len(vv.First()) < transProto.MinimumPacketSize() {
 		atomic.AddUint64(&n.stack.stats.MalformedRcvdPackets, 1)
 		return
 	}
 
-	srcPort, dstPort, err := transProto.ParsePorts(v)
+	srcPort, dstPort, err := transProto.ParsePorts(vv.First())
 	if err != nil {
 		atomic.AddUint64(&n.stack.stats.MalformedRcvdPackets, 1)
 		return
 	}
 
 	id := TransportEndpointID{dstPort, r.LocalAddress, srcPort, r.RemoteAddress}
-	if n.demux.deliverPacket(r, protocol, v, id) ||
-		n.stack.demux.deliverPacket(r, protocol, v, id) {
+	if n.demux.deliverPacket(r, protocol, vv, id) {
+		return
+	}
+	if n.stack.demux.deliverPacket(r, protocol, vv, id) {
 		return
 	}
 
 	// Try to deliver to per-stack default handler.
 	if state.defaultHandler != nil {
-		if state.defaultHandler(r, id, v) {
+		if state.defaultHandler(r, id, vv) {
 			return
 		}
 	}
 
 	// We could not find an appropriate destination for this packet, so
 	// deliver it to the global handler.
-	transProto.HandleUnknownDestinationPacket(r, id, v)
+	transProto.HandleUnknownDestinationPacket(r, id, vv)
 }
 
 // ID returns the identifier of n.
@@ -270,7 +314,6 @@ func (n *NIC) ID() tcpip.NICID {
 
 type referencedNetworkEndpoint struct {
 	ilist.Entry
-
 	refs     int32
 	ep       NetworkEndpoint
 	nic      *NIC
@@ -293,16 +336,24 @@ func newReferencedNetworkEndpoint(ep NetworkEndpoint, protocol tcpip.NetworkProt
 	}
 }
 
+// decRef decrements the ref count and cleans up the endpoint once it reaches
+// zero.
 func (r *referencedNetworkEndpoint) decRef() {
 	if atomic.AddInt32(&r.refs, -1) == 0 {
 		r.nic.removeEndpoint(r)
 	}
 }
 
+// incRef increments the ref count. It must only be called when the caller is
+// known to be holding a reference to the endpoint, otherwise tryIncRef should
+// be used.
 func (r *referencedNetworkEndpoint) incRef() {
 	atomic.AddInt32(&r.refs, 1)
 }
 
+// tryIncRef attempts to increment the ref count from n to n+1, but only if n is
+// not zero. That is, it will increment the count if the endpoint is still
+// alive, and do nothing if it has already been clean up.
 func (r *referencedNetworkEndpoint) tryIncRef() bool {
 	for {
 		v := atomic.LoadInt32(&r.refs)

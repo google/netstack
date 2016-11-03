@@ -28,7 +28,7 @@ type TransportChecker func(*testing.T, header.Transport)
 func IPv4(t *testing.T, b []byte, checkers ...NetworkChecker) {
 	ipv4 := header.IPv4(b)
 
-	if !ipv4.IsValid() {
+	if !ipv4.IsValid(len(b)) {
 		t.Fatalf("Not a valid IPv4 packet")
 	}
 
@@ -46,7 +46,7 @@ func IPv4(t *testing.T, b []byte, checkers ...NetworkChecker) {
 // is similar to IPv4.
 func IPv6(t *testing.T, b []byte, checkers ...NetworkChecker) {
 	ipv6 := header.IPv6(b)
-	if !ipv6.IsValid() {
+	if !ipv6.IsValid(len(b)) {
 		t.Fatalf("Not a valid IPv4 packet")
 	}
 

@@ -6,7 +6,6 @@ package rawfile
 
 import (
 	"fmt"
-	"math"
 	"syscall"
 	"unsafe"
 )
@@ -88,6 +87,8 @@ func NonBlockingWrite2(fd int, b1, b2 []byte) error {
 	return nil
 }
 
+func blockingPoll(fds unsafe.Pointer, nfds int, timeout int64) (n int, err syscall.Errno)
+
 // BlockingRead reads from a file descriptor that is set up as non-blocking. If
 // no data is available, it will block in a poll() syscall until the file
 // descirptor becomes readable.
@@ -107,7 +108,33 @@ func BlockingRead(fd int, b []byte) (int, error) {
 			events: 1, // POLLIN
 		}
 
-		_, _, e = syscall.Syscall(syscall.SYS_POLL, uintptr(unsafe.Pointer(&event)), 1, uintptr(math.MaxUint64))
+		_, e = blockingPoll(unsafe.Pointer(&event), 1, -1)
+		if e != 0 && e != syscall.EINTR {
+			return 0, e
+		}
+	}
+}
+
+// BlockingReadv reads from a file descriptor that is set up as non-blocking and
+// stores the data in a list of iovecs buffers. If no data is available, it will
+// block in a poll() syscall until the file descirptor becomes readable.
+func BlockingReadv(fd int, iovecs []syscall.Iovec) (int, error) {
+	for {
+		n, _, e := syscall.RawSyscall(syscall.SYS_READV, uintptr(fd), uintptr(unsafe.Pointer(&iovecs[0])), uintptr(len(iovecs)))
+		if e == 0 {
+			return int(n), nil
+		}
+
+		event := struct {
+			fd      int32
+			events  int16
+			revents int16
+		}{
+			fd:     int32(fd),
+			events: 1, // POLLIN
+		}
+
+		_, e = blockingPoll(unsafe.Pointer(&event), 1, -1)
 		if e != 0 && e != syscall.EINTR {
 			return 0, e
 		}

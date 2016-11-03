@@ -233,14 +233,14 @@ func (b IPv4) EncodePartial(partialChecksum, totalLength uint16) {
 }
 
 // IsValid performs basic validation on the packet.
-func (b IPv4) IsValid() bool {
+func (b IPv4) IsValid(pktSize int) bool {
 	if len(b) < IPv4MinimumSize {
 		return false
 	}
 
 	hlen := int(b.HeaderLength())
 	tlen := int(b.TotalLength())
-	if hlen > tlen || tlen > len(b) {
+	if hlen > tlen || tlen > pktSize {
 		return false
 	}
 

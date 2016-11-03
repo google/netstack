@@ -61,39 +61,52 @@ func (s *PortManager) PickEphemeralPort(testPort func(p uint16) (bool, error)) (
 // ReservePort marks a port as reserved so that it cannot be reserved by another
 // endpoint. If port is zero, ReservePort will search for an unreserved
 // ephemeral port and reserve it, returning its value in the "port" return value.
-func (s *PortManager) ReservePort(network tcpip.NetworkProtocolNumber, transport tcpip.TransportProtocolNumber, port uint16) (reservedPort uint16, err error) {
+func (s *PortManager) ReservePort(network []tcpip.NetworkProtocolNumber, transport tcpip.TransportProtocolNumber, port uint16) (reservedPort uint16, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	desc := portDescriptor{network, transport, port}
-
-	// If a port is specified, just try to reserve it.
+	// If a port is specified, just try to reserve it for all network
+	// protocols.
 	if port != 0 {
-		if _, ok := s.allocatedPorts[desc]; ok {
+		if !s.reserveSpecificPort(network, transport, port) {
 			return 0, tcpip.ErrPortInUse
 		}
-
-		s.allocatedPorts[desc] = struct{}{}
 		return port, nil
 	}
 
 	// A port wasn't specified, so try to find one.
 	return s.PickEphemeralPort(func(p uint16) (bool, error) {
-		desc.port = p
-		if _, ok := s.allocatedPorts[desc]; ok {
-			return false, nil
-		}
-
-		s.allocatedPorts[desc] = struct{}{}
-		return true, nil
+		return s.reserveSpecificPort(network, transport, p), nil
 	})
+}
+
+// reserveSpecificPort tries to reserve the given port on all given protocols.
+func (s *PortManager) reserveSpecificPort(network []tcpip.NetworkProtocolNumber, transport tcpip.TransportProtocolNumber, port uint16) bool {
+	// Check that the port is available on all network protocols.
+	desc := portDescriptor{0, transport, port}
+	for _, n := range network {
+		desc.network = n
+		if _, ok := s.allocatedPorts[desc]; ok {
+			return false
+		}
+	}
+
+	// Reserve port on all network protocols.
+	for _, n := range network {
+		desc.network = n
+		s.allocatedPorts[desc] = struct{}{}
+	}
+
+	return true
 }
 
 // ReleasePort releases the reservation on a port so that it can be reserved by
 // other endpoints.
-func (s *PortManager) ReleasePort(network tcpip.NetworkProtocolNumber, transport tcpip.TransportProtocolNumber, port uint16) {
+func (s *PortManager) ReleasePort(network []tcpip.NetworkProtocolNumber, transport tcpip.TransportProtocolNumber, port uint16) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	delete(s.allocatedPorts, portDescriptor{network, transport, port})
+	for _, n := range network {
+		delete(s.allocatedPorts, portDescriptor{n, transport, port})
+	}
 }

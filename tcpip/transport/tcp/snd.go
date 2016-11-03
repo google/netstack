@@ -206,7 +206,7 @@ func (s *sender) resendSegment() {
 	if seg := s.writeList.Front(); seg == nil {
 		s.sendSegment(nil, flagAck|flagFin, s.sndUna)
 	} else {
-		s.sendSegment(seg.data, flagAck|flagPsh, s.sndUna)
+		s.sendSegment(&seg.data, flagAck|flagPsh, s.sndUna)
 	}
 }
 
@@ -297,22 +297,21 @@ func (s *sender) sendData() {
 			available = limit
 		}
 
-		if len(seg.data) > available {
+		if seg.data.Size() > available {
 			// Split this segment up.
 			nSeg := seg.clone()
 			nSeg.data.TrimFront(available)
 			nSeg.sequenceNumber.UpdateForward(seqnum.Size(available))
 			s.writeList.InsertAfter(seg, nSeg)
-
 			seg.data.CapLength(available)
 		}
 
 		s.outstanding++
-		s.sendSegment(seg.data, flagAck|flagPsh, seg.sequenceNumber)
+		s.sendSegment(&seg.data, flagAck|flagPsh, seg.sequenceNumber)
 
 		// Update sndNxt if we actually sent new data (as opposed to
 		// retransmitting some previously sent data).
-		segEnd := seg.sequenceNumber.Add(seqnum.Size(len(seg.data)))
+		segEnd := seg.sequenceNumber.Add(seqnum.Size(seg.data.Size()))
 		if s.sndNxt.LessThan(segEnd) {
 			s.sndNxt = segEnd
 		}
@@ -471,7 +470,7 @@ func (s *sender) handleRcvdSegment(seg *segment) {
 		originalOutsanding := s.outstanding
 		for s.writeList.Front() != nil {
 			seg := s.writeList.Front()
-			datalen := seqnum.Size(len(seg.data))
+			datalen := seqnum.Size(seg.data.Size())
 
 			if datalen > ackLeft {
 				seg.data.TrimFront(int(ackLeft))
@@ -517,12 +516,24 @@ func (s *sender) handleRcvdSegment(seg *segment) {
 
 // sendSegment sends a new segment containing the given payload, flags and
 // sequence number.
-func (s *sender) sendSegment(data buffer.View, flags byte, seq seqnum.Value) error {
+func (s *sender) sendSegment(data *buffer.VectorisedView, flags byte, seq seqnum.Value) error {
 	s.lastSendTime = time.Now()
 	if seq == s.rttMeasureSeqNum {
 		s.rttMeasureTime = s.lastSendTime
 	}
 
+	if data == nil {
+		rcvNxt, rcvWnd := s.ep.rcv.getSendParams()
+		return s.ep.sendRaw(nil, flags, seq, rcvNxt, rcvWnd)
+	}
+
+	if len(data.Views()) > 1 {
+		panic("send path does not support views with multiple buffers")
+	}
 	rcvNxt, rcvWnd := s.ep.rcv.getSendParams()
-	return s.ep.sendRaw(data, flags, seq, rcvNxt, rcvWnd)
+	if err := s.ep.sendRaw(data.First(), flags, seq, rcvNxt, rcvWnd); err != nil {
+		return err
+	}
+
+	return nil
 }

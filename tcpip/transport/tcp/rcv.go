@@ -149,7 +149,7 @@ func (r *receiver) handleRcvdSegment(s *segment) {
 		return
 	}
 
-	segLen := seqnum.Size(len(s.data))
+	segLen := seqnum.Size(s.data.Size())
 	segSeq := s.sequenceNumber
 
 	// If the sequence number range is outside the acceptable range, just
@@ -183,7 +183,7 @@ func (r *receiver) handleRcvdSegment(s *segment) {
 	// now. So try to do it.
 	for !r.closed && r.pendingRcvdSegments.Len() > 0 {
 		s := r.pendingRcvdSegments[0]
-		segLen := seqnum.Size(len(s.data))
+		segLen := seqnum.Size(s.data.Size())
 		segSeq := s.sequenceNumber
 
 		// Skip segment altogether if it has already been acknowledged.

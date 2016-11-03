@@ -49,6 +49,7 @@ package waiter
 
 import (
 	"sync"
+	"syscall"
 
 	"github.com/google/netstack/ilist"
 )
@@ -59,11 +60,11 @@ type EventMask uint16
 // Events that waiters can wait on. The meaning is the same as those in the
 // poll() syscall.
 const (
-	EventIn   EventMask = 0x01 // syscall.EPOLLIN
-	EventPri  EventMask = 0x02 // syscall.EPOLLPRI
-	EventOut  EventMask = 0x04 // syscall.EPOLLOUT
-	EventErr  EventMask = 0x08 // syscall.EPOLLERR
-	EventHUp  EventMask = 0x10 // syscall.EPOLLHUP
+	EventIn   EventMask = syscall.EPOLLIN
+	EventPri  EventMask = syscall.EPOLLPRI
+	EventOut  EventMask = syscall.EPOLLOUT
+	EventErr  EventMask = syscall.EPOLLERR
+	EventHUp  EventMask = syscall.EPOLLHUP
 	EventNVal EventMask = 0x20 // Not defined in syscall.
 )
 
@@ -73,6 +74,9 @@ type Waitable interface {
 	// Readiness returns what the object is currently ready for. If it's
 	// not ready for a desired purpose, the caller may use EventRegister and
 	// EventUnregister to get notifications once the object becomes ready.
+	//
+	// Implementations should allow for events like EventHUp and EventErr
+	// to be returned regardless of whether they are in the input EventMask.
 	Readiness(mask EventMask) EventMask
 
 	// EventRegister registers the given waiter entry to receive
@@ -107,24 +111,24 @@ type Entry struct {
 	ilist.Entry
 }
 
-// NewChannelEntry initializes a new Entry that does a non-blocking write of nil
-// to an interface{} channel when the callback is called. It returns the new
-// Entry instance and the channel being used.
+// NewChannelEntry initializes a new Entry that does a non-blocking write to a
+// struct{} channel when the callback is called. It returns the new Entry
+// instance and the channel being used.
 //
 // If a channel isn't specified (i.e., if "c" is nil), then NewChannelEntry
 // allocates a new channel.
-func NewChannelEntry(c chan interface{}) (Entry, chan interface{}) {
+func NewChannelEntry(c chan struct{}) (Entry, chan struct{}) {
 	if c == nil {
 		// TODO: Consider a pool.
-		c = make(chan interface{}, 1)
+		c = make(chan struct{}, 1)
 	}
 
 	return Entry{
 		Context: c,
 		Callback: func(e *Entry) {
-			ch := e.Context.(chan interface{})
+			ch := e.Context.(chan struct{})
 			select {
-			case ch <- nil:
+			case ch <- struct{}{}:
 			default:
 			}
 		},

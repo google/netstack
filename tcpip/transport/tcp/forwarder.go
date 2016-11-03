@@ -37,7 +37,7 @@ func NewForwarder(s *stack.Stack, rcvWnd, maxInFlight int, handler func(*Forward
 		maxInFlight: maxInFlight,
 		handler:     handler,
 		inFlight:    make(map[stack.TransportEndpointID]struct{}),
-		listen:      newListenContext(s, seqnum.Size(rcvWnd)),
+		listen:      newListenContext(s, seqnum.Size(rcvWnd), true, 0),
 	}
 }
 
@@ -47,8 +47,8 @@ func NewForwarder(s *stack.Stack, rcvWnd, maxInFlight int, handler func(*Forward
 //
 // This function is expected to be passed as an argument to the
 // stack.SetTransportProtocolHandler function.
-func (f *Forwarder) HandlePacket(r *stack.Route, id stack.TransportEndpointID, v buffer.View) bool {
-	s := newSegment(r, id, v)
+func (f *Forwarder) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv *buffer.VectorisedView) bool {
+	s := newSegment(r, id, vv)
 	defer s.decRef()
 
 	// We only care about well-formed SYN packets.

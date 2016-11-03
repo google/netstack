@@ -103,7 +103,7 @@ func (f *fakeTransportEndpoint) Connect(addr tcpip.FullAddress) error {
 
 	// Try to register so that we can start receiving packets.
 	f.id.RemoteAddress = addr.Addr
-	err = f.stack.RegisterTransportEndpoint(0, fakeTransNumber, f.id, f)
+	err = f.stack.RegisterTransportEndpoint(0, []tcpip.NetworkProtocolNumber{fakeNetNumber}, fakeTransNumber, f.id, f)
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func (*fakeTransportEndpoint) GetRemoteAddress() (tcpip.FullAddress, error) {
 	return tcpip.FullAddress{}, nil
 }
 
-func (f *fakeTransportEndpoint) HandlePacket(*stack.Route, stack.TransportEndpointID, buffer.View) {
+func (f *fakeTransportEndpoint) HandlePacket(*stack.Route, stack.TransportEndpointID, *buffer.VectorisedView) {
 	// Increment the number of received packets.
 	f.proto.packetCount++
 }
@@ -171,7 +171,7 @@ func (*fakeTransportProtocol) ParsePorts(buffer.View) (src, dst uint16, err erro
 	return 0, 0, nil
 }
 
-func (*fakeTransportProtocol) HandleUnknownDestinationPacket(*stack.Route, stack.TransportEndpointID, buffer.View) {
+func (*fakeTransportProtocol) HandleUnknownDestinationPacket(*stack.Route, stack.TransportEndpointID, *buffer.VectorisedView) {
 }
 
 func TestTransportReceive(t *testing.T) {
@@ -198,13 +198,15 @@ func TestTransportReceive(t *testing.T) {
 		t.Fatalf("Connect failed: %v", err)
 	}
 
+	var views [1]buffer.View
 	// Create buffer that will hold the packet.
 	buf := buffer.NewView(30)
 
 	// Make sure packet with wrong protocol is not delivered.
 	buf[0] = 1
 	buf[2] = 0
-	linkEP.Inject(fakeNetNumber, buf)
+	vv := buf.ToVectorisedView(views)
+	linkEP.Inject(fakeNetNumber, &vv)
 	if fakeTrans.packetCount != 0 {
 		t.Errorf("packetCount = %d, want %d", fakeTrans.packetCount, 0)
 	}
@@ -213,7 +215,8 @@ func TestTransportReceive(t *testing.T) {
 	buf[0] = 1
 	buf[1] = 3
 	buf[2] = byte(fakeTransNumber)
-	linkEP.Inject(fakeNetNumber, buf)
+	vv = buf.ToVectorisedView(views)
+	linkEP.Inject(fakeNetNumber, &vv)
 	if fakeTrans.packetCount != 0 {
 		t.Errorf("packetCount = %d, want %d", fakeTrans.packetCount, 0)
 	}
@@ -222,7 +225,8 @@ func TestTransportReceive(t *testing.T) {
 	buf[0] = 1
 	buf[1] = 2
 	buf[2] = byte(fakeTransNumber)
-	linkEP.Inject(fakeNetNumber, buf)
+	vv = buf.ToVectorisedView(views)
+	linkEP.Inject(fakeNetNumber, &vv)
 	if fakeTrans.packetCount != 1 {
 		t.Errorf("packetCount = %d, want %d", fakeTrans.packetCount, 1)
 	}

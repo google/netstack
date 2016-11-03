@@ -168,7 +168,9 @@ func (c *testContext) sendPacket(payload []byte, h *headers) {
 	t.SetChecksum(^t.CalculateChecksum(xsum, length))
 
 	// Inject packet.
-	c.linkEP.Inject(ipv4.ProtocolNumber, buf)
+	var views [1]buffer.View
+	vv := buf.ToVectorisedView(views)
+	c.linkEP.Inject(ipv4.ProtocolNumber, &vv)
 }
 
 func (c *testContext) sendAck(seq seqnum.Value, bytesReceived int) {

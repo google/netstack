@@ -25,39 +25,48 @@ const (
 
 // segment represents a TCP segment. It holds the payload and parsed TCP segment
 // information, and can be added to intrusive lists.
+// segment is mostly immutable, the only field allowed to change is viewToDeliver.
 type segment struct {
 	segmentEntry
 	refCnt int32
 	id     stack.TransportEndpointID
 	route  stack.Route
-	data   buffer.View
-
+	data   buffer.VectorisedView
+	// views is used as buffer for data when its length is large
+	// enough to store a VectorisedView.
+	views [8]buffer.View
+	// viewToDeliver keeps track of the next View that should be
+	// delivered by the Read endpoint.
+	viewToDeliver  int
 	sequenceNumber seqnum.Value
 	ackNumber      seqnum.Value
 	flags          uint8
 	window         seqnum.Size
 }
 
-func newSegment(r *stack.Route, id stack.TransportEndpointID, v buffer.View) *segment {
-	return &segment{
+func newSegment(r *stack.Route, id stack.TransportEndpointID, vv *buffer.VectorisedView) *segment {
+	s := &segment{
 		refCnt: 1,
-		data:   v,
 		id:     id,
 		route:  r.Clone(),
 	}
+	s.data = vv.Clone(s.views[:])
+	return s
 }
 
 func (s *segment) clone() *segment {
-	return &segment{
+	t := &segment{
 		refCnt:         1,
-		data:           s.data,
 		id:             s.id,
 		sequenceNumber: s.sequenceNumber,
 		ackNumber:      s.ackNumber,
 		flags:          s.flags,
 		window:         s.window,
 		route:          s.route.Clone(),
+		viewToDeliver:  s.viewToDeliver,
 	}
+	t.data = s.data.Clone(t.views[:])
+	return t
 }
 
 func (s *segment) flagIsSet(flag uint8) bool {
@@ -77,7 +86,7 @@ func (s *segment) incRef() {
 // logicalLen is the segment length in the sequence number space. It's defined
 // as the data length plus one for each of the SYN and FIN bits set.
 func (s *segment) logicalLen() seqnum.Size {
-	l := seqnum.Size(len(s.data))
+	l := seqnum.Size(s.data.Size())
 	if s.flagIsSet(flagSyn) {
 		l++
 	}
@@ -91,7 +100,7 @@ func (s *segment) logicalLen() seqnum.Size {
 // segment from the TCP header stored in the data. It then updates the view to
 // skip the data. Returns boolean indicating if the parsing was successful.
 func (s *segment) parse() bool {
-	h := header.TCP(s.data)
+	h := header.TCP(s.data.First())
 
 	// h is the header followed by the payload. We check that the offset to
 	// the data respects the following constraints:

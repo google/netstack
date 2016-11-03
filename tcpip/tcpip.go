@@ -56,9 +56,83 @@ var (
 	ErrConnectionAborted    = errors.New("connection aborted")
 )
 
+// Errors related to Subnet
+var (
+	errSubnetLengthMismatch = errors.New("subnet length of address and mask differ")
+	errSubnetAddressMasked  = errors.New("subnet address has bits set outside the mask")
+)
+
 // Address is a byte slice cast as a string that represents the address of a
 // network node. Or, in the case of unix endpoints, it may represent a path.
 type Address string
+
+// AddressMask is a bitmask for an address.
+type AddressMask string
+
+// Subnet is a subnet defined by its address and mask.
+type Subnet struct {
+	address Address
+	mask    AddressMask
+}
+
+// NewSubnet creates a new Subnet, checking that the address and mask are the same length.
+func NewSubnet(a Address, m AddressMask) (Subnet, error) {
+	if len(a) != len(m) {
+		return Subnet{}, errSubnetLengthMismatch
+	}
+	for i := 0; i < len(a); i++ {
+		if a[i]&^m[i] != 0 {
+			return Subnet{}, errSubnetAddressMasked
+		}
+	}
+	return Subnet{a, m}, nil
+}
+
+// Contains returns true iff the address is of the same length and matches the
+// subnet address and mask.
+func (s *Subnet) Contains(a Address) bool {
+	if len(a) != len(s.address) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		if a[i]&s.mask[i] != s.address[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// ID returns the subnet ID.
+func (s *Subnet) ID() Address {
+	return s.address
+}
+
+// Bits returns the number of ones (network bits) and zeros (host bits) in the
+// subnet mask.
+func (s *Subnet) Bits() (ones int, zeros int) {
+	for _, b := range []byte(s.mask) {
+		for i := uint(0); i < 8; i++ {
+			if b&(1<<i) == 0 {
+				zeros++
+			} else {
+				ones++
+			}
+		}
+	}
+	return
+}
+
+// Prefix returns the number of bits before the first host bit.
+func (s *Subnet) Prefix() int {
+	for i, b := range []byte(s.mask) {
+		for j := 7; j >= 0; j-- {
+			if b&(1<<uint(j)) == 0 {
+				return i*8 + 7 - j
+			}
+		}
+	}
+	return len(s.mask) * 8
+}
 
 // NICID is a number that uniquely identifies a NIC.
 type NICID int32
@@ -212,6 +286,10 @@ type ReceiveBufferSizeOption int
 // unread bytes in the input buffer should be returned.
 type ReceiveQueueSizeOption int
 
+// V6OnlyOption is used by SetSockOpt/GetSockOpt to specify whether an IPv6
+// socket is to be restricted to sending and receiving IPv6 packets only.
+type V6OnlyOption int
+
 // NoDelayOption is used by SetSockOpt/GetSockOpt to specify if data should be
 // sent out immediately by the transport protocol. For TCP, it determines if the
 // Nagle algorithm is on or off.
@@ -252,7 +330,7 @@ func (r *Route) Match(addr Address) bool {
 		return false
 	}
 
-	for i := range r.Destination {
+	for i := 0; i < len(r.Destination); i++ {
 		if (addr[i] & r.Mask[i]) != r.Destination[i] {
 			return false
 		}
@@ -288,7 +366,15 @@ type Stack interface {
 	AddAddress(id NICID, protocol NetworkProtocolNumber, addr Address) error
 
 	// Stats returns a snapshot of the current stats.
+	// TODO: Make stats available in sentry for debugging/diag.
 	Stats() Stats
+
+	// NICSubnets returns a map of NICIDs to their associated subnets.
+	NICSubnets() map[NICID][]Subnet
+
+	// CheckNetworkProtocol checks if a given network protocol is enabled in the
+	// stack.
+	CheckNetworkProtocol(protocol NetworkProtocolNumber) bool
 }
 
 // Stats holds statistics about the networking stack.

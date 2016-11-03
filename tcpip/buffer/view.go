@@ -30,6 +30,13 @@ func (v *View) CapLength(length int) {
 	*v = (*v)[:length:length]
 }
 
+// ToVectorisedView transforms a View in a VectorisedView from an
+// already-allocated slice of View.
+func (v *View) ToVectorisedView(views [1]View) VectorisedView {
+	views[0] = *v
+	return NewVectorisedView(len(*v), views[:])
+}
+
 // VectorisedView is a vectorised version of View using non contigous memory.
 // It supports all the convenience methods supported by View.
 type VectorisedView struct {
@@ -39,8 +46,8 @@ type VectorisedView struct {
 
 // NewVectorisedView creates a new vectorised view from an already-allocated slice
 // of View and sets its size.
-func NewVectorisedView(size int, views []View) *VectorisedView {
-	return &VectorisedView{views: views, size: size}
+func NewVectorisedView(size int, views []View) VectorisedView {
+	return VectorisedView{views: views, size: size}
 }
 
 // TrimFront removes the first "count" bytes of the vectorised view.
@@ -80,6 +87,22 @@ func (vv *VectorisedView) CapLength(length int) {
 	}
 }
 
+// Clone returns a clone of this VectorisedView.
+// If the buffer argument is large enough to contain all the Views of this VectorisedView,
+// the method will avoid allocations and use the buffer to store the Views of the clone.
+func (vv *VectorisedView) Clone(buffer []View) VectorisedView {
+	var views []View
+	if len(buffer) >= len(vv.views) {
+		views = buffer[:len(vv.views)]
+	} else {
+		views = make([]View, len(vv.views))
+	}
+	for i, v := range vv.views {
+		views[i] = v
+	}
+	return VectorisedView{views: views, size: vv.size}
+}
+
 // First returns the first view of the vectorised view.
 // It panics if the vectorised view is empty.
 func (vv *VectorisedView) First() View {
@@ -98,9 +121,35 @@ func (vv *VectorisedView) RemoveFirst() {
 	vv.views = vv.views[1:]
 }
 
+// SetSize unsafely sets the size of the VectorisedView.
+func (vv *VectorisedView) SetSize(size int) {
+	vv.size = size
+}
+
+// SetViews unsafely sets the views of the VectorisedView.
+func (vv *VectorisedView) SetViews(views []View) {
+	vv.views = views
+}
+
 // Size returns the size in bytes of the entire content stored in the vectorised view.
 func (vv *VectorisedView) Size() int {
 	return vv.size
+}
+
+// ToView returns the a single view containing the content of the vectorised view.
+func (vv *VectorisedView) ToView() View {
+	v := make([]byte, vv.size)
+	u := v
+	for i := range vv.views {
+		n := copy(u, vv.views[i])
+		u = u[n:]
+	}
+	return v
+}
+
+// Views returns the slice containing the all views.
+func (vv *VectorisedView) Views() []View {
+	return vv.views
 }
 
 // copy returns a deep-copy of the vectorised view.

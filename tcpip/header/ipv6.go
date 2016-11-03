@@ -152,14 +152,31 @@ func (b IPv6) Encode(i *IPv6Fields) {
 }
 
 // IsValid performs basic validation on the packet.
-func (b IPv6) IsValid() bool {
+func (b IPv6) IsValid(pktSize int) bool {
 	if len(b) < IPv6MinimumSize {
 		return false
 	}
 
 	dlen := int(b.PayloadLength())
-	if dlen > len(b)-IPv6MinimumSize {
+	if dlen > pktSize-IPv6MinimumSize {
 		return false
+	}
+
+	return true
+}
+
+// IsV4MappedAddress determines if the provided address is an IPv4 mapped
+// address by checking if its prefix is 0:0:0:0:0:ffff::/96.
+func IsV4MappedAddress(addr tcpip.Address) bool {
+	if len(addr) != IPv6AddressSize {
+		return false
+	}
+
+	const prefix = "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff"
+	for i := 0; i < len(prefix); i++ {
+		if prefix[i] != addr[i] {
+			return false
+		}
 	}
 
 	return true

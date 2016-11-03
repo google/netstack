@@ -35,7 +35,8 @@ type testObject struct {
 // checkValues verifies that the transport protocol, data contents, src & dst
 // addresses of a packet match what's expected. If any field doesn't match, the
 // test fails.
-func (t *testObject) checkValues(protocol tcpip.TransportProtocolNumber, v buffer.View, srcAddr, dstAddr tcpip.Address) {
+func (t *testObject) checkValues(protocol tcpip.TransportProtocolNumber, vv *buffer.VectorisedView, srcAddr, dstAddr tcpip.Address) {
+	v := vv.ToView()
 	if protocol != t.protocol {
 		t.t.Errorf("protocol = %v, want %v", protocol, t.protocol)
 	}
@@ -62,8 +63,8 @@ func (t *testObject) checkValues(protocol tcpip.TransportProtocolNumber, v buffe
 // DeliverTransportPacket is called by network endpoints after parsing incoming
 // packets. This is used by the test object to verify that the results of the
 // parsing are expected.
-func (t *testObject) DeliverTransportPacket(r *stack.Route, protocol tcpip.TransportProtocolNumber, v buffer.View) {
-	t.checkValues(protocol, v, r.RemoteAddress, r.LocalAddress)
+func (t *testObject) DeliverTransportPacket(r *stack.Route, protocol tcpip.TransportProtocolNumber, vv *buffer.VectorisedView) {
+	t.checkValues(protocol, vv, r.RemoteAddress, r.LocalAddress)
 }
 
 // Attach is only implemented to satisfy the LinkEndpoint interface.
@@ -100,7 +101,9 @@ func (t *testObject) WritePacket(_ *stack.Route, hdr *buffer.Prependable, payloa
 		srcAddr = h.SourceAddress()
 		dstAddr = h.DestinationAddress()
 	}
-	t.checkValues(prot, payload, srcAddr, dstAddr)
+	var views [1]buffer.View
+	vv := payload.ToVectorisedView(views)
+	t.checkValues(prot, &vv, srcAddr, dstAddr)
 	return nil
 }
 
@@ -171,7 +174,9 @@ func TestIPv4Receive(t *testing.T) {
 		LocalAddress:  o.dstAddr,
 		RemoteAddress: o.srcAddr,
 	}
-	ep.HandlePacket(&r, view)
+	var views [1]buffer.View
+	vv := view.ToVectorisedView(views)
+	ep.HandlePacket(&r, &vv)
 }
 
 func TestIPv6Send(t *testing.T) {
@@ -240,5 +245,7 @@ func TestIPv6Receive(t *testing.T) {
 		LocalAddress:  o.dstAddr,
 		RemoteAddress: o.srcAddr,
 	}
-	ep.HandlePacket(&r, view)
+	var views [1]buffer.View
+	vv := view.ToVectorisedView(views)
+	ep.HandlePacket(&r, &vv)
 }

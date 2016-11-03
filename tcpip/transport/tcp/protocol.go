@@ -58,8 +58,8 @@ func (*protocol) ParsePorts(v buffer.View) (src, dst uint16, err error) {
 // a reset is sent in response to any incoming segment except another reset. In
 // particular, SYNs addressed to a non-existent connection are rejected by this
 // means."
-func (*protocol) HandleUnknownDestinationPacket(r *stack.Route, id stack.TransportEndpointID, v buffer.View) {
-	s := newSegment(r, id, v)
+func (*protocol) HandleUnknownDestinationPacket(r *stack.Route, id stack.TransportEndpointID, vv *buffer.VectorisedView) {
+	s := newSegment(r, id, vv)
 	defer s.decRef()
 
 	if !s.parse() {
