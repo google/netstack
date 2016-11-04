@@ -12,7 +12,7 @@ import (
 // Open opens the specified TUN device, sets it to non-blocking mode, and
 // returns its file descriptor.
 func Open(name string) (int, error) {
-	fd, err := syscall.Open("/dev/net/tun/tun", syscall.O_RDWR, 0)
+	fd, err := syscall.Open("/dev/net/tun", syscall.O_RDWR, 0)
 	if err != nil {
 		return -1, err
 	}
