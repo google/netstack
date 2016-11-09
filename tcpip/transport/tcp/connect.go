@@ -43,6 +43,9 @@ type handshake struct {
 
 	// sndWnd is the send window, as defined in RFC 793.
 	sndWnd seqnum.Size
+
+	// mss is the maximum segment size received from the peer.
+	mss uint16
 }
 
 func newHandshake(ep *endpoint, rcvWnd seqnum.Size) (handshake, error) {
@@ -65,6 +68,7 @@ func (h *handshake) resetState() error {
 	h.state = handshakeSynSent
 	h.flags = flagSyn
 	h.ackNum = 0
+	h.mss = 0
 	h.iss = seqnum.Value(uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24)
 
 	return nil
@@ -72,12 +76,13 @@ func (h *handshake) resetState() error {
 
 // resetToSynRcvd resets the state of the handshake object to the SYN-RCVD
 // state.
-func (h *handshake) resetToSynRcvd(iss seqnum.Value, irs seqnum.Value) {
+func (h *handshake) resetToSynRcvd(iss seqnum.Value, irs seqnum.Value, mss uint16) {
 	h.active = false
 	h.state = handshakeSynRcvd
 	h.flags = flagSyn | flagAck
 	h.iss = iss
 	h.ackNum = irs + 1
+	h.mss = mss
 }
 
 // checkAck checks if the ACK number, if present, of a segment received during
@@ -119,9 +124,16 @@ func (h *handshake) synSentState(s *segment) error {
 		return nil
 	}
 
+	// Parse the SYN options. Ignore the segment if it's invalid.
+	mss, ok := parseSynOptions(s)
+	if !ok {
+		return nil
+	}
+
 	// Remember the sequence we'll ack from now on.
 	h.ackNum = s.sequenceNumber + 1
 	h.flags |= flagAck
+	h.mss = mss
 
 	// If this is a SYN ACK response, we only need to acknowledge the SYN
 	// and the handshake is completed.
@@ -135,7 +147,7 @@ func (h *handshake) synSentState(s *segment) error {
 	// but resend our own SYN and wait for it to be acknowledged in the
 	// SYN-RCVD state.
 	h.state = handshakeSynRcvd
-	h.ep.sendRaw(nil, h.flags, h.iss, h.ackNum, h.rcvWnd)
+	sendSynTCP(&s.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd)
 
 	return nil
 }
@@ -175,7 +187,7 @@ func (h *handshake) synRcvdState(s *segment) error {
 			return err
 		}
 
-		h.ep.sendRaw(nil, h.flags, h.iss, h.ackNum, h.rcvWnd)
+		sendSynTCP(&s.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd)
 		return nil
 	}
 
@@ -198,7 +210,7 @@ func (h *handshake) execute() error {
 
 	// Send the initial SYN segment and loop until the handshake is
 	// completed.
-	h.ep.sendRaw(nil, h.flags, h.iss, h.ackNum, h.rcvWnd)
+	sendSynTCP(&h.ep.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd)
 	for h.state != handshakeCompleted {
 		select {
 		case <-rt.C:
@@ -207,7 +219,7 @@ func (h *handshake) execute() error {
 				return tcpip.ErrTimeout
 			}
 			rt.Reset(timeOut)
-			h.ep.sendRaw(nil, h.flags, h.iss, h.ackNum, h.rcvWnd)
+			sendSynTCP(&h.ep.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd)
 
 		case s := <-h.ep.segmentChan:
 			h.sndWnd = s.window
@@ -232,6 +244,91 @@ func (h *handshake) execute() error {
 	}
 
 	return nil
+}
+
+// parseSynOptions parses the options received in a syn segment and returns the
+// relevant ones.
+func parseSynOptions(s *segment) (mss uint16, ok bool) {
+	// Per RFC 1122, page 85: "If an MSS option is not received at
+	// connection setup, TCP MUST assume a default send MSS of 536."
+	mss = 536
+	opts := s.options
+	limit := len(opts)
+	for i := 0; i < limit; {
+		switch opts[i] {
+		case header.TCPOptionEOL:
+			i = limit
+		case header.TCPOptionNOP:
+			i++
+		case header.TCPOptionMSS:
+			if i+4 > limit || opts[i+1] != 4 {
+				return 0, false
+			}
+			mss = uint16(opts[i+2])<<8 | uint16(opts[i+3])
+			if mss == 0 {
+				return 0, false
+			}
+			i += 4
+		default:
+			// We don't recognize this option, just skip over it.
+			if i+2 > limit {
+				return 0, false
+			}
+			l := int(opts[i+1])
+			if i < 2 || i+l > limit {
+				return 0, false
+			}
+			i += l
+		}
+	}
+
+	return mss, true
+}
+
+func sendSynTCP(r *stack.Route, id stack.TransportEndpointID, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size) error {
+	// Initialize the options.
+	mss := r.MTU() - header.TCPMinimumSize
+	options := []byte{
+		// Initialize the MSS option.
+		header.TCPOptionMSS, 4, byte(mss >> 8), byte(mss),
+	}
+
+	return sendTCPWithOptions(r, id, nil, flags, seq, ack, rcvWnd, options)
+}
+
+// sendTCPWithOptions sends a TCP segment with the provided options via the
+// provided network endpoint and under the provided identity.
+func sendTCPWithOptions(r *stack.Route, id stack.TransportEndpointID, data buffer.View, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size, opts []byte) error {
+	// Allocate a buffer for the TCP header.
+	hdr := buffer.NewPrependable(header.TCPMinimumSize + int(r.MaxHeaderLength()) + len(opts))
+
+	if rcvWnd > 0xffff {
+		rcvWnd = 0xffff
+	}
+
+	// Initialize the header.
+	tcp := header.TCP(hdr.Prepend(header.TCPMinimumSize + len(opts)))
+	tcp.Encode(&header.TCPFields{
+		SrcPort:    id.LocalPort,
+		DstPort:    id.RemotePort,
+		SeqNum:     uint32(seq),
+		AckNum:     uint32(ack),
+		DataOffset: uint8(header.TCPMinimumSize + len(opts)),
+		Flags:      flags,
+		WindowSize: uint16(rcvWnd),
+	})
+	copy(tcp[header.TCPMinimumSize:], opts)
+
+	length := uint16(hdr.UsedLength())
+	xsum := r.PseudoHeaderChecksum(ProtocolNumber)
+	if data != nil {
+		length += uint16(len(data))
+		xsum = header.Checksum(data, xsum)
+	}
+
+	tcp.SetChecksum(^tcp.CalculateChecksum(xsum, length))
+
+	return r.WritePacket(&hdr, data, ProtocolNumber)
 }
 
 // sendTCP sends a TCP segment via the provided network endpoint and under the
@@ -362,7 +459,7 @@ func (e *endpoint) protocolMainLoop(passive bool) error {
 		}
 
 		// Transfer handshake state to TCP connection.
-		e.snd = newSender(e, h.iss, h.sndWnd)
+		e.snd = newSender(e, h.iss, h.sndWnd, h.mss)
 		e.rcv = newReceiver(e, h.ackNum-1, h.rcvWnd)
 	}
 

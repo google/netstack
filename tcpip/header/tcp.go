@@ -32,6 +32,14 @@ const (
 	TCPFlagUrg
 )
 
+// Options that may be present in a TCP segment.
+const (
+	TCPOptionEOL = 0
+	TCPOptionNOP = 1
+	TCPOptionMSS = 2
+	TCPOptionWS  = 3
+)
+
 // TCPFields contains the fields of a TCP packet. It is used to describe the
 // fields of a packet that needs to be encoded.
 type TCPFields struct {

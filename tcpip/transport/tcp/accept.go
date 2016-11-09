@@ -36,12 +36,30 @@ const (
 	// timestamp and the current timestamp. If the difference is greater
 	// than maxTSDiff, the cookie is expired.
 	maxTSDiff = 2
+)
 
-	// synRcvdCountThreshold is the global maximum number of connections
+var (
+	// SynRcvdCountThreshold is the global maximum number of connections
 	// that are allowed to be in SYN-RCVD state before TCP starts using SYN
 	// cookies to accept connections.
-	synRcvdCountThreshold = 1000
+	//
+	// It is an exported variable only for testing, and should not otherwise
+	// be used by importers of this package.
+	SynRcvdCountThreshold uint64 = 1000
+
+	// mssTable is a slice containing the possible MSS values that we
+	// encode in the SYN cookie with two bits.
+	mssTable = []uint16{536, 1300, 1440, 1460}
 )
+
+func encodeMSS(mss uint16) uint32 {
+	for i := len(mssTable) - 1; i > 0; i-- {
+		if mss >= mssTable[i] {
+			return uint32(i)
+		}
+	}
+	return 0
+}
 
 // syncRcvdCount is the number of endpoints in the SYN-RCVD state. The value is
 // protected by a mutex so that we can increment only when it's guaranteed not
@@ -78,7 +96,7 @@ func incSynRcvdCount() bool {
 	synRcvdCount.Lock()
 	defer synRcvdCount.Unlock()
 
-	if synRcvdCount.value >= synRcvdCountThreshold {
+	if synRcvdCount.value >= SynRcvdCountThreshold {
 		return false
 	}
 
@@ -141,29 +159,30 @@ func (l *listenContext) cookieHash(id stack.TransportEndpointID, ts uint32, nonc
 
 // createCookie creates a SYN cookie for the given id and incoming sequence
 // number.
-func (l *listenContext) createCookie(id stack.TransportEndpointID, seq seqnum.Value) seqnum.Value {
+func (l *listenContext) createCookie(id stack.TransportEndpointID, seq seqnum.Value, data uint32) seqnum.Value {
 	ts := timeStamp()
 	v := l.cookieHash(id, 0, 0) + uint32(seq) + (ts << tsOffset)
-	v += l.cookieHash(id, ts, 1) & hashMask
+	v += (l.cookieHash(id, ts, 1) + data) & hashMask
 	return seqnum.Value(v)
 }
 
-// isCookieValid checks if the supplied cookie if valid for the given id and
-// sequence number.
-func (l *listenContext) isCookieValid(id stack.TransportEndpointID, cookie seqnum.Value, seq seqnum.Value) bool {
+// isCookieValid checks if the supplied cookie is valid for the given id and
+// sequence number. If it is, it also returns the data originally encoded in the
+// cookie when createCookie was called.
+func (l *listenContext) isCookieValid(id stack.TransportEndpointID, cookie seqnum.Value, seq seqnum.Value) (uint32, bool) {
 	ts := timeStamp()
 	v := uint32(cookie) - l.cookieHash(id, 0, 0) - uint32(seq)
 	cookieTS := v >> tsOffset
 	if ((ts - cookieTS) & tsMask) > maxTSDiff {
-		return false
+		return 0, false
 	}
 
-	return ((v - l.cookieHash(id, cookieTS, 1)) & hashMask) == 0
+	return (v - l.cookieHash(id, cookieTS, 1)) & hashMask, true
 }
 
 // createConnectedEndpoint creates a new connected endpoint, with the connection
 // parameters given by the arguments.
-func (l *listenContext) createConnectedEndpoint(s *segment, iss seqnum.Value, irs seqnum.Value) (*endpoint, error) {
+func (l *listenContext) createConnectedEndpoint(s *segment, iss seqnum.Value, irs seqnum.Value, mss uint16) (*endpoint, error) {
 	// Create a new endpoint.
 	netProto := l.netProto
 	if netProto == 0 {
@@ -186,7 +205,7 @@ func (l *listenContext) createConnectedEndpoint(s *segment, iss seqnum.Value, ir
 	n.state = stateConnected
 
 	// Create sender and receiver.
-	n.snd = newSender(n, iss, s.window)
+	n.snd = newSender(n, iss, s.window, mss)
 	n.rcv = newReceiver(n, irs, l.rcvWnd)
 
 	return n, nil
@@ -194,11 +213,11 @@ func (l *listenContext) createConnectedEndpoint(s *segment, iss seqnum.Value, ir
 
 // createEndpoint creates a new endpoint in connected state and then performs
 // the TCP 3-way handshake.
-func (l *listenContext) createEndpointAndPerformHandshake(s *segment) (*endpoint, error) {
+func (l *listenContext) createEndpointAndPerformHandshake(s *segment, mss uint16) (*endpoint, error) {
 	// Create new endpoint.
 	irs := s.sequenceNumber
-	cookie := l.createCookie(s.id, irs)
-	ep, err := l.createConnectedEndpoint(s, cookie, irs)
+	cookie := l.createCookie(s.id, irs, encodeMSS(mss))
+	ep, err := l.createConnectedEndpoint(s, cookie, irs, mss)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +229,7 @@ func (l *listenContext) createEndpointAndPerformHandshake(s *segment) (*endpoint
 		return nil, err
 	}
 
-	h.resetToSynRcvd(cookie, irs)
+	h.resetToSynRcvd(cookie, irs, mss)
 	if err := h.execute(); err != nil {
 		ep.Close()
 		return nil, err
@@ -225,11 +244,11 @@ func (l *listenContext) createEndpointAndPerformHandshake(s *segment) (*endpoint
 //
 // A limited number of these goroutines are allowed before TCP starts using
 // SYN cookies to accept connections.
-func (e *endpoint) handleSynSegment(ctx *listenContext, s *segment) {
+func (e *endpoint) handleSynSegment(ctx *listenContext, s *segment, mss uint16) {
 	defer decSynRcvdCount()
 	defer s.decRef()
 
-	n, err := ctx.createEndpointAndPerformHandshake(s)
+	n, err := ctx.createEndpointAndPerformHandshake(s, mss)
 	if err != nil {
 		return
 	}
@@ -252,19 +271,23 @@ func (e *endpoint) handleSynSegment(ctx *listenContext, s *segment) {
 func (e *endpoint) handleListenSegment(ctx *listenContext, s *segment) {
 	switch s.flags {
 	case flagSyn:
+		mss, ok := parseSynOptions(s)
+		if !ok {
+			return
+		}
 		if incSynRcvdCount() {
 			s.incRef()
-			go e.handleSynSegment(ctx, s)
+			go e.handleSynSegment(ctx, s, mss)
 		} else {
-			cookie := ctx.createCookie(s.id, s.sequenceNumber)
-			sendTCP(&s.route, s.id, nil, flagSyn|flagAck, cookie, s.sequenceNumber+1, ctx.rcvWnd)
+			cookie := ctx.createCookie(s.id, s.sequenceNumber, encodeMSS(mss))
+			sendSynTCP(&s.route, s.id, flagSyn|flagAck, cookie, s.sequenceNumber+1, ctx.rcvWnd)
 		}
 
 	case flagAck:
-		if ctx.isCookieValid(s.id, s.ackNumber-1, s.sequenceNumber-1) {
+		if data, ok := ctx.isCookieValid(s.id, s.ackNumber-1, s.sequenceNumber-1); ok && int(data) < len(mssTable) {
 			// Place new endpoint in accepted channel and notify
 			// potential waiters.
-			n, err := ctx.createConnectedEndpoint(s, s.ackNumber-1, s.sequenceNumber-1)
+			n, err := ctx.createConnectedEndpoint(s, s.ackNumber-1, s.sequenceNumber-1, mssTable[data])
 			if err == nil {
 				e.acceptedChan <- n
 				e.waiterQueue.Notify(waiter.EventIn)

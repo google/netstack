@@ -36,6 +36,7 @@ type headers struct {
 	ackNum  seqnum.Value
 	flags   int
 	rcvWnd  seqnum.Size
+	tcpOpts []byte
 }
 
 type testContext struct {
@@ -130,8 +131,9 @@ func (c *testContext) getPacket() []byte {
 
 func (c *testContext) sendPacket(payload []byte, h *headers) {
 	// Allocate a buffer for data and headers.
-	buf := buffer.NewView(header.TCPMinimumSize + header.IPv4MinimumSize + len(payload))
+	buf := buffer.NewView(header.TCPMinimumSize + header.IPv4MinimumSize + len(h.tcpOpts) + len(payload))
 	copy(buf[len(buf)-len(payload):], payload)
+	copy(buf[len(buf)-len(payload)-len(h.tcpOpts):], h.tcpOpts)
 
 	// Initialize the IP header.
 	ip := header.IPv4(buf)
@@ -152,7 +154,7 @@ func (c *testContext) sendPacket(payload []byte, h *headers) {
 		DstPort:    h.dstPort,
 		SeqNum:     uint32(h.seqNum),
 		AckNum:     uint32(h.ackNum),
-		DataOffset: header.TCPMinimumSize,
+		DataOffset: uint8(header.TCPMinimumSize + len(h.tcpOpts)),
 		Flags:      uint8(h.flags),
 		WindowSize: uint16(h.rcvWnd),
 	})
@@ -163,7 +165,7 @@ func (c *testContext) sendPacket(payload []byte, h *headers) {
 	xsum = header.Checksum([]byte{0, uint8(tcp.ProtocolNumber)}, xsum)
 
 	// Calculate the TCP checksum and set it.
-	length := uint16(header.TCPMinimumSize + len(payload))
+	length := uint16(header.TCPMinimumSize + len(h.tcpOpts) + len(payload))
 	xsum = header.Checksum(payload, xsum)
 	t.SetChecksum(^t.CalculateChecksum(xsum, length))
 
@@ -204,6 +206,10 @@ func (c *testContext) receiveAndCheckPacket(data []byte, offset, size int) {
 
 // createConnected creates a connected TCP endpoint.
 func (c *testContext) createConnected(iss seqnum.Value, rcvWnd seqnum.Size, epRcvBuf *tcpip.ReceiveBufferSizeOption) {
+	c.createConnectedWithOptions(iss, rcvWnd, epRcvBuf, nil)
+}
+
+func (c *testContext) createConnectedWithOptions(iss seqnum.Value, rcvWnd seqnum.Size, epRcvBuf *tcpip.ReceiveBufferSizeOption, options []byte) {
 	// Create TCP endpoint.
 	var err error
 	c.ep, err = c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &c.wq)
@@ -246,6 +252,7 @@ func (c *testContext) createConnected(iss seqnum.Value, rcvWnd seqnum.Size, epRc
 		seqNum:  iss,
 		ackNum:  c.irs.Add(1),
 		rcvWnd:  rcvWnd,
+		tcpOpts: options,
 	})
 
 	// Receive ACK packet.
@@ -846,13 +853,7 @@ func TestZeroWindowSend(t *testing.T) {
 	})
 }
 
-func TestSendGreaterThanMTU(t *testing.T) {
-	maxPayload := 100
-	c := newTestContext(t, uint32(header.TCPMinimumSize+header.IPv4MinimumSize+maxPayload))
-	defer c.cleanup()
-
-	c.createConnected(789, 30000, nil)
-
+func testBrokenUpWrite(c *testContext, maxPayload int) {
 	packetCount := 3
 	data := make([]byte, packetCount*maxPayload)
 	for i := range data {
@@ -863,7 +864,7 @@ func TestSendGreaterThanMTU(t *testing.T) {
 	copy(view, data)
 
 	if _, err := c.ep.Write(view, nil); err != nil {
-		t.Fatalf("Unexpected error from Write: %v", err)
+		c.t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
 	// Check that data is received in chunks.
@@ -881,7 +882,7 @@ func TestSendGreaterThanMTU(t *testing.T) {
 
 		pdata := data[i*maxPayload:][:maxPayload]
 		if p := b[header.IPv4MinimumSize+header.TCPMinimumSize:]; bytes.Compare(pdata, p) != 0 {
-			t.Fatalf("Data is different: expected %v, got %v", pdata, p)
+			c.t.Fatalf("Data is different: expected %v, got %v", pdata, p)
 		}
 
 		// Acknowledge the data.
@@ -893,6 +894,285 @@ func TestSendGreaterThanMTU(t *testing.T) {
 			ackNum:  c.irs.Add(1 + seqnum.Size((i+1)*maxPayload)),
 			rcvWnd:  30000,
 		})
+	}
+}
+
+func TestSendGreaterThanMTU(t *testing.T) {
+	const maxPayload = 100
+	c := newTestContext(t, uint32(header.TCPMinimumSize+header.IPv4MinimumSize+maxPayload))
+	defer c.cleanup()
+
+	c.createConnected(789, 30000, nil)
+	testBrokenUpWrite(c, maxPayload)
+}
+
+func TestActiveSendMSSLessThanMTU(t *testing.T) {
+	const maxPayload = 100
+	c := newTestContext(t, 65535)
+	defer c.cleanup()
+
+	c.createConnectedWithOptions(789, 30000, nil, []byte{
+		header.TCPOptionMSS, 4, byte(maxPayload / 256), byte(maxPayload % 256),
+	})
+	testBrokenUpWrite(c, maxPayload)
+}
+
+func passiveConnect(c *testContext, maxPayload int, mtu uint16) {
+	// Send a SYN request.
+	iss := seqnum.Value(789)
+	c.sendPacket(nil, &headers{
+		srcPort: testPort,
+		dstPort: stackPort,
+		flags:   header.TCPFlagSyn,
+		seqNum:  iss,
+		rcvWnd:  30000,
+		tcpOpts: []byte{
+			header.TCPOptionMSS, 4, byte(maxPayload / 256), byte(maxPayload % 256),
+		},
+	})
+
+	// Receive the SYN-ACK reply. Make sure MSS is present.
+	b := c.getPacket()
+	tcp := header.TCP(header.IPv4(b).Payload())
+	c.irs = seqnum.Value(tcp.SequenceNumber())
+	checker.IPv4(c.t, b,
+		checker.TCP(
+			checker.SrcPort(stackPort),
+			checker.DstPort(testPort),
+			checker.TCPFlags(header.TCPFlagAck|header.TCPFlagSyn),
+			checker.AckNum(uint32(iss)+1),
+			checker.TCPMSS(mtu-header.IPv4MinimumSize-header.TCPMinimumSize),
+		),
+	)
+
+	// Send ACK.
+	c.sendPacket(nil, &headers{
+		srcPort: testPort,
+		dstPort: stackPort,
+		flags:   header.TCPFlagAck,
+		seqNum:  iss + 1,
+		ackNum:  c.irs + 1,
+		rcvWnd:  30000,
+	})
+
+	c.port = stackPort
+}
+
+func TestPassiveSendMSSLessThanMTU(t *testing.T) {
+	const maxPayload = 100
+	const mtu = 1200
+	c := newTestContext(t, mtu)
+	defer c.cleanup()
+
+	// Create EP and start listening.
+	wq := &waiter.Queue{}
+	ep, err := c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, wq)
+	if err != nil {
+		c.t.Fatalf("NewEndpoint failed: %v", err)
+	}
+	defer ep.Close()
+
+	if err := ep.Bind(tcpip.FullAddress{Port: stackPort}, nil); err != nil {
+		c.t.Fatalf("Bind failed: %v", err)
+	}
+
+	if err := ep.Listen(10); err != nil {
+		c.t.Fatalf("Listen failed: %v", err)
+	}
+
+	// Do 3-way handshake.
+	passiveConnect(c, maxPayload, mtu)
+
+	// Try to accept the connection.
+	we, ch := waiter.NewChannelEntry(nil)
+	wq.EventRegister(&we, waiter.EventIn)
+	defer wq.EventUnregister(&we)
+
+	c.ep, _, err = ep.Accept()
+	if err == tcpip.ErrWouldBlock {
+		// Wait for connection to be established.
+		select {
+		case <-ch:
+			c.ep, _, err = ep.Accept()
+			if err != nil {
+				c.t.Fatalf("Accept failed: %v", err)
+			}
+
+		case <-time.After(1 * time.Second):
+			c.t.Fatalf("Timed out waiting for accept")
+		}
+	}
+
+	// Check that data gets properly segmented.
+	testBrokenUpWrite(c, maxPayload)
+}
+
+func TestSynCookiePassiveSendMSSLessThanMTU(t *testing.T) {
+	const maxPayload = 536
+	const mtu = 2000
+	c := newTestContext(t, mtu)
+	defer c.cleanup()
+
+	// Set the SynRcvd threshold to zero to force a syn cookie based accept
+	// to happen.
+	saved := tcp.SynRcvdCountThreshold
+	defer func() {
+		tcp.SynRcvdCountThreshold = saved
+	}()
+	tcp.SynRcvdCountThreshold = 0
+
+	// Create EP and start listening.
+	wq := &waiter.Queue{}
+	ep, err := c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, wq)
+	if err != nil {
+		c.t.Fatalf("NewEndpoint failed: %v", err)
+	}
+	defer ep.Close()
+
+	if err := ep.Bind(tcpip.FullAddress{Port: stackPort}, nil); err != nil {
+		c.t.Fatalf("Bind failed: %v", err)
+	}
+
+	if err := ep.Listen(10); err != nil {
+		c.t.Fatalf("Listen failed: %v", err)
+	}
+
+	// Do 3-way handshake.
+	passiveConnect(c, maxPayload, mtu)
+
+	// Try to accept the connection.
+	we, ch := waiter.NewChannelEntry(nil)
+	wq.EventRegister(&we, waiter.EventIn)
+	defer wq.EventUnregister(&we)
+
+	c.ep, _, err = ep.Accept()
+	if err == tcpip.ErrWouldBlock {
+		// Wait for connection to be established.
+		select {
+		case <-ch:
+			c.ep, _, err = ep.Accept()
+			if err != nil {
+				c.t.Fatalf("Accept failed: %v", err)
+			}
+
+		case <-time.After(1 * time.Second):
+			c.t.Fatalf("Timed out waiting for accept")
+		}
+	}
+
+	// Check that data gets properly segmented.
+	testBrokenUpWrite(c, maxPayload)
+}
+
+func TestForwarderSendMSSLessThanMTU(t *testing.T) {
+	const maxPayload = 100
+	const mtu = 1200
+	c := newTestContext(t, mtu)
+	defer c.cleanup()
+
+	s := c.s.(*stack.Stack)
+	ch := make(chan error, 1)
+	f := tcp.NewForwarder(s, 30000, 10, func(r *tcp.ForwarderRequest) {
+		var err error
+		c.ep, err = r.CreateEndpoint(&c.wq)
+		ch <- err
+	})
+	s.SetTransportProtocolHandler(tcp.ProtocolNumber, f.HandlePacket)
+
+	// Do 3-way handshake.
+	passiveConnect(c, maxPayload, mtu)
+
+	// Wait for connection to be available.
+	select {
+	case err := <-ch:
+		if err != nil {
+			c.t.Fatalf("Error creating endpoint: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		c.t.Fatalf("Timed out waiting for connection")
+	}
+
+	// Check that data gets properly segmented.
+	testBrokenUpWrite(c, maxPayload)
+}
+
+func TestMSSSentOnActiveConnect(t *testing.T) {
+	const mtu = 1400
+	c := newTestContext(t, mtu)
+	defer c.cleanup()
+
+	// Create TCP endpoint.
+	var err error
+	c.ep, err = c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &c.wq)
+	if err != nil {
+		c.t.Fatalf("NewEndpoint failed: %v", err)
+	}
+
+	// Start connection attempt.
+	we, ch := waiter.NewChannelEntry(nil)
+	c.wq.EventRegister(&we, waiter.EventOut)
+	defer c.wq.EventUnregister(&we)
+
+	err = c.ep.Connect(tcpip.FullAddress{Addr: testAddr, Port: testPort})
+	if err != tcpip.ErrConnectStarted {
+		c.t.Fatalf("Unexpected return value from Connect: %v", err)
+	}
+
+	// Receive SYN packet.
+	b := c.getPacket()
+	checker.IPv4(c.t, b,
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.TCPFlags(header.TCPFlagSyn),
+			checker.TCPMSS(mtu-header.IPv4MinimumSize-header.TCPMinimumSize),
+		),
+	)
+
+	tcp := header.TCP(header.IPv4(b).Payload())
+	c.irs = seqnum.Value(tcp.SequenceNumber())
+
+	// Wait for retransmit.
+	time.Sleep(1 * time.Second)
+	checker.IPv4(c.t, c.getPacket(),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.TCPFlags(header.TCPFlagSyn),
+			checker.SrcPort(tcp.SourcePort()),
+			checker.SeqNum(tcp.SequenceNumber()),
+			checker.TCPMSS(mtu-header.IPv4MinimumSize-header.TCPMinimumSize),
+		),
+	)
+
+	// Send SYN-ACK.
+	iss := seqnum.Value(789)
+	c.sendPacket(nil, &headers{
+		srcPort: tcp.DestinationPort(),
+		dstPort: tcp.SourcePort(),
+		flags:   header.TCPFlagSyn | header.TCPFlagAck,
+		seqNum:  iss,
+		ackNum:  c.irs.Add(1),
+		rcvWnd:  30000,
+	})
+
+	// Receive ACK packet.
+	checker.IPv4(c.t, c.getPacket(),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.TCPFlags(header.TCPFlagAck),
+			checker.SeqNum(uint32(c.irs)+1),
+			checker.AckNum(uint32(iss)+1),
+		),
+	)
+
+	// Wait for connection to be established.
+	select {
+	case <-ch:
+		err = c.ep.GetSockOpt(tcpip.ErrorOption{})
+		if err != nil {
+			c.t.Fatalf("Unexpected error when connecting: %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		c.t.Fatalf("Timed out waiting for connection")
 	}
 }
 

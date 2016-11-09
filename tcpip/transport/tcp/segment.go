@@ -42,6 +42,7 @@ type segment struct {
 	ackNumber      seqnum.Value
 	flags          uint8
 	window         seqnum.Size
+	options        []byte
 }
 
 func newSegment(r *stack.Route, id stack.TransportEndpointID, vv *buffer.VectorisedView) *segment {
@@ -112,11 +113,13 @@ func (s *segment) parse() bool {
 	// N.B. The segment has already been validated as having at least the
 	//      minimum TCP size before reaching here, so it's safe to read the
 	//      fields.
-	if offset := int(h.DataOffset()); offset < header.TCPMinimumSize || offset > len(h) {
+	offset := int(h.DataOffset())
+	if offset < header.TCPMinimumSize || offset > len(h) {
 		return false
 	}
 
-	s.data.TrimFront(int(h.DataOffset()))
+	s.options = []byte(h[header.TCPMinimumSize:offset])
+	s.data.TrimFront(offset)
 
 	s.sequenceNumber = seqnum.Value(h.SequenceNumber())
 	s.ackNumber = seqnum.Value(h.AckNumber())

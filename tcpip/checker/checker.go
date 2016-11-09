@@ -249,3 +249,40 @@ func TCPFlagsMatch(flags, mask uint8) TransportChecker {
 		}
 	}
 }
+
+// TCPMSS creates a checker that checks the tcp mss option is set to the given
+// value.
+func TCPMSS(mss uint16) TransportChecker {
+	return func(t *testing.T, h header.Transport) {
+		tcp, ok := h.(header.TCP)
+		if !ok {
+			return
+		}
+
+		offset := int(tcp.DataOffset())
+		opts := []byte(tcp[header.TCPMinimumSize:offset])
+		limit := len(opts)
+		found := false
+		for i := 0; i < limit; {
+			switch opts[i] {
+			case header.TCPOptionEOL:
+				i = limit
+			case header.TCPOptionNOP:
+				i++
+			case header.TCPOptionMSS:
+				v := uint16(opts[i+2])<<8 | uint16(opts[i+3])
+				if mss != v {
+					t.Fatalf("Bad MSS: got %v, want %v", v, mss)
+				}
+				found = true
+				i += 4
+			default:
+				i += int(opts[i+1])
+			}
+		}
+
+		if !found {
+			t.Fatalf("MSS option not found. Options: %x", opts)
+		}
+	}
+}

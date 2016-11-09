@@ -125,7 +125,7 @@ func stopAndDrainTimer(t *time.Timer, enabled *bool) {
 	}
 }
 
-func newSender(ep *endpoint, iss seqnum.Value, sndWnd seqnum.Size) *sender {
+func newSender(ep *endpoint, iss seqnum.Value, sndWnd seqnum.Size, mss uint16) *sender {
 	s := &sender{
 		ep:               ep,
 		resendTimer:      time.NewTimer(time.Hour),
@@ -138,22 +138,17 @@ func newSender(ep *endpoint, iss seqnum.Value, sndWnd seqnum.Size) *sender {
 		rto:              1 * time.Second,
 		rttMeasureSeqNum: iss + 1,
 		lastSendTime:     time.Now(),
+		maxPayloadSize:   int(mss),
+	}
+
+	m := int(ep.route.MTU()) - header.TCPMinimumSize
+	if m < s.maxPayloadSize {
+		s.maxPayloadSize = m
 	}
 
 	s.resendTimer.Stop()
 
 	return s
-}
-
-// payloadLimit returns the maximum size of the payload. The value first
-// calculated based on the route MTU, then cached.
-func (s *sender) payloadLimit() int {
-	if s.maxPayloadSize == 0 {
-		// TODO: Take MSS in SYN packet into account here.
-		m := s.ep.route.MTU() - uint32(header.TCPMinimumSize)
-		s.maxPayloadSize = int(m)
-	}
-	return s.maxPayloadSize
 }
 
 // sendAck sends an ACK segment. If canDelay is true, the ACK may be delayed by
@@ -263,7 +258,7 @@ func (s *sender) retransmitTimerExpired() bool {
 // sendData sends new data segments. It is called when data becomes available or
 // when the send window opens up.
 func (s *sender) sendData() {
-	limit := s.payloadLimit()
+	limit := s.maxPayloadSize
 
 	// Reduce the congestion window to min(IW, cwnd) per RFC 5681, page 10.
 	// "A TCP SHOULD set cwnd to no more than RW before beginning

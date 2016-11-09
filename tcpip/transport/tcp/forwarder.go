@@ -56,6 +56,11 @@ func (f *Forwarder) HandlePacket(r *stack.Route, id stack.TransportEndpointID, v
 		return false
 	}
 
+	mss, ok := parseSynOptions(s)
+	if !ok {
+		return false
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -75,6 +80,7 @@ func (f *Forwarder) HandlePacket(r *stack.Route, id stack.TransportEndpointID, v
 	go f.handler(&ForwarderRequest{
 		forwarder: f,
 		segment:   s,
+		mss:       mss,
 	})
 
 	return true
@@ -87,6 +93,7 @@ type ForwarderRequest struct {
 	mu        sync.Mutex
 	forwarder *Forwarder
 	segment   *segment
+	mss       uint16
 }
 
 // ID returns the 4-tuple (src address, src port, dst address, dst port) that
@@ -132,7 +139,7 @@ func (r *ForwarderRequest) CreateEndpoint(queue *waiter.Queue) (tcpip.Endpoint, 
 	}
 
 	f := r.forwarder
-	ep, err := f.listen.createEndpointAndPerformHandshake(r.segment)
+	ep, err := f.listen.createEndpointAndPerformHandshake(r.segment, r.mss)
 	if err != nil {
 		return nil, err
 	}
