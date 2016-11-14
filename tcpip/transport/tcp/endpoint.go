@@ -428,16 +428,15 @@ func (e *endpoint) Peek(w io.Writer) (uintptr, error) {
 	var num uintptr
 
 	for s := e.rcvList.Front(); s != nil; s = s.Next() {
-		if len(s.data.Views()) > 1 {
-			panic("send path does not support views with multiple buffers")
-		}
-		n, err := w.Write(s.data.First())
-		num += uintptr(n)
-		if err != nil {
-			return num, err
+		views := s.data.Views()
+		for i := s.viewToDeliver; i < len(views); i++ {
+			n, err := w.Write(views[i])
+			num += uintptr(n)
+			if err != nil {
+				return num, err
+			}
 		}
 	}
-
 	return num, nil
 }
 
