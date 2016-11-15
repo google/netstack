@@ -269,7 +269,7 @@ func (e *endpoint) cleanup() {
 	}
 
 	if e.isPortReserved {
-		e.stack.ReleasePort(e.effectiveNetProtos, ProtocolNumber, e.id.LocalPort)
+		e.stack.ReleasePort(e.effectiveNetProtos, ProtocolNumber, e.id.LocalAddress, e.id.LocalPort)
 	}
 
 	if e.isRegistered {
@@ -687,7 +687,7 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) error {
 	// before Connect: in such a case we don't want to hold on to
 	// reservations anymore.
 	if e.isPortReserved {
-		e.stack.ReleasePort(e.effectiveNetProtos, ProtocolNumber, e.id.LocalPort)
+		e.stack.ReleasePort(e.effectiveNetProtos, ProtocolNumber, e.id.LocalAddress, e.id.LocalPort)
 		e.isPortReserved = false
 	}
 
@@ -829,7 +829,7 @@ func (e *endpoint) Bind(addr tcpip.FullAddress, commit func() error) (retErr err
 	}
 
 	// Reserve the port.
-	port, err := e.stack.ReservePort(netProtos, ProtocolNumber, addr.Port)
+	port, err := e.stack.ReservePort(netProtos, ProtocolNumber, addr.Addr, addr.Port)
 	if err != nil {
 		return err
 	}
@@ -841,7 +841,7 @@ func (e *endpoint) Bind(addr tcpip.FullAddress, commit func() error) (retErr err
 	// Any failures beyond this point must remove the port registration.
 	defer func() {
 		if retErr != nil {
-			e.stack.ReleasePort(netProtos, ProtocolNumber, port)
+			e.stack.ReleasePort(netProtos, ProtocolNumber, addr.Addr, port)
 			e.isPortReserved = false
 			e.effectiveNetProtos = nil
 			e.id.LocalPort = 0
