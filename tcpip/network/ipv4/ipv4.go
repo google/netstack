@@ -38,21 +38,25 @@ const (
 type address [header.IPv4AddressSize]byte
 
 type endpoint struct {
-	nicid      tcpip.NICID
-	id         stack.NetworkEndpointID
-	address    address
-	linkEP     stack.LinkEndpoint
-	dispatcher stack.TransportDispatcher
+	nicid        tcpip.NICID
+	id           stack.NetworkEndpointID
+	address      address
+	linkEP       stack.LinkEndpoint
+	dispatcher   stack.TransportDispatcher
+	echoRequests chan echoRequest
 }
 
 func newEndpoint(nicid tcpip.NICID, addr tcpip.Address, dispatcher stack.TransportDispatcher, linkEP stack.LinkEndpoint) *endpoint {
 	e := &endpoint{
-		nicid:      nicid,
-		linkEP:     linkEP,
-		dispatcher: dispatcher,
+		nicid:        nicid,
+		linkEP:       linkEP,
+		dispatcher:   dispatcher,
+		echoRequests: make(chan echoRequest, 10),
 	}
 	copy(e.address[:], addr)
 	e.id = stack.NetworkEndpointID{tcpip.Address(e.address[:])}
+
+	go e.echoReplier()
 
 	return e
 }
@@ -124,7 +128,17 @@ func (e *endpoint) HandlePacket(r *stack.Route, vv *buffer.VectorisedView) {
 	tlen := int(h.TotalLength())
 	vv.TrimFront(hlen)
 	vv.CapLength(tlen - hlen)
-	e.dispatcher.DeliverTransportPacket(r, tcpip.TransportProtocolNumber(h.Protocol()), vv)
+	p := tcpip.TransportProtocolNumber(h.Protocol())
+	if p == header.ICMPv4ProtocolNumber {
+		e.handleICMP(r, vv)
+		return
+	}
+	e.dispatcher.DeliverTransportPacket(r, p, vv)
+}
+
+// Close cleans up resources associated with the endpoint.
+func (e *endpoint) Close() {
+	close(e.echoRequests)
 }
 
 type protocol struct{}

@@ -87,6 +87,8 @@ func (f *fakeNetworkEndpoint) WritePacket(r *stack.Route, hdr *buffer.Prependabl
 	return f.linkEP.WritePacket(r, hdr, payload, fakeNetNumber)
 }
 
+func (*fakeNetworkEndpoint) Close() {}
+
 // fakeNetworkProtocol is a network-layer protocol descriptor. It aggregates the
 // number of packets sent and received via endpoints of this protocol. The index
 // where packets are added is given by the packet's destination address MOD 10.

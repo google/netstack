@@ -103,6 +103,9 @@ func (e *endpoint) HandlePacket(r *stack.Route, vv *buffer.VectorisedView) {
 	e.dispatcher.DeliverTransportPacket(r, tcpip.TransportProtocolNumber(h.NextHeader()), vv)
 }
 
+// Close cleans up resources associated with the endpoint.
+func (*endpoint) Close() {}
+
 type protocol struct{}
 
 // NewProtocol creates a new protocol ipv6 protocol descriptor. This is exported

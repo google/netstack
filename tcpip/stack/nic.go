@@ -175,6 +175,7 @@ func (n *NIC) removeEndpointLocked(r *referencedNetworkEndpoint) {
 
 	delete(n.endpoints, id)
 	n.primary[r.protocol].Remove(r)
+	r.ep.Close()
 }
 
 func (n *NIC) removeEndpoint(r *referencedNetworkEndpoint) {

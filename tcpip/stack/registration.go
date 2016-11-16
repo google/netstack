@@ -104,6 +104,9 @@ type NetworkEndpoint interface {
 	// HandlePacket is called by the link layer when new packets arrive to
 	// this network endpoint.
 	HandlePacket(r *Route, vv *buffer.VectorisedView)
+
+	// Close is called when the endpoint is reomved from a stack.
+	Close()
 }
 
 // NetworkProtocol is the interface that needs to be implemented by network
