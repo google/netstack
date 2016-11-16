@@ -303,7 +303,7 @@ type ReuseAddressOption int
 // SCM_CREDENTIALS socket control messages are enabled.
 //
 // Only supported on Unix sockets.
-type PasscredOption int32
+type PasscredOption int
 
 // Route is a row in the routing table. It specifies through which NIC (and
 // gateway) sets of packets should be routed. A row is considered viable if the
