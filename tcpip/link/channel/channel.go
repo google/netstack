@@ -85,7 +85,8 @@ func (e *Endpoint) WritePacket(_ *stack.Route, hdr *buffer.Prependable, payload 
 	}
 
 	if payload != nil {
-		p.Payload = payload
+		p.Payload = make(buffer.View, len(payload))
+		copy(p.Payload, payload)
 	}
 
 	select {
