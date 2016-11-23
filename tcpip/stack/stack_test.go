@@ -109,7 +109,7 @@ func (*fakeNetworkProtocol) ParseAddresses(v buffer.View) (src, dst tcpip.Addres
 	return tcpip.Address(v[1:2]), tcpip.Address(v[0:1])
 }
 
-func (f *fakeNetworkProtocol) NewEndpoint(nicid tcpip.NICID, addr tcpip.Address, dispatcher stack.TransportDispatcher, linkEP stack.LinkEndpoint) (stack.NetworkEndpoint, error) {
+func (f *fakeNetworkProtocol) NewEndpoint(nicid tcpip.NICID, addr tcpip.Address, linkAddrCache stack.LinkAddressCache, dispatcher stack.TransportDispatcher, linkEP stack.LinkEndpoint) (stack.NetworkEndpoint, error) {
 	return &fakeNetworkEndpoint{
 		nicid:      nicid,
 		id:         stack.NetworkEndpointID{addr},
@@ -122,7 +122,7 @@ func (f *fakeNetworkProtocol) NewEndpoint(nicid tcpip.NICID, addr tcpip.Address,
 func TestNetworkReceive(t *testing.T) {
 	// Create a stack with the fake network protocol, one nic, and two
 	// addresses attached to it: 1 & 2.
-	id, linkEP := channel.New(10, defaultMTU)
+	id, linkEP := channel.New(10, defaultMTU, "")
 	s := stack.New([]string{"fakeNet"}, nil)
 	if err := s.CreateNIC(1, id); err != nil {
 		t.Fatalf("CreateNIC failed: %v", err)
@@ -215,7 +215,7 @@ func TestNetworkSend(t *testing.T) {
 	// Create a stack with the fake network protocol, one nic, and one
 	// address: 1. The route table sends all packets through the only
 	// existing nic.
-	id, linkEP := channel.New(10, defaultMTU)
+	id, linkEP := channel.New(10, defaultMTU, "")
 	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
 	if err := s.CreateNIC(1, id); err != nil {
 		t.Fatalf("NewNIC failed: %v", err)
@@ -240,7 +240,7 @@ func TestNetworkSendMultiRoute(t *testing.T) {
 	// even addresses.
 	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
 
-	id1, linkEP1 := channel.New(10, defaultMTU)
+	id1, linkEP1 := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(1, id1); err != nil {
 		t.Fatalf("CreateNIC failed: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestNetworkSendMultiRoute(t *testing.T) {
 		t.Fatalf("AddAddress failed: %v", err)
 	}
 
-	id2, linkEP2 := channel.New(10, defaultMTU)
+	id2, linkEP2 := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(2, id2); err != nil {
 		t.Fatalf("CreateNIC failed: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestRoutes(t *testing.T) {
 	// even addresses.
 	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
 
-	id1, _ := channel.New(10, defaultMTU)
+	id1, _ := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(1, id1); err != nil {
 		t.Fatalf("CreateNIC failed: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestRoutes(t *testing.T) {
 		t.Fatalf("AddAddress failed: %v", err)
 	}
 
-	id2, _ := channel.New(10, defaultMTU)
+	id2, _ := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(2, id2); err != nil {
 		t.Fatalf("CreateNIC failed: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestRoutes(t *testing.T) {
 func TestAddressRemoval(t *testing.T) {
 	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
 
-	id, linkEP := channel.New(10, defaultMTU)
+	id, linkEP := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(1, id); err != nil {
 		t.Fatalf("CreateNIC failed: %v", err)
 	}
@@ -425,7 +425,7 @@ func TestAddressRemoval(t *testing.T) {
 func TestDelayedRemovalDueToRoute(t *testing.T) {
 	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
 
-	id, linkEP := channel.New(10, defaultMTU)
+	id, linkEP := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(1, id); err != nil {
 		t.Fatalf("CreateNIC failed: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestDelayedRemovalDueToRoute(t *testing.T) {
 func TestPromiscuousMode(t *testing.T) {
 	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
 
-	id, linkEP := channel.New(10, defaultMTU)
+	id, linkEP := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(1, id); err != nil {
 		t.Fatalf("CreateNIC failed: %v", err)
 	}
@@ -547,7 +547,7 @@ func TestPromiscuousMode(t *testing.T) {
 func TestSubnetAcceptsMatchingPacket(t *testing.T) {
 	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
 
-	id, linkEP := channel.New(10, defaultMTU)
+	id, linkEP := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(1, id); err != nil {
 		t.Fatalf("CreateNIC failed: %v", err)
 	}
@@ -579,7 +579,7 @@ func TestSubnetAcceptsMatchingPacket(t *testing.T) {
 func TestSubnetRejectsNonmatchingPacket(t *testing.T) {
 	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
 
-	id, linkEP := channel.New(10, defaultMTU)
+	id, linkEP := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(1, id); err != nil {
 		t.Fatalf("CreateNIC failed: %v", err)
 	}

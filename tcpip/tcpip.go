@@ -402,3 +402,7 @@ func (a Address) String() string {
 		return fmt.Sprintf("%x", []byte(a))
 	}
 }
+
+// LinkAddress is a byte slice cast as a string that represents a link address.
+// It is typically a 6-byte MAC address.
+type LinkAddress string

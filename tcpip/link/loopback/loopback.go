@@ -44,6 +44,11 @@ func (*endpoint) MaxHeaderLength() uint16 {
 	return 0
 }
 
+// LinkAddress returns the link address of this endpoint.
+func (*endpoint) LinkAddress() tcpip.LinkAddress {
+	return ""
+}
+
 // WritePacket implements stack.LinkEndpoint.WritePacket. It delivers outbound
 // packets to the network-layer dispatcher.
 func (e *endpoint) WritePacket(_ *stack.Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.NetworkProtocolNumber) error {

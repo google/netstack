@@ -95,7 +95,7 @@ func (n *NIC) addAddressLocked(protocol tcpip.NetworkProtocolNumber, addr tcpip.
 	}
 
 	// Create the new network endpoint.
-	ep, err := netProto.NewEndpoint(n.id, addr, n, n.linkEP)
+	ep, err := netProto.NewEndpoint(n.id, addr, n.stack, n, n.linkEP)
 	if err != nil {
 		return nil, err
 	}
@@ -263,6 +263,7 @@ func (n *NIC) DeliverNetworkPacket(linkEP LinkEndpoint, protocol tcpip.NetworkPr
 	}
 
 	r := makeRoute(protocol, dst, src, ref)
+	r.LocalLinkAddress = linkEP.LinkAddress()
 	ref.ep.HandlePacket(&r, vv)
 	ref.decRef()
 }

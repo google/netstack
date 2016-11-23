@@ -175,7 +175,7 @@ func (*fakeTransportProtocol) HandleUnknownDestinationPacket(*stack.Route, stack
 }
 
 func TestTransportReceive(t *testing.T) {
-	id, linkEP := channel.New(10, defaultMTU)
+	id, linkEP := channel.New(10, defaultMTU, "")
 	s := stack.New([]string{"fakeNet"}, []string{"fakeTrans"})
 	if err := s.CreateNIC(1, id); err != nil {
 		t.Fatalf("CreateNIC failed: %v", err)
@@ -233,7 +233,7 @@ func TestTransportReceive(t *testing.T) {
 }
 
 func TestTransportSend(t *testing.T) {
-	id, _ := channel.New(10, defaultMTU)
+	id, _ := channel.New(10, defaultMTU, "")
 	s := stack.New([]string{"fakeNet"}, []string{"fakeTrans"})
 	if err := s.CreateNIC(1, id); err != nil {
 		t.Fatalf("CreateNIC failed: %v", err)

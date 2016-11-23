@@ -58,6 +58,11 @@ func (*Endpoint) MaxHeaderLength() uint16 {
 	return 0
 }
 
+// LinkAddress returns the link address of this endpoint.
+func (e *Endpoint) LinkAddress() tcpip.LinkAddress {
+	return ""
+}
+
 // WritePacket writes outbound packets to the net.Conn.
 func (e *Endpoint) WritePacket(_ *stack.Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.NetworkProtocolNumber) error {
 	buf := make([]byte, len(payload)+hdr.UsedLength())

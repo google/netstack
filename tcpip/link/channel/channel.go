@@ -25,16 +25,18 @@ type PacketInfo struct {
 type Endpoint struct {
 	dispatcher stack.NetworkDispatcher
 	mtu        uint32
+	linkAddr   tcpip.LinkAddress
 
 	// C is where outbound packets are queued.
 	C chan PacketInfo
 }
 
 // New creates a new channel endpoint.
-func New(size int, mtu uint32) (tcpip.LinkEndpointID, *Endpoint) {
+func New(size int, mtu uint32, linkAddr tcpip.LinkAddress) (tcpip.LinkEndpointID, *Endpoint) {
 	e := &Endpoint{
-		C:   make(chan PacketInfo, size),
-		mtu: mtu,
+		C:        make(chan PacketInfo, size),
+		mtu:      mtu,
+		linkAddr: linkAddr,
 	}
 
 	return stack.RegisterLinkEndpoint(e), e
@@ -75,6 +77,11 @@ func (e *Endpoint) MTU() uint32 {
 // doesn't have a header, it just returns 0.
 func (*Endpoint) MaxHeaderLength() uint16 {
 	return 0
+}
+
+// LinkAddress returns the link address of this endpoint.
+func (e *Endpoint) LinkAddress() tcpip.LinkAddress {
+	return e.linkAddr
 }
 
 // WritePacket stores outbound packets into the channel.

@@ -15,8 +15,16 @@ type Route struct {
 	// RemoteAddress is the final destination of the route.
 	RemoteAddress tcpip.Address
 
+	// RemoteLinkAddress is the link-layer (MAC) address of the
+	// final destination of the route.
+	RemoteLinkAddress tcpip.LinkAddress
+
 	// LocalAddress is the local address where the route starts.
 	LocalAddress tcpip.Address
+
+	// LocalLinkAddress is the link-layer (MAC) address of the
+	// where the route starts.
+	LocalLinkAddress tcpip.LinkAddress
 
 	// NextHop is the next node in the path to the destination.
 	NextHop tcpip.Address

@@ -125,7 +125,7 @@ type NetworkProtocol interface {
 	ParseAddresses(v buffer.View) (src, dst tcpip.Address)
 
 	// NewEndpoint creates a new endpoint of this protocol.
-	NewEndpoint(nicid tcpip.NICID, addr tcpip.Address, dispatcher TransportDispatcher, sender LinkEndpoint) (NetworkEndpoint, error)
+	NewEndpoint(nicid tcpip.NICID, addr tcpip.Address, linkAddrCache LinkAddressCache, dispatcher TransportDispatcher, sender LinkEndpoint) (NetworkEndpoint, error)
 }
 
 // NetworkDispatcher contains the methods used by the network stack to deliver
@@ -153,6 +153,10 @@ type LinkEndpoint interface {
 	// building.
 	MaxHeaderLength() uint16
 
+	// LinkAddress returns the link address (typically a MAC) of the
+	// link endpoint.
+	LinkAddress() tcpip.LinkAddress
+
 	// WritePacket writes a packet with the given protocol through the given
 	// route.
 	WritePacket(r *Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.NetworkProtocolNumber) error
@@ -160,6 +164,32 @@ type LinkEndpoint interface {
 	// Attach attaches the data link layer endpoint to the network-layer
 	// dispatcher of the stack.
 	Attach(dispatcher NetworkDispatcher)
+}
+
+// A LinkAddressResolver is an extension to a NetworkProtocol that
+// can resolve link addresses.
+type LinkAddressResolver interface {
+	// LinkAddressRequest sends a request for the LinkAddress of addr.
+	// The request is sent on linkEP with localAddr as the source.
+	//
+	// A valid response will cause the discovery protocol's network
+	// endpoint to call AddLinkAddress.
+	LinkAddressRequest(addr, localAddr tcpip.Address, linkEP LinkEndpoint) error
+
+	// LinkAddressProtocol returns the network protocol of the
+	// addresses this this resolver can resolve.
+	LinkAddressProtocol() tcpip.NetworkProtocolNumber
+}
+
+// A LinkAddressCache caches link addresses.
+type LinkAddressCache interface {
+	// CheckLocalAddress determines if the given local address exists, and if it
+	// does, returns the id of the NIC it's bound to. Returns 0 if the address
+	// does not exist.
+	CheckLocalAddress(nicid tcpip.NICID, addr tcpip.Address) tcpip.NICID
+
+	// AddLinkAddress adds a link address to the cache.
+	AddLinkAddress(nicid tcpip.NICID, addr tcpip.Address, linkAddr tcpip.LinkAddress)
 }
 
 var (

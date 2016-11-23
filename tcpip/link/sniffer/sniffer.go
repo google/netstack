@@ -61,6 +61,10 @@ func (e *endpoint) MaxHeaderLength() uint16 {
 	return e.lower.MaxHeaderLength()
 }
 
+func (e *endpoint) LinkAddress() tcpip.LinkAddress {
+	return e.lower.LinkAddress()
+}
+
 // WritePacket implements the stack.LinkEndpoint interface. It is called by
 // higher-level protocols to write packets; it just logs the packet and forwards
 // the request to the lower endpoint.

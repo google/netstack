@@ -74,6 +74,11 @@ func (*endpoint) MaxHeaderLength() uint16 {
 	return 0
 }
 
+// LinkAddress returns the link address of this endpoint.
+func (*endpoint) LinkAddress() tcpip.LinkAddress {
+	return ""
+}
+
 // WritePacket writes outbound packets to the file descriptor. If it is not
 // currently writable, the packet is dropped.
 func (e *endpoint) WritePacket(_ *stack.Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.NetworkProtocolNumber) error {

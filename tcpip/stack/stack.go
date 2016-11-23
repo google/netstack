@@ -32,6 +32,7 @@ type transportProtocolState struct {
 type Stack struct {
 	transportProtocols map[tcpip.TransportProtocolNumber]*transportProtocolState
 	networkProtocols   map[tcpip.NetworkProtocolNumber]NetworkProtocol
+	linkAddrResolvers  map[tcpip.NetworkProtocolNumber]LinkAddressResolver
 
 	demux *transportDemuxer
 
@@ -54,6 +55,7 @@ func New(network []string, transport []string) tcpip.Stack {
 	s := &Stack{
 		transportProtocols: make(map[tcpip.TransportProtocolNumber]*transportProtocolState),
 		networkProtocols:   make(map[tcpip.NetworkProtocolNumber]NetworkProtocol),
+		linkAddrResolvers:  make(map[tcpip.NetworkProtocolNumber]LinkAddressResolver),
 		nics:               make(map[tcpip.NICID]*NIC),
 		PortManager:        ports.NewPortManager(),
 	}
@@ -66,6 +68,10 @@ func New(network []string, transport []string) tcpip.Stack {
 		}
 
 		s.networkProtocols[netProto.Number()] = netProto
+
+		if r, ok := netProto.(LinkAddressResolver); ok {
+			s.linkAddrResolvers[r.LinkAddressProtocol()] = r
+		}
 	}
 
 	// Add specified transport protocols.
@@ -319,6 +325,13 @@ func (s *Stack) SetPromiscuousMode(nicID tcpip.NICID, enable bool) error {
 	nic.setPromiscuousMode(enable)
 
 	return nil
+}
+
+// AddLinkAddress adds a link address to the stack link cache.
+func (s *Stack) AddLinkAddress(nicid tcpip.NICID, addr tcpip.Address, linkAddr tcpip.LinkAddress) {
+	// TODO(crawshaw): cache the linkAddr, and provide a way for a
+	// transport endpoint to receive a signal that AddLinkAddress
+	// for a particular address has been called.
 }
 
 // RegisterTransportEndpoint registers the given endpoint with the stack

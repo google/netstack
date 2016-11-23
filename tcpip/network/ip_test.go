@@ -81,6 +81,11 @@ func (*testObject) MaxHeaderLength() uint16 {
 	return 0
 }
 
+// LinkAddress returns the link address of this endpoint.
+func (*testObject) LinkAddress() tcpip.LinkAddress {
+	return ""
+}
+
 // WritePacket is called by network endpoints after producing a packet and
 // writing it to the link endpoint. This is used by the test object to verify
 // that the produced packet is as expected.
@@ -110,7 +115,7 @@ func (t *testObject) WritePacket(_ *stack.Route, hdr *buffer.Prependable, payloa
 func TestIPv4Send(t *testing.T) {
 	o := testObject{t: t, v4: true}
 	proto := ipv4.NewProtocol()
-	ep, err := proto.NewEndpoint(1, "\x0a\x00\x00\x01", nil, &o)
+	ep, err := proto.NewEndpoint(1, "\x0a\x00\x00\x01", nil, nil, &o)
 	if err != nil {
 		t.Fatalf("NewEndpoint failed: %v", err)
 	}
@@ -142,7 +147,7 @@ func TestIPv4Send(t *testing.T) {
 func TestIPv4Receive(t *testing.T) {
 	o := testObject{t: t, v4: true}
 	proto := ipv4.NewProtocol()
-	ep, err := proto.NewEndpoint(1, "\x0a\x00\x00\x01", &o, nil)
+	ep, err := proto.NewEndpoint(1, "\x0a\x00\x00\x01", nil, &o, nil)
 	if err != nil {
 		t.Fatalf("NewEndpoint failed: %v", err)
 	}
@@ -182,7 +187,7 @@ func TestIPv4Receive(t *testing.T) {
 func TestIPv6Send(t *testing.T) {
 	o := testObject{t: t}
 	proto := ipv6.NewProtocol()
-	ep, err := proto.NewEndpoint(1, "\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01", nil, &o)
+	ep, err := proto.NewEndpoint(1, "\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01", nil, nil, &o)
 	if err != nil {
 		t.Fatalf("NewEndpoint failed: %v", err)
 	}
@@ -214,7 +219,7 @@ func TestIPv6Send(t *testing.T) {
 func TestIPv6Receive(t *testing.T) {
 	o := testObject{t: t}
 	proto := ipv6.NewProtocol()
-	ep, err := proto.NewEndpoint(1, "\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01", &o, nil)
+	ep, err := proto.NewEndpoint(1, "\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01", nil, &o, nil)
 	if err != nil {
 		t.Fatalf("NewEndpoint failed: %v", err)
 	}

@@ -29,7 +29,7 @@ func newTestContext(t *testing.T) *testContext {
 	s := stack.New([]string{ipv4.ProtocolName}, []string{ipv4.PingProtocolName})
 
 	const defaultMTU = 65536
-	id, linkEP := channel.New(256, defaultMTU)
+	id, linkEP := channel.New(256, defaultMTU, "")
 	if testing.Verbose() {
 		id = sniffer.New(id)
 	}
