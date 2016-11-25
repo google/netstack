@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package fragmentation contains the implementation of IP fragmentation.
-// It is based on RFC 791 and RFC 815.
 package fragmentation
 
 import (
@@ -14,7 +12,7 @@ import (
 )
 
 type fragment struct {
-	offset int
+	offset uint16
 	vv     *buffer.VectorisedView
 }
 
@@ -57,9 +55,9 @@ func (h *fragHeap) reassemble() (buffer.VectorisedView, error) {
 
 	for h.Len() > 0 {
 		curr := heap.Pop(h).(fragment)
-		if curr.offset < size {
-			curr.vv.TrimFront(size - curr.offset)
-		} else if curr.offset > size {
+		if int(curr.offset) < size {
+			curr.vv.TrimFront(size - int(curr.offset))
+		} else if int(curr.offset) > size {
 			return buffer.NewVectorisedView(0, nil), fmt.Errorf("packet has a hole, expected offset %d, got %d", size, curr.offset)
 		}
 		size += curr.vv.Size()

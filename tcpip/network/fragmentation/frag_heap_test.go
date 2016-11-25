@@ -12,17 +12,6 @@ import (
 	"github.com/google/netstack/tcpip/buffer"
 )
 
-// vv is a helper to build VectorisedView from different strings.
-func vv(size int, pieces ...string) *buffer.VectorisedView {
-	views := make([]buffer.View, len(pieces))
-	for i, p := range pieces {
-		views[i] = []byte(p)
-	}
-
-	vv := buffer.NewVectorisedView(size, views)
-	return &vv
-}
-
 var reassambleTestCases = []struct {
 	comment string
 	in      []fragment
