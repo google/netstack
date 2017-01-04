@@ -5,32 +5,105 @@
 package unix
 
 import (
+	"sync"
+	"sync/atomic"
+
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/transport/queue"
 	"github.com/google/netstack/waiter"
 )
 
-// connectionedEndpoint is a unix-domain connected or connectable endpoint.
+// UniqueID is used to generate endpoint ids.
+var UniqueID = func() func() uint64 {
+	var id uint64
+	return func() uint64 {
+		return atomic.AddUint64(&id, 1)
+	}
+}()
+
+// A ConnectingEndpoint is a connectioned unix endpoint that is attempting to
+// connect to a ConnectionedEndpoint.
+type ConnectingEndpoint interface {
+	// ID returns the endpoint's globally unique identifier. This identifier
+	// must be used to determine locking order if more than one endpoint is
+	// to be locked in the same codepath. The endpoint with the smaller
+	// identifier must be locked before endpoints with larger identifiers.
+	ID() uint64
+
+	// Passcred implements socket.Credentialer.Passcred.
+	Passcred() bool
+
+	// GetLocalAddress returns the bound path.
+	GetLocalAddress() (tcpip.FullAddress, error)
+
+	// Locker protects the following methods. While locked, only the holder of
+	// the lock can change the return value of the protected methods.
+	sync.Locker
+
+	// Connected returns true iff the ConnectingEndpoint is in the connected
+	// state. ConnectingEndpoints can only be connected to a single endpoint,
+	// so the connection attempt must be aborted if this returns true.
+	Connected() bool
+
+	// Listening returns true iff the ConnectingEndpoint is in the listening
+	// state. ConnectingEndpoints cannot make connections while listening, so
+	// the connection attempt must be aborted if this returns true.
+	Listening() bool
+
+	// WaiterQueue returns a pointer to the endpoint's waiter queue.
+	WaiterQueue() *waiter.Queue
+}
+
+// A ConnectableEndpoint is a unix endpoint that can be connected to.
+type ConnectableEndpoint interface {
+	// BidirectionalConnect establishes a bi-directional connection between two
+	// unix endpoints in an all-or-nothing manner. If an error occurs during
+	// connecting, the state of neither endpoint should be modified.
+	//
+	// In order for an endpoint to establish such a bidirectional connection
+	// with a ConnectableEndpoint, the endpoint calls the BidirectionalConnect
+	// method on the ConnectableEndpoint and sends a representation of itself
+	// (the ConnectingEndpoint) and a callback (returnConnect) to receive the
+	// connection information (Receiver and ConnectedEndpoint) upon a
+	// sucessful connect. The callback should only be called on a sucessful
+	// connect.
+	//
+	// For a connection attempt to be sucessful, the ConnectingEndpoint must
+	// be unconnected and not listening and the ConnectableEndpoint whose
+	// BidirectionalConnect method is being called must be listening.
+	//
+	// For example, both STREAM and SEQPACKET sockets implement
+	// ConnectableEndpoint, but DGRAM sockets do not (see
+	// ConnectionlessEndpoint).
+	BidirectionalConnect(ep ConnectingEndpoint, returnConnect func(Receiver, ConnectedEndpoint)) error
+}
+
+// connectionedEndpoint is a Unix-domain connected or connectable endpoint and implements
+// ConnectingEndpoint, ConnectableEndpoint and tcpip.Endpoint.
 //
 // connectionedEndpoints must be in connected state in order to transfer data.
 //
-// This implementation includes stream and seqpacket unix sockets created with
+// This implementation includes STREAM and SEQPACKET Unix sockets created with
 // socket(2), accept(2) or socketpair(2) and dgram unix sockets created with
-// socketpair(2). See unix_connectionless.go for the implementation of dgram
-// unix sockets created with socket(2).
+// socketpair(2). See unix_connectionless.go for the implementation of DGRAM
+// Unix sockets created with socket(2).
 //
 // The state is much simpler than a TCP endpoint, so it is not encoded
 // explicitly. Instead we enforce the following invariants:
 //
-// readQueue != nil, writeQueue != nil => connected.
+// receiver != nil, connected != nil => connected.
 // path != "" && acceptedChan == nil => bound, not listening.
 // path != "" && acceptedChan != nil => bound and listening.
 //
-// Only one of these will be true at any moment. See the isX functions.
+// Only one of these will be true at any moment.
 type connectionedEndpoint struct {
 	baseEndpoint
 
-	// waiterQueue is protected by baseEndpoint.mu.
+	// id is the unique endpoint identifier. This is used exclusively for
+	// lock ordering within connect.
+	id uint64
+
+	// waiterQueue is protected by baseEndpoint.Mutex.
 	waiterQueue *waiter.Queue
 
 	// acceptedChan is per the TCP endpoint implementation. Note that the
@@ -44,8 +117,8 @@ type connectionedEndpoint struct {
 // NewConnectioned creates a new unbound connectionedEndpoint.
 func NewConnectioned(wq *waiter.Queue) tcpip.Endpoint {
 	ep := &connectionedEndpoint{
-		baseEndpoint: baseEndpoint{id: uniqueID()},
-		waiterQueue:  wq,
+		id:          UniqueID(),
+		waiterQueue: wq,
 	}
 	ep.baseEndpoint.isBound = ep.isBound
 	return ep
@@ -57,27 +130,39 @@ func NewPair(wq1 *waiter.Queue, wq2 *waiter.Queue) (tcpip.Endpoint, tcpip.Endpoi
 	q2 := queue.New(wq2, wq1, initialLimit)
 
 	a := &connectionedEndpoint{
-		baseEndpoint: baseEndpoint{
-			id:         uniqueID(),
-			readQueue:  q1,
-			writeQueue: q2,
-		},
-		waiterQueue: wq1,
+		baseEndpoint: baseEndpoint{receiver: &queueReceiver{q1}},
+		id:           UniqueID(),
+		waiterQueue:  wq1,
 	}
 	b := &connectionedEndpoint{
-		baseEndpoint: baseEndpoint{
-			id:         uniqueID(),
-			readQueue:  q2,
-			writeQueue: q1,
-		},
-		waiterQueue: wq2,
+		baseEndpoint: baseEndpoint{receiver: &queueReceiver{q2}},
+		id:           UniqueID(),
+		waiterQueue:  wq2,
 	}
+
+	a.connected = &connectedEndpoint{
+		endpoint:   b,
+		writeQueue: q2,
+	}
+	b.connected = &connectedEndpoint{
+		endpoint:   a,
+		writeQueue: q1,
+	}
+
 	a.baseEndpoint.isBound = a.isBound
 	b.baseEndpoint.isBound = b.isBound
-	a.connectedEP = b
-	b.connectedEP = a
 
 	return a, b
+}
+
+// ID implements ConnectingEndpoint.ID.
+func (e *connectionedEndpoint) ID() uint64 {
+	return e.id
+}
+
+// WaiterQueue implements ConnectingEndpoint.WaiterQueue.
+func (e *connectionedEndpoint) WaiterQueue() *waiter.Queue {
+	return e.waiterQueue
 }
 
 // isBound returns true iff the connectionedEndpoint is bound.
@@ -85,8 +170,8 @@ func (e *connectionedEndpoint) isBound() bool {
 	return e.path != "" && e.acceptedChan == nil
 }
 
-// isListening returns true iff the connectionedEndpoint is listening.
-func (e *connectionedEndpoint) isListening() bool {
+// Listening implements ConnectingEndpoint.Listening.
+func (e *connectionedEndpoint) Listening() bool {
 	return e.acceptedChan != nil
 }
 
@@ -97,19 +182,17 @@ func (e *connectionedEndpoint) isListening() bool {
 // That is, close may be used to "unbind" or "disconnect" the socket in error
 // paths.
 func (e *connectionedEndpoint) Close() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.Lock()
+	defer e.Unlock()
 	switch {
-	case e.isConnected():
-		e.writeQueue.Close()
-		e.readQueue.Close()
-		e.readQueue.Reset()
-		e.writeQueue = nil
-		e.readQueue = nil
-		e.connectedEP = nil
+	case e.Connected():
+		e.connected.CloseSend()
+		e.receiver.CloseRecv()
+		e.connected = nil
+		e.receiver = nil
 	case e.isBound():
 		e.path = ""
-	case e.isListening():
+	case e.Listening():
 		close(e.acceptedChan)
 		for n := range e.acceptedChan {
 			n.Close()
@@ -119,63 +202,63 @@ func (e *connectionedEndpoint) Close() {
 	}
 }
 
-// ConnectEndpoint attempts to connect directly to other.
-func (e *connectionedEndpoint) ConnectEndpoint(server tcpip.Endpoint) error {
-	bound, ok := server.(*connectionedEndpoint)
-	if !ok {
-		return tcpip.ErrConnectionRefused
-	}
-
-	// Do a dance to safely acquire locks on both connectionedEndpoints.
-	if e.id < bound.id {
-		e.mu.Lock()
-		bound.mu.Lock()
+// BidirectionalConnect implements ConnectableEndpoint.BidirectionalConnect.
+func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, returnConnect func(Receiver, ConnectedEndpoint)) error {
+	// Do a dance to safely acquire locks on both endpoints.
+	if e.id < ce.ID() {
+		e.Lock()
+		ce.Lock()
 	} else {
-		bound.mu.Lock()
-		e.mu.Lock()
+		ce.Lock()
+		e.Lock()
 	}
-	defer e.mu.Unlock()
-	defer bound.mu.Unlock()
+	defer e.Unlock()
+	defer ce.Unlock()
 
 	// Check connecting state.
-	if e.isConnected() {
+	if ce.Connected() {
 		return tcpip.ErrAlreadyConnected
 	}
-	if e.isListening() {
+	if ce.Listening() {
 		return tcpip.ErrInvalidEndpointState
 	}
 
 	// Check bound state.
-	if !bound.isListening() {
+	if !e.Listening() {
 		return tcpip.ErrConnectionRefused
 	}
 
 	// Create a newly bound connectionedEndpoint.
 	wq := &waiter.Queue{}
-	readQueue := queue.New(e.waiterQueue, wq, initialLimit)
-	writeQueue := queue.New(wq, e.waiterQueue, initialLimit)
+	readQueue := queue.New(ce.WaiterQueue(), wq, initialLimit)
+	writeQueue := queue.New(wq, ce.WaiterQueue(), initialLimit)
 	ne := &connectionedEndpoint{
 		baseEndpoint: baseEndpoint{
-			id:          uniqueID(),
-			readQueue:   writeQueue,
-			writeQueue:  readQueue,
-			connectedEP: e,
-			path:        bound.path,
+			connected: &connectedEndpoint{
+				endpoint:   ce,
+				writeQueue: readQueue,
+			},
+			receiver: &queueReceiver{readQueue: writeQueue},
+			path:     e.path,
 		},
+		id:          UniqueID(),
 		waiterQueue: wq,
 	}
 	ne.baseEndpoint.isBound = ne.isBound
 
 	select {
-	case bound.acceptedChan <- ne:
+	case e.acceptedChan <- ne:
 		// Commit state.
-		e.readQueue = readQueue
-		e.writeQueue = writeQueue
-		e.connectedEP = ne
+		connected := &connectedEndpoint{
+			endpoint:   ne,
+			writeQueue: writeQueue,
+		}
+		receiver := &queueReceiver{readQueue: readQueue}
+		returnConnect(receiver, connected)
 
 		// Notify on the other end.
-		bound.waiterQueue.Notify(waiter.EventIn)
-		e.waiterQueue.Notify(waiter.EventOut)
+		e.waiterQueue.Notify(waiter.EventIn)
+
 		return nil
 	default:
 		// Busy; return ECONNREFUSED per spec.
@@ -184,11 +267,31 @@ func (e *connectionedEndpoint) ConnectEndpoint(server tcpip.Endpoint) error {
 	}
 }
 
+// ConnectEndpoint attempts to directly connect to another tcpip.Endpoint.
+// Implements tcpip.Endpoint.ConnectEndpoint.
+//
+// FIXME: Currently SREAM and SEQPACKET sockets can connect to
+// each other.
+func (e *connectionedEndpoint) ConnectEndpoint(server tcpip.Endpoint) error {
+	bound, ok := server.(ConnectableEndpoint)
+	if !ok {
+		return tcpip.ErrConnectionRefused
+	}
+
+	returnConnect := func(r Receiver, ce ConnectedEndpoint) {
+		e.receiver = r
+		e.connected = ce
+		e.waiterQueue.Notify(waiter.EventOut)
+	}
+
+	return bound.BidirectionalConnect(e, returnConnect)
+}
+
 // Listen starts listening on the connection.
 func (e *connectionedEndpoint) Listen(backlog int) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.isListening() {
+	e.Lock()
+	defer e.Unlock()
+	if e.Listening() {
 		// Adjust the size of the channel iff we can fix existing
 		// pending connections into the new one.
 		if len(e.acceptedChan) > backlog {
@@ -213,10 +316,10 @@ func (e *connectionedEndpoint) Listen(backlog int) error {
 
 // Accept accepts a new connection.
 func (e *connectionedEndpoint) Accept() (tcpip.Endpoint, *waiter.Queue, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.Lock()
+	defer e.Unlock()
 
-	if !e.isListening() {
+	if !e.Listening() {
 		return nil, nil, tcpip.ErrInvalidEndpointState
 	}
 
@@ -239,9 +342,9 @@ func (e *connectionedEndpoint) Accept() (tcpip.Endpoint, *waiter.Queue, error) {
 // Bind will fail only if the socket is connected, bound or the passed address
 // is invalid (the empty string).
 func (e *connectionedEndpoint) Bind(addr tcpip.FullAddress, commit func() error) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.isConnected() {
+	e.Lock()
+	defer e.Unlock()
+	if e.Connected() {
 		return tcpip.ErrAlreadyConnected
 	}
 	if e.isBound() {
@@ -266,19 +369,19 @@ func (e *connectionedEndpoint) Bind(addr tcpip.FullAddress, commit func() error)
 // example, if waiter.EventIn is set, the connectionedEndpoint is immediately
 // readable.
 func (e *connectionedEndpoint) Readiness(mask waiter.EventMask) waiter.EventMask {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.Lock()
+	defer e.Unlock()
 
 	ready := waiter.EventMask(0)
 	switch {
-	case e.isConnected():
-		if mask&waiter.EventIn != 0 && e.readQueue.IsReadable() {
+	case e.Connected():
+		if mask&waiter.EventIn != 0 && e.receiver.Readable() {
 			ready |= waiter.EventIn
 		}
-		if mask&waiter.EventOut != 0 && e.writeQueue.IsWritable() {
+		if mask&waiter.EventOut != 0 && e.connected.Writable() {
 			ready |= waiter.EventOut
 		}
-	case e.isListening():
+	case e.Listening():
 		if mask&waiter.EventIn != 0 && len(e.acceptedChan) > 0 {
 			ready |= waiter.EventIn
 		}

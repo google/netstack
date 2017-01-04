@@ -11,10 +11,14 @@ import (
 	"github.com/google/netstack/waiter"
 )
 
-// A ConnectionlessEndpoint is a tcpip.Endpoint that allows sending messages
-// to other endpoints without being connected.
+// A ConnectionlessEndpoint is a Unix endpoint that allows sending messages
+// to other endpoints without being connected. Unlike ConnectableEndpoints,
+// ConnectionlessEndpoints do not support bidectional connections and instead
+// support non-monogamous unidirectional connections (effectively a default
+// sending destination).
 type ConnectionlessEndpoint interface {
-	tcpip.Endpoint
+	// UnidirectionalConnect establishes a connection to a ConnectionlessEndpoint.
+	UnidirectionalConnect() ConnectedEndpoint
 
 	// SendMsgTo writes data and a control message to the specified endpoint.
 	SendMsgTo(v buffer.View, c tcpip.ControlMessages, to tcpip.Endpoint) (uintptr, error)
@@ -32,8 +36,7 @@ type connectionlessEndpoint struct {
 // NewConnectionless creates a new unbound dgram endpoint.
 func NewConnectionless(wq *waiter.Queue) tcpip.Endpoint {
 	ep := &connectionlessEndpoint{baseEndpoint{
-		id:        uniqueID(),
-		readQueue: queue.New(&waiter.Queue{}, wq, initialLimit),
+		receiver: &queueReceiver{readQueue: queue.New(&waiter.Queue{}, wq, initialLimit)},
 	}}
 	ep.baseEndpoint.isBound = ep.isBound
 	return ep
@@ -51,40 +54,43 @@ func (e *connectionlessEndpoint) isBound() bool {
 // That is, close may be used to "unbind" or "disconnect" the socket in error
 // paths.
 func (e *connectionlessEndpoint) Close() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.isConnected() {
-		e.readQueue.Close()
-		e.readQueue.Reset()
-		e.readQueue = nil
-		e.writeQueue = nil
-		e.connectedEP = nil
+	e.Lock()
+	defer e.Unlock()
+	if e.Connected() {
+		e.receiver.CloseRecv()
+		e.receiver = nil
+		e.connected = nil
 	}
 	if e.isBound() {
 		e.path = ""
 	}
 }
 
+// UnidirectionalConnect implements ConnectionlessEndpoint.UnidirectionalConnect.
+func (e *connectionlessEndpoint) UnidirectionalConnect() ConnectedEndpoint {
+	return &connectedEndpoint{
+		endpoint:   e,
+		writeQueue: e.receiver.(*queueReceiver).readQueue,
+	}
+}
+
 // SendMsgTo writes data and a control message to the specified endpoint.
 // This method does not block if the data cannot be written.
 func (e *connectionlessEndpoint) SendMsgTo(v buffer.View, c tcpip.ControlMessages, to tcpip.Endpoint) (uintptr, error) {
-	var toDgram *connectionlessEndpoint
-	if toDgram, _ = to.(*connectionlessEndpoint); toDgram == nil {
-		// Either to was nil or not a *connectionlessEndpoint.
+	toep, ok := to.(ConnectionlessEndpoint)
+	if !ok {
 		return 0, tcpip.ErrInvalidEndpointState
 	}
 
-	toDgram.mu.Lock()
-	writeQueue := toDgram.readQueue
-	toDgram.mu.Unlock()
+	connected := toep.UnidirectionalConnect()
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	entry := queueEntry{view: v, control: c}
+	e.Lock()
+	defer e.Unlock()
+	m := Message{Data: v, Control: c}
 	if e.isBound() {
-		entry.addr = tcpip.FullAddress{Addr: tcpip.Address(e.path)}
+		m.Address = tcpip.FullAddress{Addr: tcpip.Address(e.path)}
 	}
-	if err := writeQueue.Enqueue(&entry); err != nil {
+	if err := connected.Send(&m); err != nil {
 		return 0, err
 	}
 
@@ -93,20 +99,17 @@ func (e *connectionlessEndpoint) SendMsgTo(v buffer.View, c tcpip.ControlMessage
 
 // ConnectEndpoint attempts to connect directly to other.
 func (e *connectionlessEndpoint) ConnectEndpoint(server tcpip.Endpoint) error {
-	bound, ok := server.(*connectionlessEndpoint)
+	bound, ok := server.(ConnectionlessEndpoint)
 	if !ok {
 		return tcpip.ErrConnectionRefused
 	}
 
-	bound.mu.Lock()
-	boundReadQueue := bound.readQueue
-	bound.mu.Unlock()
+	connected := bound.UnidirectionalConnect()
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.Lock()
+	e.connected = connected
+	e.Unlock()
 
-	e.writeQueue = boundReadQueue
-	e.connectedEP = bound
 	return nil
 }
 
@@ -129,8 +132,8 @@ func (e *connectionlessEndpoint) Accept() (tcpip.Endpoint, *waiter.Queue, error)
 // Bind will fail only if the socket is connected, bound or the passed address
 // is invalid (the empty string).
 func (e *connectionlessEndpoint) Bind(addr tcpip.FullAddress, commit func() error) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.Lock()
+	defer e.Unlock()
 	if e.isBound() {
 		return tcpip.ErrAlreadyBound
 	}
@@ -152,16 +155,16 @@ func (e *connectionlessEndpoint) Bind(addr tcpip.FullAddress, commit func() erro
 // Readiness returns the current readiness of the endpoint. For example, if
 // waiter.EventIn is set, the endpoint is immediately readable.
 func (e *connectionlessEndpoint) Readiness(mask waiter.EventMask) waiter.EventMask {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.Lock()
+	defer e.Unlock()
 
 	ready := waiter.EventMask(0)
-	if mask&waiter.EventIn != 0 && e.readQueue.IsReadable() {
+	if mask&waiter.EventIn != 0 && e.receiver.Readable() {
 		ready |= waiter.EventIn
 	}
 
-	if e.isConnected() {
-		if mask&waiter.EventOut != 0 && e.writeQueue.IsWritable() {
+	if e.Connected() {
+		if mask&waiter.EventOut != 0 && e.connected.Writable() {
 			ready |= waiter.EventOut
 		}
 	}
