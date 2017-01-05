@@ -8,6 +8,7 @@ import (
 	"container/heap"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/google/netstack/tcpip/buffer"
 	"log"
@@ -20,19 +21,24 @@ type hole struct {
 }
 
 type reassembler struct {
-	mu      sync.Mutex
-	holes   []hole
-	deleted int
-	heap    fragHeap
-	done    bool
+	reassemblerEntry
+	id           uint32
+	size         int
+	mu           sync.Mutex
+	holes        []hole
+	deleted      int
+	heap         fragHeap
+	done         bool
+	creationTime time.Time
 }
 
-func newReassembler() *reassembler {
+func newReassembler(id uint32) *reassembler {
 	r := &reassembler{
-		holes:   make([]hole, 0, 16),
-		deleted: 0,
-		heap:    make(fragHeap, 0, 8),
-		done:    false,
+		id:           id,
+		holes:        make([]hole, 0, 16),
+		deleted:      0,
+		heap:         make(fragHeap, 0, 8),
+		creationTime: time.Now(),
 	}
 	r.holes = append(r.holes, hole{
 		first:   0,
@@ -62,27 +68,42 @@ func (r *reassembler) updateHoles(first, last uint16, more bool) bool {
 	return used
 }
 
-func (r *reassembler) process(first, last uint16, more bool, vv *buffer.VectorisedView) (buffer.VectorisedView, bool) {
+func (r *reassembler) process(first, last uint16, more bool, vv *buffer.VectorisedView) (buffer.VectorisedView, bool, int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	consumed := 0
 	if r.done {
 		// A concurrent goroutine might have already reassembled
 		// the packet and emptied the heap while this goroutine
 		// was waiting on the mutex. We don't have to do anything in this case.
-		return buffer.NewVectorisedView(0, nil), false
+		return buffer.NewVectorisedView(0, nil), false, consumed
 	}
 	if r.updateHoles(first, last, more) {
 		// We store the incoming packet only if it filled some holes.
 		heap.Push(&r.heap, fragment{offset: first, vv: vv})
+		consumed = vv.Size()
+		r.size += consumed
 	}
 	// Check if all the holes have been deleted and we are ready to reassamble.
 	if r.deleted < len(r.holes) {
-		return buffer.NewVectorisedView(0, nil), false
+		return buffer.NewVectorisedView(0, nil), false, consumed
 	}
 	res, err := r.heap.reassemble()
 	if err != nil {
 		log.Fatalf("reassemble failed with: %v. There is probably a bug in the code handling the holes.", err)
 	}
 	r.done = true
-	return res, true
+	return res, true, consumed
+}
+
+func (r *reassembler) tooOld(timeout time.Duration) bool {
+	return time.Now().Sub(r.creationTime) > timeout
+}
+
+func (r *reassembler) checkDoneOrMark() bool {
+	r.mu.Lock()
+	prev := r.done
+	r.done = true
+	r.mu.Unlock()
+	return prev
 }

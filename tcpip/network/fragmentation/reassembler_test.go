@@ -84,7 +84,7 @@ var holesTestCases = []struct {
 
 func TestUpdateHoles(t *testing.T) {
 	for _, c := range holesTestCases {
-		r := newReassembler()
+		r := newReassembler(0)
 		for _, i := range c.in {
 			r.updateHoles(i.first, i.last, i.more)
 		}
