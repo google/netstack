@@ -746,6 +746,25 @@ func (e *endpoint) Listen(backlog int) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	// Allow the backlog to be adjusted if the endpoint is not shutting down.
+	// When the endpoint shuts down, it sets workerCleanup to true, and from
+	// that point onward, acceptedChan is the responsibility of the cleanup()
+	// method (and should not be touched anywhere else, including here).
+	if e.state == stateListen && !e.workerCleanup {
+		// Adjust the size of the channel iff we can fix existing
+		// pending connections into the new one.
+		if len(e.acceptedChan) > backlog {
+			return tcpip.ErrInvalidEndpointState
+		}
+		origChan := e.acceptedChan
+		e.acceptedChan = make(chan *endpoint, backlog)
+		close(origChan)
+		for ep := range origChan {
+			e.acceptedChan <- ep
+		}
+		return nil
+	}
+
 	// Endpoint must be bound before it can transition to listen mode.
 	if e.state != stateBound {
 		return tcpip.ErrInvalidEndpointState

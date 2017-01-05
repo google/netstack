@@ -1762,3 +1762,30 @@ func TestRetransmit(t *testing.T) {
 
 	c.checkNoPacketTimeout("More packets received than expected for this cwnd.", 50*time.Millisecond)
 }
+
+func TestUpdateListenBacklog(t *testing.T) {
+	c := newTestContext(t, defaultMTU)
+	defer c.cleanup()
+
+	// Create listener.
+	var wq waiter.Queue
+	ep, err := c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &wq)
+	if err != nil {
+		c.t.Fatalf("NewEndpoint failed: %v", err)
+	}
+
+	if err := ep.Bind(tcpip.FullAddress{}, nil); err != nil {
+		c.t.Fatalf("Bind failed: %v", err)
+	}
+
+	if err := ep.Listen(10); err != nil {
+		c.t.Fatalf("Listen failed: %v", err)
+	}
+
+	// Update the backlog with another Listen() on the same endpoint.
+	if err := ep.Listen(20); err != nil {
+		c.t.Fatalf("Listen failed to update backlog: %v", err)
+	}
+
+	ep.Close()
+}
