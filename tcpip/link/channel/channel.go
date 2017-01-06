@@ -58,7 +58,7 @@ func (e *Endpoint) Drain() int {
 // Inject injects an inbound packet.
 func (e *Endpoint) Inject(protocol tcpip.NetworkProtocolNumber, vv *buffer.VectorisedView) {
 	uu := vv.Clone(nil)
-	e.dispatcher.DeliverNetworkPacket(e, protocol, &uu)
+	e.dispatcher.DeliverNetworkPacket(e, "", protocol, &uu)
 }
 
 // Attach saves the stack network-layer dispatcher for use later when packets

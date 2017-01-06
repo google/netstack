@@ -15,6 +15,7 @@ package stack
 
 import (
 	"sync"
+	"time"
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
@@ -38,6 +39,8 @@ type Stack struct {
 
 	stats tcpip.Stats
 
+	linkAddrCache *linkAddrCache
+
 	mu   sync.RWMutex
 	nics map[tcpip.NICID]*NIC
 
@@ -57,6 +60,7 @@ func New(network []string, transport []string) tcpip.Stack {
 		networkProtocols:   make(map[tcpip.NetworkProtocolNumber]NetworkProtocol),
 		linkAddrResolvers:  make(map[tcpip.NetworkProtocolNumber]LinkAddressResolver),
 		nics:               make(map[tcpip.NICID]*NIC),
+		linkAddrCache:      newLinkAddrCache(1 * time.Minute),
 		PortManager:        ports.NewPortManager(),
 	}
 
@@ -263,7 +267,10 @@ func (s *Stack) FindRoute(id tcpip.NICID, localAddr, remoteAddr tcpip.Address, n
 			continue
 		}
 
-		return makeRoute(netProto, ref.ep.ID().LocalAddress, remoteAddr, ref), nil
+		r := makeRoute(netProto, ref.ep.ID().LocalAddress, remoteAddr, ref)
+		r.RemoteLinkAddress = s.linkAddrCache.get(tcpip.FullAddress{NIC: nic.ID(), Addr: remoteAddr})
+		r.NextHop = s.routeTable[i].Gateway
+		return r, nil
 	}
 
 	return Route{}, tcpip.ErrNoRoute
@@ -329,7 +336,9 @@ func (s *Stack) SetPromiscuousMode(nicID tcpip.NICID, enable bool) error {
 
 // AddLinkAddress adds a link address to the stack link cache.
 func (s *Stack) AddLinkAddress(nicid tcpip.NICID, addr tcpip.Address, linkAddr tcpip.LinkAddress) {
-	// TODO(crawshaw): cache the linkAddr, and provide a way for a
+	fullAddr := tcpip.FullAddress{NIC: nicid, Addr: addr}
+	s.linkAddrCache.add(fullAddr, linkAddr)
+	// TODO(crawshaw): provide a way for a
 	// transport endpoint to receive a signal that AddLinkAddress
 	// for a particular address has been called.
 }

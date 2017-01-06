@@ -36,9 +36,9 @@ func New(lower tcpip.LinkEndpointID) tcpip.LinkEndpointID {
 // DeliverNetworkPacket implements the stack.NetworkDispatcher interface. It is
 // called by the link-layer endpoint being wrapped when a packet arrives, and
 // logs the packet before forwarding to the actual dispatcher.
-func (e *endpoint) DeliverNetworkPacket(linkEP stack.LinkEndpoint, protocol tcpip.NetworkProtocolNumber, vv *buffer.VectorisedView) {
+func (e *endpoint) DeliverNetworkPacket(linkEP stack.LinkEndpoint, remoteLinkAddr tcpip.LinkAddress, protocol tcpip.NetworkProtocolNumber, vv *buffer.VectorisedView) {
 	logPacket("recv", protocol, vv.First(), nil)
-	e.dispatcher.DeliverNetworkPacket(e, protocol, vv)
+	e.dispatcher.DeliverNetworkPacket(e, remoteLinkAddr, protocol, vv)
 }
 
 // Attach implements the stack.LinkEndpoint interface. It saves the dispatcher

@@ -134,7 +134,7 @@ type NetworkProtocol interface {
 type NetworkDispatcher interface {
 	// DeliverNetworkPacket finds the appropriate network protocol
 	// endpoint and hands the packet over for further processing.
-	DeliverNetworkPacket(linkEP LinkEndpoint, protocol tcpip.NetworkProtocolNumber, vv *buffer.VectorisedView)
+	DeliverNetworkPacket(linkEP LinkEndpoint, remoteLinkAddr tcpip.LinkAddress, protocol tcpip.NetworkProtocolNumber, vv *buffer.VectorisedView)
 }
 
 // LinkEndpoint is the interface implemented by data link layer protocols (e.g.,

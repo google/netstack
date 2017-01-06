@@ -58,13 +58,13 @@ func (e *endpoint) WritePacket(_ *stack.Route, hdr *buffer.Prependable, payload 
 		// header as the full packet.
 		v := hdr.View()
 		vv := v.ToVectorisedView(views)
-		e.dispatcher.DeliverNetworkPacket(e, protocol, &vv)
+		e.dispatcher.DeliverNetworkPacket(e, "", protocol, &vv)
 	} else {
 		v := buffer.NewView(len(payload) + hdr.UsedLength())
 		copy(v, hdr.UsedBytes())
 		copy(v[hdr.UsedLength():], payload)
 		vv := v.ToVectorisedView(views)
-		e.dispatcher.DeliverNetworkPacket(e, protocol, &vv)
+		e.dispatcher.DeliverNetworkPacket(e, "", protocol, &vv)
 	}
 
 	return nil

@@ -37,7 +37,7 @@ func New(conn net.Conn, mtu uint32) (tcpip.LinkEndpointID, *Endpoint) {
 // Inject injects an inbound packet.
 func (e *Endpoint) Inject(protocol tcpip.NetworkProtocolNumber, vv *buffer.VectorisedView) {
 	uu := vv.Clone(nil)
-	e.dispatcher.DeliverNetworkPacket(e, protocol, &uu)
+	e.dispatcher.DeliverNetworkPacket(e, "", protocol, &uu)
 }
 
 // MTU implements stack.LinkEndpoint.MTU. It returns the value initialized
