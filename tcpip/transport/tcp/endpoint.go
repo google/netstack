@@ -145,7 +145,7 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 		netProto:    netProto,
 		waiterQueue: waiterQueue,
 		v6only:      true,
-		segmentChan: make(chan *segment, 10),
+		segmentChan: make(chan *segment, 64),
 		rcvBufSize:  208 * 1024,
 		sndBufSize:  208 * 1024,
 		sndChan:     make(chan struct{}, 1),
