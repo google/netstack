@@ -125,8 +125,8 @@ type Endpoint interface {
 	// types.
 	SetSockOpt(opt interface{}) error
 
-	// GetSockOpt gets a socket option. opt should be one of the tcpip.*Option
-	// types.
+	// GetSockOpt gets a socket option. opt should be a pointer to one of the
+	// tcpip.*Option types.
 	GetSockOpt(opt interface{}) error
 }
 
