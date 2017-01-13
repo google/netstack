@@ -65,14 +65,6 @@ func (f *fakeTransportEndpoint) Write(v buffer.View, _ *tcpip.FullAddress) (uint
 	return uintptr(len(v)), nil
 }
 
-func (f *fakeTransportEndpoint) RecvMsg(*tcpip.FullAddress) (buffer.View, tcpip.ControlMessages, error) {
-	return buffer.View{}, nil, nil
-}
-
-func (f *fakeTransportEndpoint) SendMsg(v buffer.View, _ tcpip.ControlMessages, _ *tcpip.FullAddress) (uintptr, error) {
-	return f.Write(v, nil)
-}
-
 func (f *fakeTransportEndpoint) Peek(io.Writer) (uintptr, error) {
 	return 0, nil
 }

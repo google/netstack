@@ -6,7 +6,6 @@ package unix
 
 import (
 	"github.com/google/netstack/tcpip"
-	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/transport/queue"
 	"github.com/google/netstack/waiter"
 )
@@ -19,9 +18,6 @@ import (
 type ConnectionlessEndpoint interface {
 	// UnidirectionalConnect establishes a connection to a ConnectionlessEndpoint.
 	UnidirectionalConnect() ConnectedEndpoint
-
-	// SendMsgTo writes data and a control message to the specified endpoint.
-	SendMsgTo(v buffer.View, c tcpip.ControlMessages, to tcpip.Endpoint) (uintptr, error)
 }
 
 // connectionlessEndpoint is a unix endpoint for unix sockets that support operating in
@@ -34,7 +30,7 @@ type connectionlessEndpoint struct {
 }
 
 // NewConnectionless creates a new unbound dgram endpoint.
-func NewConnectionless(wq *waiter.Queue) tcpip.Endpoint {
+func NewConnectionless(wq *waiter.Queue) Endpoint {
 	ep := &connectionlessEndpoint{baseEndpoint{
 		receiver: &queueReceiver{readQueue: queue.New(&waiter.Queue{}, wq, initialLimit)},
 	}}
@@ -74,9 +70,13 @@ func (e *connectionlessEndpoint) UnidirectionalConnect() ConnectedEndpoint {
 	}
 }
 
-// SendMsgTo writes data and a control message to the specified endpoint.
+// SendMsg writes data and a control message to the specified endpoint.
 // This method does not block if the data cannot be written.
-func (e *connectionlessEndpoint) SendMsgTo(v buffer.View, c tcpip.ControlMessages, to tcpip.Endpoint) (uintptr, error) {
+func (e *connectionlessEndpoint) SendMsg(data [][]byte, c ControlMessages, to Endpoint) (uintptr, error) {
+	if to == nil {
+		return e.baseEndpoint.SendMsg(data, c, nil)
+	}
+
 	toep, ok := to.(ConnectionlessEndpoint)
 	if !ok {
 		return 0, tcpip.ErrInvalidEndpointState
@@ -86,19 +86,22 @@ func (e *connectionlessEndpoint) SendMsgTo(v buffer.View, c tcpip.ControlMessage
 
 	e.Lock()
 	defer e.Unlock()
-	m := Message{Data: v, Control: c}
-	if e.isBound() {
-		m.Address = tcpip.FullAddress{Addr: tcpip.Address(e.path)}
-	}
-	if err := connected.Send(&m); err != nil {
+
+	n, err := connected.Send(data, c, tcpip.FullAddress{Addr: tcpip.Address(e.path)})
+	if err != nil {
 		return 0, err
 	}
 
-	return uintptr(len(v)), nil
+	return n, nil
 }
 
-// ConnectEndpoint attempts to connect directly to other.
-func (e *connectionlessEndpoint) ConnectEndpoint(server tcpip.Endpoint) error {
+// Type implements Endpoint.Type.
+func (e *connectionlessEndpoint) Type() SockType {
+	return SockDgram
+}
+
+// Connect attempts to connect directly to server.
+func (e *connectionlessEndpoint) Connect(server Endpoint) error {
 	bound, ok := server.(ConnectionlessEndpoint)
 	if !ok {
 		return tcpip.ErrConnectionRefused
@@ -119,7 +122,7 @@ func (e *connectionlessEndpoint) Listen(int) error {
 }
 
 // Accept accepts a new connection.
-func (e *connectionlessEndpoint) Accept() (tcpip.Endpoint, *waiter.Queue, error) {
+func (e *connectionlessEndpoint) Accept() (Endpoint, *waiter.Queue, error) {
 	return nil, nil, tcpip.ErrNotSupported
 }
 

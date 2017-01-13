@@ -165,16 +165,6 @@ type FullAddress struct {
 	Port uint16
 }
 
-// A ControlMessages represents a collection of socket control messages.
-type ControlMessages interface {
-	// Release releases any resources owned by the control message.
-	Release()
-
-	// CloneCreds returns a copy of any credentials (if any) contained in the
-	// ControlMessages.
-	CloneCreds() ControlMessages
-}
-
 // Endpoint is the interface implemented by transport protocols (e.g., tcp, udp)
 // that exposes functionality like read, write, connect, etc. to users of the
 // networking stack.
@@ -193,16 +183,6 @@ type Endpoint interface {
 	// written.
 	Write(buffer.View, *FullAddress) (uintptr, error)
 
-	// RecvMsg reads data and a control message from the endpoint. This method
-	// does not block if there is no data pending.
-	RecvMsg(*FullAddress) (buffer.View, ControlMessages, error)
-
-	// SendMsg writes data and a control message to the endpoint's peer.
-	// This method does not block if the data cannot be written.
-	//
-	// SendMsg does not take ownership of any of its arguments on error.
-	SendMsg(buffer.View, ControlMessages, *FullAddress) (uintptr, error)
-
 	// Peek reads data without consuming it from the endpoint.
 	//
 	// This method does not block if there is no data pending.
@@ -220,14 +200,6 @@ type Endpoint interface {
 	//		connect(2) syscall behavior.)
 	//	Anything else -- the attempt to connect failed.
 	Connect(address FullAddress) error
-
-	// ConnectEndpoint connects this endpoint directly to another.
-	//
-	// This should be called on the client endpoint, and the (bound)
-	// endpoint passed in as a parameter.
-	//
-	// The error codes are the same as Connect.
-	ConnectEndpoint(server Endpoint) error
 
 	// Shutdown closes the read and/or write end of the endpoint connection
 	// to its peer.
@@ -263,11 +235,11 @@ type Endpoint interface {
 	// if waiter.EventIn is set, the endpoint is immediately readable.
 	Readiness(mask waiter.EventMask) waiter.EventMask
 
-	// SetSockOpt sets a socket option.
-	SetSockOpt(interface{}) error
+	// SetSockOpt sets a socket option. opt should be one of the *Option types.
+	SetSockOpt(opt interface{}) error
 
-	// GetSockOpt gets a socket option.
-	GetSockOpt(interface{}) error
+	// GetSockOpt gets a socket option. opt should be one of the *Option types.
+	GetSockOpt(opt interface{}) error
 }
 
 // ErrorOption is used in GetSockOpt to specify that the last error reported by

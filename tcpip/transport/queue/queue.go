@@ -19,6 +19,7 @@ type Entry interface {
 	ilist.Linker
 	Length() int64
 	Release()
+	Peek() Entry
 }
 
 // Queue is a buffer queue.
@@ -136,6 +137,22 @@ func (q *Queue) Dequeue() (Entry, error) {
 	}
 
 	return e, nil
+}
+
+// Peek returns the first entry in the data queue, if one exists.
+func (q *Queue) Peek() (Entry, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if q.dataList.Front() == nil {
+		err := tcpip.ErrWouldBlock
+		if q.closed {
+			err = tcpip.ErrClosedForReceive
+		}
+		return nil, err
+	}
+
+	return q.dataList.Front().(Entry).Peek(), nil
 }
 
 // QueuedSize returns the number of bytes currently in the queue, that is, the

@@ -33,6 +33,11 @@ type ConnectingEndpoint interface {
 	// Passcred implements socket.Credentialer.Passcred.
 	Passcred() bool
 
+	// Type returns the socket type, typically either SockStream or
+	// SockSeqpacket. The connection attempt must be aborted if this
+	// value doesn't match the ConnectableEndpoint's type.
+	Type() SockType
+
 	// GetLocalAddress returns the bound path.
 	GetLocalAddress() (tcpip.FullAddress, error)
 
@@ -103,6 +108,11 @@ type connectionedEndpoint struct {
 	// lock ordering within connect.
 	id uint64
 
+	// stype is used by connecting sockets to ensure that they are the
+	// same type. The value is typically either tcpip.SockSeqpacket or
+	// tcpip.SockStream.
+	stype SockType
+
 	// waiterQueue is protected by baseEndpoint.Mutex.
 	waiterQueue *waiter.Queue
 
@@ -115,29 +125,38 @@ type connectionedEndpoint struct {
 }
 
 // NewConnectioned creates a new unbound connectionedEndpoint.
-func NewConnectioned(wq *waiter.Queue) tcpip.Endpoint {
+func NewConnectioned(stype SockType, wq *waiter.Queue) Endpoint {
 	ep := &connectionedEndpoint{
 		id:          UniqueID(),
 		waiterQueue: wq,
+		stype:       stype,
 	}
 	ep.baseEndpoint.isBound = ep.isBound
 	return ep
 }
 
 // NewPair allocates a new pair of connected unix-domain connectionedEndpoints.
-func NewPair(wq1 *waiter.Queue, wq2 *waiter.Queue) (tcpip.Endpoint, tcpip.Endpoint) {
+func NewPair(stype SockType, wq1 *waiter.Queue, wq2 *waiter.Queue) (Endpoint, Endpoint) {
 	q1 := queue.New(wq1, wq2, initialLimit)
 	q2 := queue.New(wq2, wq1, initialLimit)
 
 	a := &connectionedEndpoint{
-		baseEndpoint: baseEndpoint{receiver: &queueReceiver{q1}},
-		id:           UniqueID(),
-		waiterQueue:  wq1,
+		id:          UniqueID(),
+		waiterQueue: wq1,
+		stype:       stype,
 	}
 	b := &connectionedEndpoint{
-		baseEndpoint: baseEndpoint{receiver: &queueReceiver{q2}},
-		id:           UniqueID(),
-		waiterQueue:  wq2,
+		id:          UniqueID(),
+		waiterQueue: wq2,
+		stype:       stype,
+	}
+
+	if stype == SockStream {
+		a.receiver = &streamQueueReceiver{queueReceiver: queueReceiver{q1}}
+		b.receiver = &streamQueueReceiver{queueReceiver: queueReceiver{q2}}
+	} else {
+		a.receiver = &queueReceiver{q1}
+		b.receiver = &queueReceiver{q2}
 	}
 
 	a.connected = &connectedEndpoint{
@@ -158,6 +177,11 @@ func NewPair(wq1 *waiter.Queue, wq2 *waiter.Queue) (tcpip.Endpoint, tcpip.Endpoi
 // ID implements ConnectingEndpoint.ID.
 func (e *connectionedEndpoint) ID() uint64 {
 	return e.id
+}
+
+// Type implements ConnectingEndpoint.Type and Endpoint.Type.
+func (e *connectionedEndpoint) Type() SockType {
+	return e.stype
 }
 
 // WaiterQueue implements ConnectingEndpoint.WaiterQueue.
@@ -204,6 +228,10 @@ func (e *connectionedEndpoint) Close() {
 
 // BidirectionalConnect implements ConnectableEndpoint.BidirectionalConnect.
 func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, returnConnect func(Receiver, ConnectedEndpoint)) error {
+	if ce.Type() != e.stype {
+		return tcpip.ErrConnectionRefused
+	}
+
 	// Do a dance to safely acquire locks on both endpoints.
 	if e.id < ce.ID() {
 		e.Lock()
@@ -232,17 +260,24 @@ func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, retur
 	wq := &waiter.Queue{}
 	readQueue := queue.New(ce.WaiterQueue(), wq, initialLimit)
 	writeQueue := queue.New(wq, ce.WaiterQueue(), initialLimit)
+	var receiver Receiver
+	if e.stype == SockStream {
+		receiver = &streamQueueReceiver{queueReceiver: queueReceiver{readQueue: writeQueue}}
+	} else {
+		receiver = &queueReceiver{readQueue: writeQueue}
+	}
 	ne := &connectionedEndpoint{
 		baseEndpoint: baseEndpoint{
 			connected: &connectedEndpoint{
 				endpoint:   ce,
 				writeQueue: readQueue,
 			},
-			receiver: &queueReceiver{readQueue: writeQueue},
+			receiver: receiver,
 			path:     e.path,
 		},
 		id:          UniqueID(),
 		waiterQueue: wq,
+		stype:       e.stype,
 	}
 	ne.baseEndpoint.isBound = ne.isBound
 
@@ -253,8 +288,11 @@ func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, retur
 			endpoint:   ne,
 			writeQueue: writeQueue,
 		}
-		receiver := &queueReceiver{readQueue: readQueue}
-		returnConnect(receiver, connected)
+		if e.stype == SockStream {
+			returnConnect(&streamQueueReceiver{queueReceiver: queueReceiver{readQueue: readQueue}}, connected)
+		} else {
+			returnConnect(&queueReceiver{readQueue: readQueue}, connected)
+		}
 
 		// Notify on the other end.
 		e.waiterQueue.Notify(waiter.EventIn)
@@ -267,12 +305,12 @@ func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, retur
 	}
 }
 
-// ConnectEndpoint attempts to directly connect to another tcpip.Endpoint.
-// Implements tcpip.Endpoint.ConnectEndpoint.
+// Connect attempts to directly connect to another Endpoint.
+// Implements Endpoint.Connect.
 //
 // FIXME: Currently SREAM and SEQPACKET sockets can connect to
 // each other.
-func (e *connectionedEndpoint) ConnectEndpoint(server tcpip.Endpoint) error {
+func (e *connectionedEndpoint) Connect(server Endpoint) error {
 	bound, ok := server.(ConnectableEndpoint)
 	if !ok {
 		return tcpip.ErrConnectionRefused
@@ -315,7 +353,7 @@ func (e *connectionedEndpoint) Listen(backlog int) error {
 }
 
 // Accept accepts a new connection.
-func (e *connectionedEndpoint) Accept() (tcpip.Endpoint, *waiter.Queue, error) {
+func (e *connectionedEndpoint) Accept() (Endpoint, *waiter.Queue, error) {
 	e.Lock()
 	defer e.Unlock()
 

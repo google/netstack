@@ -164,12 +164,6 @@ func (e *endpoint) Read(addr *tcpip.FullAddress) (buffer.View, error) {
 	return p.data.ToView(), nil
 }
 
-// RecvMsg implements tcpip.RecvMsg.
-func (e *endpoint) RecvMsg(addr *tcpip.FullAddress) (buffer.View, tcpip.ControlMessages, error) {
-	v, err := e.Read(addr)
-	return v, nil, err
-}
-
 // prepareForWrite prepares the endpoint for sending data. In particular, it
 // binds it if it's still in the initial state. To do so, it must first
 // reacquire the mutex in exclusive mode.
@@ -262,16 +256,6 @@ func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, error) 
 
 	sendUDP(route, v, e.id.LocalPort, dstPort)
 	return uintptr(len(v)), nil
-}
-
-// SendMsg implements tcpip.SendMsg.
-func (e *endpoint) SendMsg(v buffer.View, c tcpip.ControlMessages, to *tcpip.FullAddress) (uintptr, error) {
-	// Reject control messages.
-	if c != nil {
-		// tcpip.ErrInvalidEndpointState turns into syscall.EINVAL.
-		return 0, tcpip.ErrInvalidEndpointState
-	}
-	return e.Write(v, to)
 }
 
 // Peek only returns data from a single datagram, so do nothing here.

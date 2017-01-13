@@ -6,7 +6,6 @@
 package unix
 
 import (
-	"io"
 	"sync"
 	"sync/atomic"
 
@@ -14,10 +13,122 @@ import (
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/transport/queue"
+	"github.com/google/netstack/waiter"
 )
 
 // initialLimit is the starting limit for the socket buffers.
 const initialLimit = 16 * 1024
+
+// A SockType is a type (as opposed to family) of sockets. These are enumerated
+// in the syscall package as syscall.SOCK_* constants.
+type SockType int
+
+const (
+	// SockStream corresponds to syscall.SOCK_STREAM.
+	SockStream SockType = 1
+	// SockDgram corresponds to syscall.SOCK_DGRAM.
+	SockDgram SockType = 2
+	// SockSeqpacket corresponds to syscall.SOCK_SEQPACKET.
+	SockSeqpacket SockType = 5
+)
+
+// A ControlMessages represents a collection of socket control messages.
+type ControlMessages interface {
+	// Release releases any resources owned by the control message.
+	Release()
+
+	// CloneCreds returns a copy of any credentials (if any) contained in the
+	// ControlMessages.
+	CloneCreds() ControlMessages
+
+	// Clone returns a copy of the ControlMessages.
+	Clone() ControlMessages
+}
+
+// Endpoint is the interface implemented by Unix transport protocol
+// implementations that expose functionality like sendmsg, recvmsg, connect,
+// etc. to Unix socket implementations.
+type Endpoint interface {
+	Credentialer
+
+	// Close puts the endpoint in a closed state and frees all resources
+	// associated with it.
+	Close()
+
+	// RecvMsg reads data and a control message from the endpoint. This method
+	// does not block if there is no data pending.
+	//
+	// numRights is the number of SCM_RIGHTS FDs requested by the caller. This
+	// is useful if one must allocate a buffer to receive a SCM_RIGHTS message.
+	// numRights is a hint and can be safely ignored if the number of available
+	// SCM_RIGHTS FDs is known. It is fine for the returned number of
+	// SCM_RIGHTS FDs to be either higher or lower than the requested number.
+	//
+	// If peek is true, no data should be consumed from the Endpoint. Any and
+	// all data returned from a peek should be available in the next call to
+	// RecvMsg.
+	RecvMsg(data [][]byte, numRights uintptr, peek bool, addr *tcpip.FullAddress) (uintptr, ControlMessages, error)
+
+	// SendMsg writes data and a control message to the endpoint's peer.
+	// This method does not block if the data cannot be written.
+	//
+	// SendMsg does not take ownership of any of its arguments on error.
+	SendMsg([][]byte, ControlMessages, Endpoint) (uintptr, error)
+
+	// Connect connects this endpoint directly to another.
+	//
+	// This should be called on the client endpoint, and the (bound)
+	// endpoint passed in as a parameter.
+	//
+	// The error codes are the same as Connect.
+	Connect(server Endpoint) error
+
+	// Shutdown closes the read and/or write end of the endpoint connection
+	// to its peer.
+	Shutdown(flags tcpip.ShutdownFlags) error
+
+	// Listen puts the endpoint in "listen" mode, which allows it to accept
+	// new connections.
+	Listen(backlog int) error
+
+	// Accept returns a new endpoint if a peer has established a connection
+	// to an endpoint previously set to listen mode. This method does not
+	// block if no new connections are available.
+	//
+	// The returned Queue is the wait queue for the newly created endpoint.
+	Accept() (Endpoint, *waiter.Queue, error)
+
+	// Bind binds the endpoint to a specific local address and port.
+	// Specifying a NIC is optional.
+	//
+	// An optional commit function will be executed atomically with respect
+	// to binding the endpoint. If this returns an error, the bind will not
+	// occur and the error will be propagated back to the caller.
+	Bind(address tcpip.FullAddress, commit func() error) error
+
+	// Type return the socket type, typically either SockStream, SockDgram
+	// or SockSeqpacket.
+	Type() SockType
+
+	// GetLocalAddress returns the address to which the endpoint is bound.
+	GetLocalAddress() (tcpip.FullAddress, error)
+
+	// GetRemoteAddress returns the address to which the endpoint is
+	// connected.
+	GetRemoteAddress() (tcpip.FullAddress, error)
+
+	// Readiness returns the current readiness of the endpoint. For example,
+	// if waiter.EventIn is set, the endpoint is immediately readable.
+	Readiness(mask waiter.EventMask) waiter.EventMask
+
+	// SetSockOpt sets a socket option. opt should be one of the tcpip.*Option
+	// types.
+	SetSockOpt(opt interface{}) error
+
+	// GetSockOpt gets a socket option. opt should be one of the tcpip.*Option
+	// types.
+	GetSockOpt(opt interface{}) error
+}
 
 // A Credentialer is a socket or endpoint that supports the SO_PASSCRED socket
 // option.
@@ -31,8 +142,8 @@ type Credentialer interface {
 	ConnectedPasscred() bool
 }
 
-// Message represents a message passed over a Unix domain socket.
-type Message struct {
+// message represents a message passed over a Unix domain socket.
+type message struct {
 	ilist.Entry
 
 	// Data is the Message payload.
@@ -40,7 +151,7 @@ type Message struct {
 
 	// Control is auxiliary control message data that goes along with the
 	// data.
-	Control tcpip.ControlMessages
+	Control ControlMessages
 
 	// Address is the bound address of the endpoint that sent the message.
 	//
@@ -50,21 +161,29 @@ type Message struct {
 }
 
 // Length returns number of bytes stored in the Message.
-func (m *Message) Length() int64 {
+func (m *message) Length() int64 {
 	return int64(len(m.Data))
 }
 
 // Release releases any resources held by the Message.
-func (m *Message) Release() {
+func (m *message) Release() {
 	if m.Control != nil {
 		m.Control.Release()
 	}
 }
 
+func (m *message) Peek() queue.Entry {
+	var c ControlMessages
+	if m.Control != nil {
+		c = m.Control.Clone()
+	}
+	return &message{Data: m.Data, Control: c, Address: m.Address}
+}
+
 // A Receiver can be used to receive Messages.
 type Receiver interface {
 	// Recv receives a single message. This method does not block.
-	Recv() (*Message, error)
+	Recv(data [][]byte, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, error)
 
 	// CloseRecv prevents the receiving of additional Messages.
 	CloseRecv()
@@ -76,18 +195,32 @@ type Receiver interface {
 	QueuedSize() int64
 }
 
-// queueReceiver implements Receiver.
+// queueReceiver implements Receiver for datagram sockets.
 type queueReceiver struct {
 	readQueue *queue.Queue
 }
 
 // Recv implements Receiver.Recv.
-func (q *queueReceiver) Recv() (*Message, error) {
-	m, err := q.readQueue.Dequeue()
-	if err != nil {
-		return nil, err
+func (q *queueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, error) {
+	var m queue.Entry
+	var err error
+	if peek {
+		m, err = q.readQueue.Peek()
+	} else {
+		m, err = q.readQueue.Dequeue()
 	}
-	return m.(*Message), nil
+	if err != nil {
+		return 0, nil, tcpip.FullAddress{}, err
+	}
+	msg := m.(*message)
+	src := []byte(msg.Data)
+	var copied uintptr
+	for i := 0; i < len(data) && len(src) > 0; i++ {
+		n := copy(data[i], src)
+		copied += uintptr(n)
+		src = src[n:]
+	}
+	return copied, msg.Control, msg.Address, nil
 }
 
 // CloseRecv implements Receiver.CloseRecv.
@@ -105,21 +238,68 @@ func (q *queueReceiver) QueuedSize() int64 {
 	return q.readQueue.QueuedSize()
 }
 
-// An endpoint is a unix domain socket node.
-type endpoint interface {
-	// Passcred implements Credentialer.Passcred.
-	Passcred() bool
+// streamQueueReceiver implements Receiver for stream sockets.
+type streamQueueReceiver struct {
+	queueReceiver
 
-	// GetLocalAddress implements tcpip.Endpoint.GetLocalAddress.
-	GetLocalAddress() (tcpip.FullAddress, error)
+	mu      sync.Mutex
+	buffer  []byte
+	control ControlMessages
+	addr    tcpip.FullAddress
+}
+
+// Recv implements Receiver.Recv.
+func (q *streamQueueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if len(q.buffer) == 0 {
+		// Load the next message into a buffer, even if we are peeking. Peeking
+		// won't consume the message, so it will be still available to be read
+		// the next time Recv() is called.
+		m, err := q.readQueue.Dequeue()
+		if err != nil {
+			return 0, nil, tcpip.FullAddress{}, err
+		}
+		msg := m.(*message)
+		q.buffer = []byte(msg.Data)
+		q.control = msg.Control
+		q.addr = msg.Address
+	}
+	buf := q.buffer
+	var copied uintptr
+	for _, d := range data {
+		if len(buf) == 0 {
+			break
+		}
+		n := copy(d, buf)
+		copied += uintptr(n)
+		buf = buf[n:]
+	}
+	c := q.control
+	if !peek {
+		// Consume data and control message if we are not peeking.
+		if c != nil {
+			q.control = c.CloneCreds()
+		}
+		q.buffer = buf
+	} else if q.control != nil {
+		// Don't consume control message if we are peeking.
+		c = c.Clone()
+	}
+	return copied, c, q.addr, nil
 }
 
 // A ConnectedEndpoint is an Endpoint that can be used to send Messages.
 type ConnectedEndpoint interface {
-	endpoint
+	// Passcred implements Endpoint.Passcred.
+	Passcred() bool
+
+	// GetLocalAddress implements Endpoint.GetLocalAddress.
+	GetLocalAddress() (tcpip.FullAddress, error)
 
 	// Send sends a single message. This method does not block.
-	Send(*Message) error
+	Send(data [][]byte, controlMessages ControlMessages, from tcpip.FullAddress) (uintptr, error)
 
 	// CloseSend prevents the sending of additional Messages.
 	CloseSend()
@@ -129,14 +309,53 @@ type ConnectedEndpoint interface {
 }
 
 type connectedEndpoint struct {
-	endpoint
+	// endpoint represents the subset of the Endpoint functionality needed by
+	// the connectedEndpoint. It is implemented by both connectionedEndpoint
+	// and connectionlessEndpoint and allows the use of types which don't
+	// fully implement Endpoint.
+	endpoint interface {
+		// Passcred implements Endpoint.Passcred.
+		Passcred() bool
+
+		// GetLocalAddress implements Endpoint.GetLocalAddress.
+		GetLocalAddress() (tcpip.FullAddress, error)
+
+		// Type implements Endpoint.Type.
+		Type() SockType
+	}
 
 	writeQueue *queue.Queue
 }
 
+// Passcred implements ConnectedEndpoint.Passcred.
+func (e *connectedEndpoint) Passcred() bool {
+	return e.endpoint.Passcred()
+}
+
+// GetLocalAddress implements ConnectedEndpoint.GetLocalAddress.
+func (e *connectedEndpoint) GetLocalAddress() (tcpip.FullAddress, error) {
+	return e.endpoint.GetLocalAddress()
+}
+
 // Send implements Receiver.Send.
-func (e *connectedEndpoint) Send(m *Message) error {
-	return e.writeQueue.Enqueue(m)
+func (e *connectedEndpoint) Send(data [][]byte, controlMessages ControlMessages, from tcpip.FullAddress) (uintptr, error) {
+	var l int
+	for _, d := range data {
+		l += len(d)
+	}
+	// Discard empty stream packets. Since stream sockets don't preserve
+	// message boundaries, sending zero bytes is a no-op. In Linux, the
+	// receiver actually uses a zero-length receive as an indication that the
+	// stream was closed.
+	if l == 0 && e.endpoint.Type() == SockStream {
+		controlMessages.Release()
+		return 0, nil
+	}
+	v := make([]byte, 0, l)
+	for _, d := range data {
+		v = append(v, d...)
+	}
+	return uintptr(l), e.writeQueue.Enqueue(&message{Data: buffer.View(v), Control: controlMessages, Address: from})
 }
 
 // CloseSend implements Receiver.CloseSend.
@@ -150,7 +369,7 @@ func (e *connectedEndpoint) Writable() bool {
 }
 
 // baseEndpoint is an embeddable unix endpoint base used in both the connected and connectionless
-// unix domain socket tcpip.Endpoint implementations.
+// unix domain socket Endpoint implementations.
 //
 // Not to be used on its own.
 type baseEndpoint struct {
@@ -201,40 +420,29 @@ func (e *baseEndpoint) Connected() bool {
 	return e.receiver != nil && e.connected != nil
 }
 
-// Read reads data from the endpoint.
-func (e *baseEndpoint) Read(addr *tcpip.FullAddress) (buffer.View, error) {
-	v, c, err := e.RecvMsg(addr)
-	if c != nil {
-		c.Release()
-	}
-	return v, err
-}
-
-// Write writes data to the endpoint's peer. This method does not block if the
-// data cannot be written.
-func (e *baseEndpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, error) {
-	return e.SendMsg(v, nil, to)
-}
-
 // RecvMsg reads data and a control message from the endpoint.
-func (e *baseEndpoint) RecvMsg(addr *tcpip.FullAddress) (buffer.View, tcpip.ControlMessages, error) {
+func (e *baseEndpoint) RecvMsg(data [][]byte, numRights uintptr, peek bool, addr *tcpip.FullAddress) (uintptr, ControlMessages, error) {
 	e.Lock()
 	defer e.Unlock()
 
-	msg, err := e.receiver.Recv()
+	if e.receiver == nil {
+		return 0, nil, tcpip.ErrNotConnected
+	}
+
+	n, cms, a, err := e.receiver.Recv(data, numRights, peek)
 	if err != nil {
-		return buffer.View{}, nil, err
+		return 0, nil, err
 	}
 
 	if addr != nil {
-		*addr = msg.Address
+		*addr = a
 	}
-	return msg.Data, msg.Control, nil
+	return n, cms, nil
 }
 
 // SendMsg writes data and a control message to the endpoint's peer.
 // This method does not block if the data cannot be written.
-func (e *baseEndpoint) SendMsg(v buffer.View, c tcpip.ControlMessages, to *tcpip.FullAddress) (uintptr, error) {
+func (e *baseEndpoint) SendMsg(data [][]byte, c ControlMessages, to Endpoint) (uintptr, error) {
 	e.Lock()
 	defer e.Unlock()
 	if !e.Connected() {
@@ -244,20 +452,12 @@ func (e *baseEndpoint) SendMsg(v buffer.View, c tcpip.ControlMessages, to *tcpip
 		return 0, tcpip.ErrAlreadyConnected
 	}
 
-	msg := Message{Data: v, Control: c}
-	if e.isBound() {
-		msg.Address = tcpip.FullAddress{Addr: tcpip.Address(e.path)}
-	}
-	if err := e.connected.Send(&msg); err != nil {
+	n, err := e.connected.Send(data, c, tcpip.FullAddress{Addr: tcpip.Address(e.path)})
+	if err != nil {
 		return 0, err
 	}
 
-	return uintptr(len(v)), nil
-}
-
-// Peek never spans messages for Unix sockets.
-func (e *baseEndpoint) Peek(io.Writer) (uintptr, error) {
-	return 0, nil
+	return n, nil
 }
 
 // SetSockOpt sets a socket option. Currently not supported.
@@ -293,11 +493,6 @@ func (e *baseEndpoint) GetSockOpt(opt interface{}) error {
 		return nil
 	}
 	return tcpip.ErrInvalidEndpointState
-}
-
-// Connect via address is not supported.
-func (*baseEndpoint) Connect(addr tcpip.FullAddress) error {
-	return tcpip.ErrConnectionRefused
 }
 
 // Shutdown closes the read and/or write end of the endpoint connection to its

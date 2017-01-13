@@ -325,12 +325,6 @@ func (e *endpoint) Read(*tcpip.FullAddress) (buffer.View, error) {
 	return v, nil
 }
 
-// RecvMsg implements tcpip.RecvMsg.
-func (e *endpoint) RecvMsg(addr *tcpip.FullAddress) (buffer.View, tcpip.ControlMessages, error) {
-	v, err := e.Read(addr)
-	return v, nil, err
-}
-
 // Write writes data to the endpoint's peer.
 func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, error) {
 	if to != nil {
@@ -384,16 +378,6 @@ func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, error) 
 	}
 
 	return uintptr(len(v)), nil
-}
-
-// SendMsg implements tcpip.SendMsg.
-func (e *endpoint) SendMsg(v buffer.View, c tcpip.ControlMessages, to *tcpip.FullAddress) (uintptr, error) {
-	// Reject control messages.
-	if c != nil {
-		// tcpip.ErrInvalidEndpointState turns into syscall.EINVAL.
-		return 0, tcpip.ErrInvalidEndpointState
-	}
-	return e.Write(v, to)
 }
 
 // Peek reads data without consuming it from the endpoint.
