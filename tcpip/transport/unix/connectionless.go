@@ -30,10 +30,9 @@ type connectionlessEndpoint struct {
 }
 
 // NewConnectionless creates a new unbound dgram endpoint.
-func NewConnectionless(wq *waiter.Queue) Endpoint {
-	ep := &connectionlessEndpoint{baseEndpoint{
-		receiver: &queueReceiver{readQueue: queue.New(&waiter.Queue{}, wq, initialLimit)},
-	}}
+func NewConnectionless() Endpoint {
+	ep := &connectionlessEndpoint{baseEndpoint{Queue: &waiter.Queue{}}}
+	ep.receiver = &queueReceiver{readQueue: queue.New(&waiter.Queue{}, ep.Queue, initialLimit)}
 	ep.baseEndpoint.isBound = ep.isBound
 	return ep
 }
@@ -122,8 +121,8 @@ func (e *connectionlessEndpoint) Listen(int) error {
 }
 
 // Accept accepts a new connection.
-func (e *connectionlessEndpoint) Accept() (Endpoint, *waiter.Queue, error) {
-	return nil, nil, tcpip.ErrNotSupported
+func (e *connectionlessEndpoint) Accept() (Endpoint, error) {
+	return nil, tcpip.ErrNotSupported
 }
 
 // Bind binds the connection.

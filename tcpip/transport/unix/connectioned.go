@@ -113,9 +113,6 @@ type connectionedEndpoint struct {
 	// tcpip.SockStream.
 	stype SockType
 
-	// waiterQueue is protected by baseEndpoint.Mutex.
-	waiterQueue *waiter.Queue
-
 	// acceptedChan is per the TCP endpoint implementation. Note that the
 	// sockets in this channel are _already in the connected state_, and
 	// have another associated connectionedEndpoint.
@@ -125,31 +122,31 @@ type connectionedEndpoint struct {
 }
 
 // NewConnectioned creates a new unbound connectionedEndpoint.
-func NewConnectioned(stype SockType, wq *waiter.Queue) Endpoint {
+func NewConnectioned(stype SockType) Endpoint {
 	ep := &connectionedEndpoint{
-		id:          UniqueID(),
-		waiterQueue: wq,
-		stype:       stype,
+		baseEndpoint: baseEndpoint{Queue: &waiter.Queue{}},
+		id:           UniqueID(),
+		stype:        stype,
 	}
 	ep.baseEndpoint.isBound = ep.isBound
 	return ep
 }
 
 // NewPair allocates a new pair of connected unix-domain connectionedEndpoints.
-func NewPair(stype SockType, wq1 *waiter.Queue, wq2 *waiter.Queue) (Endpoint, Endpoint) {
-	q1 := queue.New(wq1, wq2, initialLimit)
-	q2 := queue.New(wq2, wq1, initialLimit)
-
+func NewPair(stype SockType) (Endpoint, Endpoint) {
 	a := &connectionedEndpoint{
-		id:          UniqueID(),
-		waiterQueue: wq1,
-		stype:       stype,
+		baseEndpoint: baseEndpoint{Queue: &waiter.Queue{}},
+		id:           UniqueID(),
+		stype:        stype,
 	}
 	b := &connectionedEndpoint{
-		id:          UniqueID(),
-		waiterQueue: wq2,
-		stype:       stype,
+		baseEndpoint: baseEndpoint{Queue: &waiter.Queue{}},
+		id:           UniqueID(),
+		stype:        stype,
 	}
+
+	q1 := queue.New(a.Queue, b.Queue, initialLimit)
+	q2 := queue.New(b.Queue, a.Queue, initialLimit)
 
 	if stype == SockStream {
 		a.receiver = &streamQueueReceiver{queueReceiver: queueReceiver{q1}}
@@ -186,7 +183,7 @@ func (e *connectionedEndpoint) Type() SockType {
 
 // WaiterQueue implements ConnectingEndpoint.WaiterQueue.
 func (e *connectionedEndpoint) WaiterQueue() *waiter.Queue {
-	return e.waiterQueue
+	return e.Queue
 }
 
 // isBound returns true iff the connectionedEndpoint is bound.
@@ -257,27 +254,24 @@ func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, retur
 	}
 
 	// Create a newly bound connectionedEndpoint.
-	wq := &waiter.Queue{}
-	readQueue := queue.New(ce.WaiterQueue(), wq, initialLimit)
-	writeQueue := queue.New(wq, ce.WaiterQueue(), initialLimit)
-	var receiver Receiver
-	if e.stype == SockStream {
-		receiver = &streamQueueReceiver{queueReceiver: queueReceiver{readQueue: writeQueue}}
-	} else {
-		receiver = &queueReceiver{readQueue: writeQueue}
-	}
 	ne := &connectionedEndpoint{
 		baseEndpoint: baseEndpoint{
-			connected: &connectedEndpoint{
-				endpoint:   ce,
-				writeQueue: readQueue,
-			},
-			receiver: receiver,
-			path:     e.path,
+			path:  e.path,
+			Queue: &waiter.Queue{},
 		},
-		id:          UniqueID(),
-		waiterQueue: wq,
-		stype:       e.stype,
+		id:    UniqueID(),
+		stype: e.stype,
+	}
+	readQueue := queue.New(ce.WaiterQueue(), ne.Queue, initialLimit)
+	writeQueue := queue.New(ne.Queue, ce.WaiterQueue(), initialLimit)
+	ne.connected = &connectedEndpoint{
+		endpoint:   ce,
+		writeQueue: readQueue,
+	}
+	if e.stype == SockStream {
+		ne.receiver = &streamQueueReceiver{queueReceiver: queueReceiver{readQueue: writeQueue}}
+	} else {
+		ne.receiver = &queueReceiver{readQueue: writeQueue}
 	}
 	ne.baseEndpoint.isBound = ne.isBound
 
@@ -295,7 +289,7 @@ func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, retur
 		}
 
 		// Notify on the other end.
-		e.waiterQueue.Notify(waiter.EventIn)
+		e.Notify(waiter.EventIn)
 
 		return nil
 	default:
@@ -319,7 +313,7 @@ func (e *connectionedEndpoint) Connect(server Endpoint) error {
 	returnConnect := func(r Receiver, ce ConnectedEndpoint) {
 		e.receiver = r
 		e.connected = ce
-		e.waiterQueue.Notify(waiter.EventOut)
+		e.Notify(waiter.EventOut)
 	}
 
 	return bound.BidirectionalConnect(e, returnConnect)
@@ -353,21 +347,21 @@ func (e *connectionedEndpoint) Listen(backlog int) error {
 }
 
 // Accept accepts a new connection.
-func (e *connectionedEndpoint) Accept() (Endpoint, *waiter.Queue, error) {
+func (e *connectionedEndpoint) Accept() (Endpoint, error) {
 	e.Lock()
 	defer e.Unlock()
 
 	if !e.Listening() {
-		return nil, nil, tcpip.ErrInvalidEndpointState
+		return nil, tcpip.ErrInvalidEndpointState
 	}
 
 	select {
 	case ne := <-e.acceptedChan:
-		return ne, ne.waiterQueue, nil
+		return ne, nil
 
 	default:
 		// Nothing left.
-		return nil, nil, tcpip.ErrWouldBlock
+		return nil, tcpip.ErrWouldBlock
 	}
 }
 

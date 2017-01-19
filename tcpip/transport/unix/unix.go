@@ -50,6 +50,7 @@ type ControlMessages interface {
 // etc. to Unix socket implementations.
 type Endpoint interface {
 	Credentialer
+	waiter.Waitable
 
 	// Close puts the endpoint in a closed state and frees all resources
 	// associated with it.
@@ -96,7 +97,7 @@ type Endpoint interface {
 	// block if no new connections are available.
 	//
 	// The returned Queue is the wait queue for the newly created endpoint.
-	Accept() (Endpoint, *waiter.Queue, error)
+	Accept() (Endpoint, error)
 
 	// Bind binds the endpoint to a specific local address and port.
 	// Specifying a NIC is optional.
@@ -116,10 +117,6 @@ type Endpoint interface {
 	// GetRemoteAddress returns the address to which the endpoint is
 	// connected.
 	GetRemoteAddress() (tcpip.FullAddress, error)
-
-	// Readiness returns the current readiness of the endpoint. For example,
-	// if waiter.EventIn is set, the endpoint is immediately readable.
-	Readiness(mask waiter.EventMask) waiter.EventMask
 
 	// SetSockOpt sets a socket option. opt should be one of the tcpip.*Option
 	// types.
@@ -373,6 +370,8 @@ func (e *connectedEndpoint) Writable() bool {
 //
 // Not to be used on its own.
 type baseEndpoint struct {
+	*waiter.Queue
+
 	// passcred specifies whether SCM_CREDENTIALS socket control messages are
 	// enabled on this endpoint. Must be accessed atomically.
 	passcred int32
