@@ -59,30 +59,6 @@ type ConnectingEndpoint interface {
 	WaiterQueue() *waiter.Queue
 }
 
-// A ConnectableEndpoint is a unix endpoint that can be connected to.
-type ConnectableEndpoint interface {
-	// BidirectionalConnect establishes a bi-directional connection between two
-	// unix endpoints in an all-or-nothing manner. If an error occurs during
-	// connecting, the state of neither endpoint should be modified.
-	//
-	// In order for an endpoint to establish such a bidirectional connection
-	// with a ConnectableEndpoint, the endpoint calls the BidirectionalConnect
-	// method on the ConnectableEndpoint and sends a representation of itself
-	// (the ConnectingEndpoint) and a callback (returnConnect) to receive the
-	// connection information (Receiver and ConnectedEndpoint) upon a
-	// sucessful connect. The callback should only be called on a sucessful
-	// connect.
-	//
-	// For a connection attempt to be sucessful, the ConnectingEndpoint must
-	// be unconnected and not listening and the ConnectableEndpoint whose
-	// BidirectionalConnect method is being called must be listening.
-	//
-	// For example, both STREAM and SEQPACKET sockets implement
-	// ConnectableEndpoint, but DGRAM sockets do not (see
-	// ConnectionlessEndpoint).
-	BidirectionalConnect(ep ConnectingEndpoint, returnConnect func(Receiver, ConnectedEndpoint)) error
-}
-
 // connectionedEndpoint is a Unix-domain connected or connectable endpoint and implements
 // ConnectingEndpoint, ConnectableEndpoint and tcpip.Endpoint.
 //
@@ -223,7 +199,7 @@ func (e *connectionedEndpoint) Close() {
 	}
 }
 
-// BidirectionalConnect implements ConnectableEndpoint.BidirectionalConnect.
+// BidirectionalConnect implements BoundEndpoint.BidirectionalConnect.
 func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, returnConnect func(Receiver, ConnectedEndpoint)) error {
 	if ce.Type() != e.stype {
 		return tcpip.ErrConnectionRefused
@@ -299,24 +275,21 @@ func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, retur
 	}
 }
 
+// UnidirectionalConnect implements BoundEndpoint.UnidirectionalConnect.
+func (e *connectionedEndpoint) UnidirectionalConnect() (ConnectedEndpoint, error) {
+	return nil, tcpip.ErrConnectionRefused
+}
+
 // Connect attempts to directly connect to another Endpoint.
 // Implements Endpoint.Connect.
-//
-// FIXME: Currently SREAM and SEQPACKET sockets can connect to
-// each other.
-func (e *connectionedEndpoint) Connect(server Endpoint) error {
-	bound, ok := server.(ConnectableEndpoint)
-	if !ok {
-		return tcpip.ErrConnectionRefused
-	}
-
+func (e *connectionedEndpoint) Connect(server BoundEndpoint) error {
 	returnConnect := func(r Receiver, ce ConnectedEndpoint) {
 		e.receiver = r
 		e.connected = ce
 		e.Notify(waiter.EventOut)
 	}
 
-	return bound.BidirectionalConnect(e, returnConnect)
+	return server.BidirectionalConnect(e, returnConnect)
 }
 
 // Listen starts listening on the connection.

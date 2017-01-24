@@ -10,16 +10,6 @@ import (
 	"github.com/google/netstack/waiter"
 )
 
-// A ConnectionlessEndpoint is a Unix endpoint that allows sending messages
-// to other endpoints without being connected. Unlike ConnectableEndpoints,
-// ConnectionlessEndpoints do not support bidectional connections and instead
-// support non-monogamous unidirectional connections (effectively a default
-// sending destination).
-type ConnectionlessEndpoint interface {
-	// UnidirectionalConnect establishes a connection to a ConnectionlessEndpoint.
-	UnidirectionalConnect() ConnectedEndpoint
-}
-
 // connectionlessEndpoint is a unix endpoint for unix sockets that support operating in
 // a conectionless fashon.
 //
@@ -61,27 +51,30 @@ func (e *connectionlessEndpoint) Close() {
 	}
 }
 
-// UnidirectionalConnect implements ConnectionlessEndpoint.UnidirectionalConnect.
-func (e *connectionlessEndpoint) UnidirectionalConnect() ConnectedEndpoint {
+// BidirectionalConnect implements BoundEndpoint.BidirectionalConnect.
+func (e *connectionlessEndpoint) BidirectionalConnect(ce ConnectingEndpoint, returnConnect func(Receiver, ConnectedEndpoint)) error {
+	return tcpip.ErrConnectionRefused
+}
+
+// UnidirectionalConnect implements BoundEndpoint.UnidirectionalConnect.
+func (e *connectionlessEndpoint) UnidirectionalConnect() (ConnectedEndpoint, error) {
 	return &connectedEndpoint{
 		endpoint:   e,
 		writeQueue: e.receiver.(*queueReceiver).readQueue,
-	}
+	}, nil
 }
 
 // SendMsg writes data and a control message to the specified endpoint.
 // This method does not block if the data cannot be written.
-func (e *connectionlessEndpoint) SendMsg(data [][]byte, c ControlMessages, to Endpoint) (uintptr, error) {
+func (e *connectionlessEndpoint) SendMsg(data [][]byte, c ControlMessages, to BoundEndpoint) (uintptr, error) {
 	if to == nil {
 		return e.baseEndpoint.SendMsg(data, c, nil)
 	}
 
-	toep, ok := to.(ConnectionlessEndpoint)
-	if !ok {
+	connected, err := to.UnidirectionalConnect()
+	if err != nil {
 		return 0, tcpip.ErrInvalidEndpointState
 	}
-
-	connected := toep.UnidirectionalConnect()
 
 	e.Lock()
 	defer e.Unlock()
@@ -100,13 +93,11 @@ func (e *connectionlessEndpoint) Type() SockType {
 }
 
 // Connect attempts to connect directly to server.
-func (e *connectionlessEndpoint) Connect(server Endpoint) error {
-	bound, ok := server.(ConnectionlessEndpoint)
-	if !ok {
-		return tcpip.ErrConnectionRefused
+func (e *connectionlessEndpoint) Connect(server BoundEndpoint) error {
+	connected, err := server.UnidirectionalConnect()
+	if err != nil {
+		return err
 	}
-
-	connected := bound.UnidirectionalConnect()
 
 	e.Lock()
 	e.connected = connected

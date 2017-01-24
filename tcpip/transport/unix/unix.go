@@ -74,7 +74,7 @@ type Endpoint interface {
 	// This method does not block if the data cannot be written.
 	//
 	// SendMsg does not take ownership of any of its arguments on error.
-	SendMsg([][]byte, ControlMessages, Endpoint) (uintptr, error)
+	SendMsg([][]byte, ControlMessages, BoundEndpoint) (uintptr, error)
 
 	// Connect connects this endpoint directly to another.
 	//
@@ -82,7 +82,7 @@ type Endpoint interface {
 	// endpoint passed in as a parameter.
 	//
 	// The error codes are the same as Connect.
-	Connect(server Endpoint) error
+	Connect(server BoundEndpoint) error
 
 	// Shutdown closes the read and/or write end of the endpoint connection
 	// to its peer.
@@ -137,6 +137,35 @@ type Credentialer interface {
 	// ConnectedPasscred returns whether or not the SO_PASSCRED socket option
 	// is enabled on the connected end.
 	ConnectedPasscred() bool
+}
+
+// A BoundEndpoint is a unix endpoint that can be connected to.
+type BoundEndpoint interface {
+	// BidirectionalConnect establishes a bi-directional connection between two
+	// unix endpoints in an all-or-nothing manner. If an error occurs during
+	// connecting, the state of neither endpoint should be modified.
+	//
+	// In order for an endpoint to establish such a bidirectional connection
+	// with a BoundEndpoint, the endpoint calls the BidirectionalConnect method
+	// on the BoundEndpoint and sends a representation of itself (the
+	// ConnectingEndpoint) and a callback (returnConnect) to receive the
+	// connection information (Receiver and ConnectedEndpoint) upon a
+	// sucessful connect. The callback should only be called on a sucessful
+	// connect.
+	//
+	// For a connection attempt to be sucessful, the ConnectingEndpoint must
+	// be unconnected and not listening and the BoundEndpoint whose
+	// BidirectionalConnect method is being called must be listening.
+	//
+	// This method will return tcpip.ErrConnectionRefused on endpoints with a
+	// type that isn't SockStream or SockSeqpacket.
+	BidirectionalConnect(ep ConnectingEndpoint, returnConnect func(Receiver, ConnectedEndpoint)) error
+
+	// UnidirectionalConnect establishes a write-only connection to a unix endpoint.
+	//
+	// This method will return tcpip.ErrConnectionRefused on a non-SockDgram
+	// endpoint.
+	UnidirectionalConnect() (ConnectedEndpoint, error)
 }
 
 // message represents a message passed over a Unix domain socket.
@@ -441,7 +470,7 @@ func (e *baseEndpoint) RecvMsg(data [][]byte, numRights uintptr, peek bool, addr
 
 // SendMsg writes data and a control message to the endpoint's peer.
 // This method does not block if the data cannot be written.
-func (e *baseEndpoint) SendMsg(data [][]byte, c ControlMessages, to Endpoint) (uintptr, error) {
+func (e *baseEndpoint) SendMsg(data [][]byte, c ControlMessages, to BoundEndpoint) (uintptr, error) {
 	e.Lock()
 	defer e.Unlock()
 	if !e.Connected() {
