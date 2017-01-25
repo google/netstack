@@ -214,10 +214,12 @@ type Receiver interface {
 	// CloseRecv prevents the receiving of additional Messages.
 	CloseRecv()
 
-	// Readable returns if messages should be attempted to be received.
+	// Readable returns if messages should be attempted to be received. This
+	// includes when read has been shutdown.
 	Readable() bool
 
 	// QueuedSize returns the total amount of data currently receivable.
+	// QueuedSize should return -1 if the operation isn't supported.
 	QueuedSize() int64
 }
 
@@ -330,8 +332,13 @@ type ConnectedEndpoint interface {
 	// CloseSend prevents the sending of additional Messages.
 	CloseSend()
 
-	// Writable returns if messages should be attempted to be sent.
+	// Writable returns if messages should be attempted to be sent. This
+	// includes when write has been shutdown.
 	Writable() bool
+
+	// EventUpdate lets the ConnectedEndpoint know that event registrations
+	// have changed.
+	EventUpdate()
 }
 
 type connectedEndpoint struct {
@@ -363,7 +370,7 @@ func (e *connectedEndpoint) GetLocalAddress() (tcpip.FullAddress, error) {
 	return e.endpoint.GetLocalAddress()
 }
 
-// Send implements Receiver.Send.
+// Send implements ConnectedEndpoint.Send.
 func (e *connectedEndpoint) Send(data [][]byte, controlMessages ControlMessages, from tcpip.FullAddress) (uintptr, error) {
 	var l int
 	for _, d := range data {
@@ -384,15 +391,18 @@ func (e *connectedEndpoint) Send(data [][]byte, controlMessages ControlMessages,
 	return uintptr(l), e.writeQueue.Enqueue(&message{Data: buffer.View(v), Control: controlMessages, Address: from})
 }
 
-// CloseSend implements Receiver.CloseSend.
+// CloseSend implements ConnectedEndpoint.CloseSend.
 func (e *connectedEndpoint) CloseSend() {
 	e.writeQueue.Close()
 }
 
-// Writable implements Receiver.Writable.
+// Writable implements ConnectedEndpoint.Writable.
 func (e *connectedEndpoint) Writable() bool {
 	return e.writeQueue.IsWritable()
 }
+
+// EventUpdate implements ConnectedEndpoint.EventUpdate.
+func (*connectedEndpoint) EventUpdate() {}
 
 // baseEndpoint is an embeddable unix endpoint base used in both the connected and connectionless
 // unix domain socket Endpoint implementations.
@@ -421,6 +431,26 @@ type baseEndpoint struct {
 
 	// isBound returns true iff the endpoint is bound.
 	isBound func() bool `state:"manual"`
+}
+
+// EventRegister implements waiter.Waitable.EventRegister.
+func (e *baseEndpoint) EventRegister(we *waiter.Entry, mask waiter.EventMask) {
+	e.Lock()
+	e.Queue.EventRegister(we, mask)
+	if e.connected != nil {
+		e.connected.EventUpdate()
+	}
+	e.Unlock()
+}
+
+// EventUnregister implements waiter.Waitable.EventUnregister.
+func (e *baseEndpoint) EventUnregister(we *waiter.Entry) {
+	e.Lock()
+	e.Queue.EventUnregister(we)
+	if e.connected != nil {
+		e.connected.EventUpdate()
+	}
+	e.Unlock()
 }
 
 // Passcred implements Credentialer.Passcred.
@@ -509,8 +539,12 @@ func (e *baseEndpoint) GetSockOpt(opt interface{}) error {
 			e.Unlock()
 			return tcpip.ErrNotConnected
 		}
-		*o = tcpip.ReceiveQueueSizeOption(e.receiver.QueuedSize())
+		qs := tcpip.ReceiveQueueSizeOption(e.receiver.QueuedSize())
 		e.Unlock()
+		if qs < 0 {
+			return tcpip.ErrQueueSizeNotSupported
+		}
+		*o = qs
 		return nil
 	case *tcpip.PasscredOption:
 		if e.Passcred() {
