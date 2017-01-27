@@ -184,6 +184,71 @@ func TestIPv4Receive(t *testing.T) {
 	ep.HandlePacket(&r, &vv)
 }
 
+func TestIPv4FragmentationReceive(t *testing.T) {
+	o := testObject{t: t, v4: true}
+	proto := ipv4.NewProtocol()
+	ep, err := proto.NewEndpoint(1, "\x0a\x00\x00\x01", nil, &o, nil)
+	if err != nil {
+		t.Fatalf("NewEndpoint failed: %v", err)
+	}
+
+	totalLen := header.IPv4MinimumSize + 24
+
+	frag1 := buffer.NewView(totalLen)
+	ip1 := header.IPv4(frag1)
+	ip1.Encode(&header.IPv4Fields{
+		IHL:            header.IPv4MinimumSize,
+		TotalLength:    uint16(totalLen),
+		TTL:            20,
+		Protocol:       10,
+		FragmentOffset: 0,
+		Flags:          header.IPv4FlagMoreFragments,
+		SrcAddr:        "\x0a\x00\x00\x02",
+		DstAddr:        "\x0a\x00\x00\x01",
+	})
+	// Make payload be non-zero.
+	for i := header.IPv4MinimumSize; i < totalLen; i++ {
+		frag1[i] = uint8(i)
+	}
+
+	frag2 := buffer.NewView(totalLen)
+	ip2 := header.IPv4(frag2)
+	ip2.Encode(&header.IPv4Fields{
+		IHL:            header.IPv4MinimumSize,
+		TotalLength:    uint16(totalLen),
+		TTL:            20,
+		Protocol:       10,
+		FragmentOffset: 24,
+		SrcAddr:        "\x0a\x00\x00\x02",
+		DstAddr:        "\x0a\x00\x00\x01",
+	})
+	// Make payload be non-zero.
+	for i := header.IPv4MinimumSize; i < totalLen; i++ {
+		frag2[i] = uint8(i)
+	}
+
+	// Give packet to ipv4 endpoint, dispatcher will validate that it's ok.
+	o.protocol = 10
+	o.srcAddr = "\x0a\x00\x00\x02"
+	o.dstAddr = "\x0a\x00\x00\x01"
+	o.contents = append(frag1[header.IPv4MinimumSize:totalLen], frag2[header.IPv4MinimumSize:totalLen]...)
+
+	r := stack.Route{
+		LocalAddress:  o.dstAddr,
+		RemoteAddress: o.srcAddr,
+	}
+
+	// Send first segment.
+	var views1 [1]buffer.View
+	vv1 := frag1.ToVectorisedView(views1)
+	ep.HandlePacket(&r, &vv1)
+
+	// Send second segment.
+	var views2 [1]buffer.View
+	vv2 := frag2.ToVectorisedView(views2)
+	ep.HandlePacket(&r, &vv2)
+}
+
 func TestIPv6Send(t *testing.T) {
 	o := testObject{t: t}
 	proto := ipv6.NewProtocol()

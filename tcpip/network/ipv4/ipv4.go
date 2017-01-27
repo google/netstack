@@ -17,6 +17,7 @@ import (
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
+	"github.com/google/netstack/tcpip/network/fragmentation"
 	"github.com/google/netstack/tcpip/stack"
 )
 
@@ -38,20 +39,22 @@ const (
 type address [header.IPv4AddressSize]byte
 
 type endpoint struct {
-	nicid        tcpip.NICID
-	id           stack.NetworkEndpointID
-	address      address
-	linkEP       stack.LinkEndpoint
-	dispatcher   stack.TransportDispatcher
-	echoRequests chan echoRequest
+	nicid         tcpip.NICID
+	id            stack.NetworkEndpointID
+	address       address
+	linkEP        stack.LinkEndpoint
+	dispatcher    stack.TransportDispatcher
+	echoRequests  chan echoRequest
+	fragmentation fragmentation.Fragmentation
 }
 
 func newEndpoint(nicid tcpip.NICID, addr tcpip.Address, dispatcher stack.TransportDispatcher, linkEP stack.LinkEndpoint) *endpoint {
 	e := &endpoint{
-		nicid:        nicid,
-		linkEP:       linkEP,
-		dispatcher:   dispatcher,
-		echoRequests: make(chan echoRequest, 10),
+		nicid:         nicid,
+		linkEP:        linkEP,
+		dispatcher:    dispatcher,
+		echoRequests:  make(chan echoRequest, 10),
+		fragmentation: fragmentation.NewFragmentation(fragmentation.MemoryLimit, fragmentation.DefaultReassembleTimeout),
 	}
 	copy(e.address[:], addr)
 	e.id = stack.NetworkEndpointID{tcpip.Address(e.address[:])}
@@ -119,21 +122,36 @@ func (e *endpoint) HandlePacket(r *stack.Route, vv *buffer.VectorisedView) {
 		return
 	}
 
-	// For now we don't support fragmentation, so reject fragmented packets.
-	if h.FragmentOffset() != 0 || (h.Flags()&header.IPv4FlagMoreFragments) != 0 {
-		return
-	}
-
 	hlen := int(h.HeaderLength())
 	tlen := int(h.TotalLength())
 	vv.TrimFront(hlen)
 	vv.CapLength(tlen - hlen)
+
+	more := (h.Flags() & header.IPv4FlagMoreFragments) != 0
+	if more || h.FragmentOffset() != 0 {
+		// The packet is a fragment, let's try to reassemble it.
+		last := h.FragmentOffset() + uint16(vv.Size()) - 1
+		tt, ready := e.fragmentation.Process(fragmentID(h), h.FragmentOffset(), last, more, vv)
+		if !ready {
+			return
+		}
+		vv = &tt
+	}
 	p := tcpip.TransportProtocolNumber(h.Protocol())
 	if p == header.ICMPv4ProtocolNumber {
 		e.handleICMP(r, vv)
 		return
 	}
 	e.dispatcher.DeliverTransportPacket(r, p, vv)
+}
+
+func fragmentID(h header.IPv4) uint32 {
+	a := uint32(h.ID()<<16) | uint32(h.Protocol())
+	t := h.SourceAddress()
+	b := uint32(t[0]) | uint32(t[1])<<8 | uint32(t[2])<<16 | uint32(t[3])<<24
+	t = h.DestinationAddress()
+	c := uint32(t[0]) | uint32(t[1])<<8 | uint32(t[2])<<16 | uint32(t[3])<<24
+	return hash3Words(a, b, c, hashIV)
 }
 
 // Close cleans up resources associated with the endpoint.
