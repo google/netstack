@@ -89,6 +89,10 @@ type sender struct {
 	// maxPayloadSize is the maximum size of the payload of a given segment.
 	// It is initialized on demand.
 	maxPayloadSize int
+
+	// sndWndScale is the number of bits to shift left when reading the send
+	// window size from a segment.
+	sndWndScale uint8
 }
 
 // fastRecovery holds information related to fast recovery from a packet loss.
@@ -125,7 +129,7 @@ func stopAndDrainTimer(t *time.Timer, enabled *bool) {
 	}
 }
 
-func newSender(ep *endpoint, iss seqnum.Value, sndWnd seqnum.Size, mss uint16) *sender {
+func newSender(ep *endpoint, iss seqnum.Value, sndWnd seqnum.Size, mss uint16, sndWndScale int) *sender {
 	s := &sender{
 		ep:               ep,
 		resendTimer:      time.NewTimer(time.Hour),
@@ -139,6 +143,12 @@ func newSender(ep *endpoint, iss seqnum.Value, sndWnd seqnum.Size, mss uint16) *
 		rttMeasureSeqNum: iss + 1,
 		lastSendTime:     time.Now(),
 		maxPayloadSize:   int(mss),
+	}
+
+	// A negative sndWndScale means that no scaling is in use, otherwise we
+	// store the scaling value.
+	if sndWndScale > 0 {
+		s.sndWndScale = uint8(sndWndScale)
 	}
 
 	m := int(ep.route.MTU()) - header.TCPMinimumSize

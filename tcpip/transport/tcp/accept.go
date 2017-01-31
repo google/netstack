@@ -182,7 +182,7 @@ func (l *listenContext) isCookieValid(id stack.TransportEndpointID, cookie seqnu
 
 // createConnectedEndpoint creates a new connected endpoint, with the connection
 // parameters given by the arguments.
-func (l *listenContext) createConnectedEndpoint(s *segment, iss seqnum.Value, irs seqnum.Value, mss uint16) (*endpoint, error) {
+func (l *listenContext) createConnectedEndpoint(s *segment, iss seqnum.Value, irs seqnum.Value, mss uint16, sndWndScale int) (*endpoint, error) {
 	// Create a new endpoint.
 	netProto := l.netProto
 	if netProto == 0 {
@@ -194,6 +194,7 @@ func (l *listenContext) createConnectedEndpoint(s *segment, iss seqnum.Value, ir
 	n.boundNICID = s.route.NICID()
 	n.route = s.route.Clone()
 	n.effectiveNetProtos = []tcpip.NetworkProtocolNumber{s.route.NetProto}
+	n.rcvBufSize = int(l.rcvWnd)
 
 	// Register new endpoint so that packets are routed to it.
 	if err := n.stack.RegisterTransportEndpoint(n.boundNICID, n.effectiveNetProtos, ProtocolNumber, n.id, n); err != nil {
@@ -205,19 +206,22 @@ func (l *listenContext) createConnectedEndpoint(s *segment, iss seqnum.Value, ir
 	n.state = stateConnected
 
 	// Create sender and receiver.
-	n.snd = newSender(n, iss, s.window, mss)
-	n.rcv = newReceiver(n, irs, l.rcvWnd)
+	//
+	// The receiver at least temporarily has a zero receive window scale,
+	// but the caller may change it (before starting the protocol loop).
+	n.snd = newSender(n, iss, s.window, mss, sndWndScale)
+	n.rcv = newReceiver(n, irs, l.rcvWnd, 0)
 
 	return n, nil
 }
 
 // createEndpoint creates a new endpoint in connected state and then performs
 // the TCP 3-way handshake.
-func (l *listenContext) createEndpointAndPerformHandshake(s *segment, mss uint16) (*endpoint, error) {
+func (l *listenContext) createEndpointAndPerformHandshake(s *segment, mss uint16, sndWndScale int) (*endpoint, error) {
 	// Create new endpoint.
 	irs := s.sequenceNumber
 	cookie := l.createCookie(s.id, irs, encodeMSS(mss))
-	ep, err := l.createConnectedEndpoint(s, cookie, irs, mss)
+	ep, err := l.createConnectedEndpoint(s, cookie, irs, mss, sndWndScale)
 	if err != nil {
 		return nil, err
 	}
@@ -229,13 +233,32 @@ func (l *listenContext) createEndpointAndPerformHandshake(s *segment, mss uint16
 		return nil, err
 	}
 
-	h.resetToSynRcvd(cookie, irs, mss)
+	h.resetToSynRcvd(cookie, irs, mss, sndWndScale)
 	if err := h.execute(); err != nil {
 		ep.Close()
 		return nil, err
 	}
 
+	// Update the receive window scaling. We can't do it before the
+	// handshake because it's possible that the peer doesn't support window
+	// scaling.
+	ep.rcv.rcvWndScale = h.effectiveRcvWndScale()
+
 	return ep, nil
+}
+
+// deliverAccepted delivers the newly-accepted endpoint to the listener. If the
+// endpoint has transitioned out of the listen state, the new endpoint is
+// closed instead.
+func (e *endpoint) deliverAccepted(n *endpoint) {
+	e.mu.RLock()
+	if e.state == stateListen {
+		e.acceptedChan <- n
+		e.waiterQueue.Notify(waiter.EventIn)
+	} else {
+		n.Close()
+	}
+	e.mu.RUnlock()
 }
 
 // handleSynSegment is called in its own goroutine once the listening
@@ -244,26 +267,16 @@ func (l *listenContext) createEndpointAndPerformHandshake(s *segment, mss uint16
 //
 // A limited number of these goroutines are allowed before TCP starts using
 // SYN cookies to accept connections.
-func (e *endpoint) handleSynSegment(ctx *listenContext, s *segment, mss uint16) {
+func (e *endpoint) handleSynSegment(ctx *listenContext, s *segment, mss uint16, sndWndScale int) {
 	defer decSynRcvdCount()
 	defer s.decRef()
 
-	n, err := ctx.createEndpointAndPerformHandshake(s, mss)
+	n, err := ctx.createEndpointAndPerformHandshake(s, mss, sndWndScale)
 	if err != nil {
 		return
 	}
 
-	// Send new connection to the listening endpoint if it's still
-	// listening. Otherwise close it.
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
-	if e.state == stateListen {
-		e.acceptedChan <- n
-		e.waiterQueue.Notify(waiter.EventIn)
-	} else {
-		n.Close()
-	}
+	e.deliverAccepted(n)
 }
 
 // handleListenSegment is called when a listening endpoint receives a segment
@@ -271,26 +284,27 @@ func (e *endpoint) handleSynSegment(ctx *listenContext, s *segment, mss uint16) 
 func (e *endpoint) handleListenSegment(ctx *listenContext, s *segment) {
 	switch s.flags {
 	case flagSyn:
-		mss, ok := parseSynOptions(s)
+		mss, sws, ok := parseSynOptions(s)
 		if !ok {
 			return
 		}
 		if incSynRcvdCount() {
 			s.incRef()
-			go e.handleSynSegment(ctx, s, mss)
+			go e.handleSynSegment(ctx, s, mss, sws)
 		} else {
 			cookie := ctx.createCookie(s.id, s.sequenceNumber, encodeMSS(mss))
-			sendSynTCP(&s.route, s.id, flagSyn|flagAck, cookie, s.sequenceNumber+1, ctx.rcvWnd)
+			// Send SYN with window scaling disabled because we
+			// currently can't encode this information in the
+			// cookie.
+			sendSynTCP(&s.route, s.id, flagSyn|flagAck, cookie, s.sequenceNumber+1, ctx.rcvWnd, -1)
 		}
 
 	case flagAck:
 		if data, ok := ctx.isCookieValid(s.id, s.ackNumber-1, s.sequenceNumber-1); ok && int(data) < len(mssTable) {
-			// Place new endpoint in accepted channel and notify
-			// potential waiters.
-			n, err := ctx.createConnectedEndpoint(s, s.ackNumber-1, s.sequenceNumber-1, mssTable[data])
+			// Create newly accepted endpoint and deliver it.
+			n, err := ctx.createConnectedEndpoint(s, s.ackNumber-1, s.sequenceNumber-1, mssTable[data], -1)
 			if err == nil {
-				e.acceptedChan <- n
-				e.waiterQueue.Notify(waiter.EventIn)
+				e.deliverAccepted(n)
 			}
 		}
 	}

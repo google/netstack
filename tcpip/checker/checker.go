@@ -250,9 +250,11 @@ func TCPFlagsMatch(flags, mask uint8) TransportChecker {
 	}
 }
 
-// TCPMSS creates a checker that checks the tcp mss option is set to the given
-// value.
-func TCPMSS(mss uint16) TransportChecker {
+// TCPSynOptions creates a checker that checks the presence of TCP options in
+// SYN segments.
+//
+// If wndscale is negative, the window scale option must not be present.
+func TCPSynOptions(mss uint16, wndscale int) TransportChecker {
 	return func(t *testing.T, h header.Transport) {
 		tcp, ok := h.(header.TCP)
 		if !ok {
@@ -262,7 +264,8 @@ func TCPMSS(mss uint16) TransportChecker {
 		offset := int(tcp.DataOffset())
 		opts := []byte(tcp[header.TCPMinimumSize:offset])
 		limit := len(opts)
-		found := false
+		foundMSS := false
+		foundWS := false
 		for i := 0; i < limit; {
 			switch opts[i] {
 			case header.TCPOptionEOL:
@@ -274,15 +277,29 @@ func TCPMSS(mss uint16) TransportChecker {
 				if mss != v {
 					t.Fatalf("Bad MSS: got %v, want %v", v, mss)
 				}
-				found = true
+				foundMSS = true
 				i += 4
+			case header.TCPOptionWS:
+				if wndscale < 0 {
+					t.Fatalf("WS present when it shouldn't be")
+				}
+				v := int(opts[i+2])
+				if v != wndscale {
+					t.Fatalf("Bad WS: got %v, want %v", v, wndscale)
+				}
+				foundWS = true
+				i += 3
 			default:
 				i += int(opts[i+1])
 			}
 		}
 
-		if !found {
+		if !foundMSS {
 			t.Fatalf("MSS option not found. Options: %x", opts)
+		}
+
+		if !foundWS && wndscale >= 0 {
+			t.Fatalf("WS option not found. Options: %x", opts)
 		}
 	}
 }

@@ -36,6 +36,9 @@ const (
 	notifyClose
 )
 
+// defaultBufferSize is the default size of the receive and send buffers.
+const defaultBufferSize = 208 * 1024
+
 // endpoint represents a TCP endpoint. This struct serves as the interface
 // between users of the endpoint and the protocol implementation; it is legal to
 // have concurrent goroutines make calls into the endpoint, they are properly
@@ -146,8 +149,8 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 		waiterQueue: waiterQueue,
 		v6only:      true,
 		segmentChan: make(chan *segment, 64),
-		rcvBufSize:  208 * 1024,
-		sndBufSize:  208 * 1024,
+		rcvBufSize:  defaultBufferSize,
+		sndBufSize:  defaultBufferSize,
 		sndChan:     make(chan struct{}, 1),
 		notifyChan:  make(chan struct{}, 1),
 		noDelay:     true,
@@ -316,9 +319,10 @@ func (e *endpoint) Read(*tcpip.FullAddress) (buffer.View, error) {
 		s.decRef()
 	}
 
-	wasZero := e.rcvBufUsed >= e.rcvBufSize
+	scale := e.rcv.rcvWndScale
+	wasZero := e.zeroReceiveWindow(scale)
 	e.rcvBufUsed -= len(v)
-	if wasZero && e.rcvBufUsed < e.rcvBufSize {
+	if wasZero && !e.zeroReceiveWindow(scale) {
 		e.notifyProtocolGoroutine(notifyNonZeroReceiveWindow)
 	}
 
@@ -424,9 +428,20 @@ func (e *endpoint) Peek(w io.Writer) (uintptr, error) {
 	return num, nil
 }
 
-// SetSockOpt sets a socket option. Currently not supported.
+// zeroReceiveWindow checks if the receive window to be announced now would be
+// zero, based on the amount of available buffer and the receive window scaling.
+//
+// It must be called with rcvListMu held.
+func (e *endpoint) zeroReceiveWindow(scale uint8) bool {
+	if e.rcvBufUsed >= e.rcvBufSize {
+		return true
+	}
+
+	return ((e.rcvBufSize - e.rcvBufUsed) >> scale) == 0
+}
+
+// SetSockOpt sets a socket option.
 func (e *endpoint) SetSockOpt(opt interface{}) error {
-	// TODO: Actually implement this.
 	switch v := opt.(type) {
 	case tcpip.NoDelayOption:
 		e.mu.Lock()
@@ -444,9 +459,20 @@ func (e *endpoint) SetSockOpt(opt interface{}) error {
 		mask := uint32(notifyReceiveWindowChanged)
 
 		e.rcvListMu.Lock()
-		wasZero := e.rcvBufUsed >= e.rcvBufSize
+
+		// Make sure the receive buffer size allows us to send a
+		// non-zero window size.
+		scale := uint8(0)
+		if e.rcv != nil {
+			scale = e.rcv.rcvWndScale
+		}
+		if v>>scale == 0 {
+			v = 1 << scale
+		}
+
+		wasZero := e.zeroReceiveWindow(scale)
 		e.rcvBufSize = int(v)
-		if wasZero && e.rcvBufUsed < e.rcvBufSize {
+		if wasZero && !e.zeroReceiveWindow(scale) {
 			mask |= notifyNonZeroReceiveWindow
 		}
 		e.rcvListMu.Unlock()
@@ -764,7 +790,7 @@ func (e *endpoint) Listen(backlog int) error {
 	e.acceptedChan = make(chan *endpoint, backlog)
 	e.workerRunning = true
 
-	go e.protocolListenLoop(seqnum.Size(e.rcvBufSize))
+	go e.protocolListenLoop(seqnum.Size(e.receiveBufferAvailable()))
 
 	return nil
 }

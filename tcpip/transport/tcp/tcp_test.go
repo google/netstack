@@ -54,7 +54,7 @@ const (
 	// defaultMTU is the MTU, in bytes, used throughout the tests, except
 	// where another value is explicitly used. It is chosen to match the MTU
 	// of loopback interfaces on linux systems.
-	defaultMTU = 65536
+	defaultMTU = 65535
 )
 
 // newTestContext allocates and initializes a test context containing a new
@@ -853,6 +853,305 @@ func TestZeroWindowSend(t *testing.T) {
 	})
 }
 
+func TestScaledWindowConnect(t *testing.T) {
+	// This test ensures that window scaling is used when the peer
+	// does advertise it and connection is established with Connect().
+	c := newTestContext(t, defaultMTU)
+	defer c.cleanup()
+
+	// Set the window size greater than the maximum non-scaled window.
+	opt := tcpip.ReceiveBufferSizeOption(65535 * 3)
+	c.createConnectedWithOptions(789, 30000, &opt, []byte{
+		header.TCPOptionWS, 3, 0, header.TCPOptionNOP,
+	})
+
+	data := []byte{1, 2, 3}
+	view := buffer.NewView(len(data))
+	copy(view, data)
+
+	if _, err := c.ep.Write(view, nil); err != nil {
+		t.Fatalf("Unexpected error from Write: %v", err)
+	}
+
+	// Check that data is received, and that advertised window is 0xbfff,
+	// that is, that it is scaled.
+	b := c.getPacket()
+	checker.IPv4(c.t, b,
+		checker.PayloadLen(len(data)+header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(uint32(c.irs)+1),
+			checker.AckNum(790),
+			checker.Window(0xbfff),
+			checker.TCPFlagsMatch(header.TCPFlagAck, ^uint8(header.TCPFlagPsh)),
+		),
+	)
+}
+
+func TestNonScaledWindowConnect(t *testing.T) {
+	// This test ensures that window scaling is not used when the peer
+	// doesn't advertise it and connection is established with Connect().
+	c := newTestContext(t, defaultMTU)
+	defer c.cleanup()
+
+	// Set the window size greater than the maximum non-scaled window.
+	opt := tcpip.ReceiveBufferSizeOption(65535 * 3)
+	c.createConnected(789, 30000, &opt)
+
+	data := []byte{1, 2, 3}
+	view := buffer.NewView(len(data))
+	copy(view, data)
+
+	if _, err := c.ep.Write(view, nil); err != nil {
+		t.Fatalf("Unexpected error from Write: %v", err)
+	}
+
+	// Check that data is received, and that advertised window is 0xffff,
+	// that is, that it's not scaled.
+	b := c.getPacket()
+	checker.IPv4(c.t, b,
+		checker.PayloadLen(len(data)+header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(uint32(c.irs)+1),
+			checker.AckNum(790),
+			checker.Window(0xffff),
+			checker.TCPFlagsMatch(header.TCPFlagAck, ^uint8(header.TCPFlagPsh)),
+		),
+	)
+}
+
+func TestScaledWindowAccept(t *testing.T) {
+	// This test ensures that window scaling is used when the peer
+	// does advertise it and connection is established with Accept().
+	c := newTestContext(t, defaultMTU)
+	defer c.cleanup()
+
+	// Create EP and start listening.
+	wq := &waiter.Queue{}
+	ep, err := c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, wq)
+	if err != nil {
+		c.t.Fatalf("NewEndpoint failed: %v", err)
+	}
+	defer ep.Close()
+
+	// Set the window size greater than the maximum non-scaled window.
+	if err := ep.SetSockOpt(tcpip.ReceiveBufferSizeOption(65535 * 3)); err != nil {
+		c.t.Fatalf("SetSockOpt failed failed: %v", err)
+	}
+
+	if err := ep.Bind(tcpip.FullAddress{Port: stackPort}, nil); err != nil {
+		c.t.Fatalf("Bind failed: %v", err)
+	}
+
+	if err := ep.Listen(10); err != nil {
+		c.t.Fatalf("Listen failed: %v", err)
+	}
+
+	// Do 3-way handshake.
+	passiveConnectWithOptions(c, 100, 2, defaultMTU, 0)
+
+	// Try to accept the connection.
+	we, ch := waiter.NewChannelEntry(nil)
+	wq.EventRegister(&we, waiter.EventIn)
+	defer wq.EventUnregister(&we)
+
+	c.ep, _, err = ep.Accept()
+	if err == tcpip.ErrWouldBlock {
+		// Wait for connection to be established.
+		select {
+		case <-ch:
+			c.ep, _, err = ep.Accept()
+			if err != nil {
+				c.t.Fatalf("Accept failed: %v", err)
+			}
+
+		case <-time.After(1 * time.Second):
+			c.t.Fatalf("Timed out waiting for accept")
+		}
+	}
+
+	data := []byte{1, 2, 3}
+	view := buffer.NewView(len(data))
+	copy(view, data)
+
+	if _, err := c.ep.Write(view, nil); err != nil {
+		t.Fatalf("Unexpected error from Write: %v", err)
+	}
+
+	// Check that data is received, and that advertised window is 0xbfff,
+	// that is, that it is scaled.
+	b := c.getPacket()
+	checker.IPv4(c.t, b,
+		checker.PayloadLen(len(data)+header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(uint32(c.irs)+1),
+			checker.AckNum(790),
+			checker.Window(0xbfff),
+			checker.TCPFlagsMatch(header.TCPFlagAck, ^uint8(header.TCPFlagPsh)),
+		),
+	)
+}
+
+func TestNonScaledWindowAccept(t *testing.T) {
+	// This test ensures that window scaling is not used when the peer
+	// doesn't advertise it and connection is established with Accept().
+	c := newTestContext(t, defaultMTU)
+	defer c.cleanup()
+
+	// Create EP and start listening.
+	wq := &waiter.Queue{}
+	ep, err := c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, wq)
+	if err != nil {
+		c.t.Fatalf("NewEndpoint failed: %v", err)
+	}
+	defer ep.Close()
+
+	// Set the window size greater than the maximum non-scaled window.
+	if err := ep.SetSockOpt(tcpip.ReceiveBufferSizeOption(65535 * 3)); err != nil {
+		c.t.Fatalf("SetSockOpt failed failed: %v", err)
+	}
+
+	if err := ep.Bind(tcpip.FullAddress{Port: stackPort}, nil); err != nil {
+		c.t.Fatalf("Bind failed: %v", err)
+	}
+
+	if err := ep.Listen(10); err != nil {
+		c.t.Fatalf("Listen failed: %v", err)
+	}
+
+	// Do 3-way handshake.
+	passiveConnect(c, 100, 2, defaultMTU)
+
+	// Try to accept the connection.
+	we, ch := waiter.NewChannelEntry(nil)
+	wq.EventRegister(&we, waiter.EventIn)
+	defer wq.EventUnregister(&we)
+
+	c.ep, _, err = ep.Accept()
+	if err == tcpip.ErrWouldBlock {
+		// Wait for connection to be established.
+		select {
+		case <-ch:
+			c.ep, _, err = ep.Accept()
+			if err != nil {
+				c.t.Fatalf("Accept failed: %v", err)
+			}
+
+		case <-time.After(1 * time.Second):
+			c.t.Fatalf("Timed out waiting for accept")
+		}
+	}
+
+	data := []byte{1, 2, 3}
+	view := buffer.NewView(len(data))
+	copy(view, data)
+
+	if _, err := c.ep.Write(view, nil); err != nil {
+		t.Fatalf("Unexpected error from Write: %v", err)
+	}
+
+	// Check that data is received, and that advertised window is 0xffff,
+	// that is, that it's not scaled.
+	b := c.getPacket()
+	checker.IPv4(c.t, b,
+		checker.PayloadLen(len(data)+header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(uint32(c.irs)+1),
+			checker.AckNum(790),
+			checker.Window(0xffff),
+			checker.TCPFlagsMatch(header.TCPFlagAck, ^uint8(header.TCPFlagPsh)),
+		),
+	)
+}
+
+func TestZeroScaledWindowReceive(t *testing.T) {
+	// This test ensures that the endpoint sends a non-zero window size
+	// advertisement when the scaled window transitions from 0 to non-zero,
+	// but the actual window (not scaled) hasn't gotten to zero.
+	c := newTestContext(t, defaultMTU)
+	defer c.cleanup()
+
+	// Set the window size such that a window scale of 4 will be used.
+	const wnd = 65535 * 10
+	const ws = uint32(4)
+	opt := tcpip.ReceiveBufferSizeOption(wnd)
+	c.createConnectedWithOptions(789, 30000, &opt, []byte{
+		header.TCPOptionWS, 3, 0, header.TCPOptionNOP,
+	})
+
+	// Write chunks of 50000 bytes.
+	remain := wnd
+	sent := 0
+	data := make([]byte, 50000)
+	for remain > len(data) {
+		c.sendPacket(data, &headers{
+			srcPort: testPort,
+			dstPort: c.port,
+			flags:   header.TCPFlagAck,
+			seqNum:  seqnum.Value(790 + sent),
+			ackNum:  c.irs.Add(1),
+			rcvWnd:  30000,
+		})
+		sent += len(data)
+		remain -= len(data)
+		checker.IPv4(c.t, c.getPacket(),
+			checker.PayloadLen(header.TCPMinimumSize),
+			checker.TCP(
+				checker.DstPort(testPort),
+				checker.SeqNum(uint32(c.irs)+1),
+				checker.AckNum(uint32(790+sent)),
+				checker.Window(uint16(remain>>ws)),
+				checker.TCPFlags(header.TCPFlagAck),
+			),
+		)
+	}
+
+	// Make the window non-zero, but the scaled window zero.
+	if remain >= 16 {
+		data = data[:remain-15]
+		c.sendPacket(data, &headers{
+			srcPort: testPort,
+			dstPort: c.port,
+			flags:   header.TCPFlagAck,
+			seqNum:  seqnum.Value(790 + sent),
+			ackNum:  c.irs.Add(1),
+			rcvWnd:  30000,
+		})
+		sent += len(data)
+		remain -= len(data)
+		checker.IPv4(c.t, c.getPacket(),
+			checker.PayloadLen(header.TCPMinimumSize),
+			checker.TCP(
+				checker.DstPort(testPort),
+				checker.SeqNum(uint32(c.irs)+1),
+				checker.AckNum(uint32(790+sent)),
+				checker.Window(0),
+				checker.TCPFlags(header.TCPFlagAck),
+			),
+		)
+	}
+
+	// Read some data. An ack should be sent in response to that.
+	v, err := c.ep.Read(nil)
+	if err != nil {
+		t.Fatalf("Unexpected error from Read: %v", err)
+	}
+
+	checker.IPv4(c.t, c.getPacket(),
+		checker.PayloadLen(header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(uint32(c.irs)+1),
+			checker.AckNum(uint32(790+sent)),
+			checker.Window(uint16(len(v)>>ws)),
+			checker.TCPFlags(header.TCPFlagAck),
+		),
+	)
+}
+
 func testBrokenUpWrite(c *testContext, maxPayload int) {
 	packetCount := 3
 	data := make([]byte, packetCount*maxPayload)
@@ -917,7 +1216,22 @@ func TestActiveSendMSSLessThanMTU(t *testing.T) {
 	testBrokenUpWrite(c, maxPayload)
 }
 
-func passiveConnect(c *testContext, maxPayload int, mtu uint16) {
+func passiveConnect(c *testContext, maxPayload, wndScale int, mtu uint16) {
+	passiveConnectWithOptions(c, maxPayload, wndScale, mtu, -1)
+}
+
+func passiveConnectWithOptions(c *testContext, maxPayload, wndScale int, mtu uint16, sndWndScale int) {
+	opts := []byte{
+		header.TCPOptionMSS, 4, byte(maxPayload / 256), byte(maxPayload % 256),
+	}
+	if sndWndScale < 0 {
+		sndWndScale = 0
+	} else {
+		opts = append(opts, []byte{
+			header.TCPOptionWS, 3, byte(sndWndScale), header.TCPOptionNOP,
+		}...)
+	}
+
 	// Send a SYN request.
 	iss := seqnum.Value(789)
 	c.sendPacket(nil, &headers{
@@ -926,9 +1240,7 @@ func passiveConnect(c *testContext, maxPayload int, mtu uint16) {
 		flags:   header.TCPFlagSyn,
 		seqNum:  iss,
 		rcvWnd:  30000,
-		tcpOpts: []byte{
-			header.TCPOptionMSS, 4, byte(maxPayload / 256), byte(maxPayload % 256),
-		},
+		tcpOpts: opts,
 	})
 
 	// Receive the SYN-ACK reply. Make sure MSS is present.
@@ -941,7 +1253,7 @@ func passiveConnect(c *testContext, maxPayload int, mtu uint16) {
 			checker.DstPort(testPort),
 			checker.TCPFlags(header.TCPFlagAck|header.TCPFlagSyn),
 			checker.AckNum(uint32(iss)+1),
-			checker.TCPMSS(mtu-header.IPv4MinimumSize-header.TCPMinimumSize),
+			checker.TCPSynOptions(mtu-header.IPv4MinimumSize-header.TCPMinimumSize, wndScale),
 		),
 	)
 
@@ -952,7 +1264,7 @@ func passiveConnect(c *testContext, maxPayload int, mtu uint16) {
 		flags:   header.TCPFlagAck,
 		seqNum:  iss + 1,
 		ackNum:  c.irs + 1,
-		rcvWnd:  30000,
+		rcvWnd:  30000 >> byte(sndWndScale),
 	})
 
 	c.port = stackPort
@@ -972,6 +1284,14 @@ func TestPassiveSendMSSLessThanMTU(t *testing.T) {
 	}
 	defer ep.Close()
 
+	// Set the buffer size to a deterministic size so that we can check the
+	// window scaling option.
+	const rcvBufferSize = 0x20000
+	const wndScale = 2
+	if err := ep.SetSockOpt(tcpip.ReceiveBufferSizeOption(rcvBufferSize)); err != nil {
+		c.t.Fatalf("SetSockOpt failed failed: %v", err)
+	}
+
 	if err := ep.Bind(tcpip.FullAddress{Port: stackPort}, nil); err != nil {
 		c.t.Fatalf("Bind failed: %v", err)
 	}
@@ -981,7 +1301,7 @@ func TestPassiveSendMSSLessThanMTU(t *testing.T) {
 	}
 
 	// Do 3-way handshake.
-	passiveConnect(c, maxPayload, mtu)
+	passiveConnect(c, maxPayload, wndScale, mtu)
 
 	// Try to accept the connection.
 	we, ch := waiter.NewChannelEntry(nil)
@@ -1038,7 +1358,7 @@ func TestSynCookiePassiveSendMSSLessThanMTU(t *testing.T) {
 	}
 
 	// Do 3-way handshake.
-	passiveConnect(c, maxPayload, mtu)
+	passiveConnect(c, maxPayload, -1, mtu)
 
 	// Try to accept the connection.
 	we, ch := waiter.NewChannelEntry(nil)
@@ -1072,7 +1392,7 @@ func TestForwarderSendMSSLessThanMTU(t *testing.T) {
 
 	s := c.s.(*stack.Stack)
 	ch := make(chan error, 1)
-	f := tcp.NewForwarder(s, 30000, 10, func(r *tcp.ForwarderRequest) {
+	f := tcp.NewForwarder(s, 65536, 10, func(r *tcp.ForwarderRequest) {
 		var err error
 		c.ep, err = r.CreateEndpoint(&c.wq)
 		ch <- err
@@ -1080,7 +1400,7 @@ func TestForwarderSendMSSLessThanMTU(t *testing.T) {
 	s.SetTransportProtocolHandler(tcp.ProtocolNumber, f.HandlePacket)
 
 	// Do 3-way handshake.
-	passiveConnect(c, maxPayload, mtu)
+	passiveConnect(c, maxPayload, 1, mtu)
 
 	// Wait for connection to be available.
 	select {
@@ -1096,7 +1416,7 @@ func TestForwarderSendMSSLessThanMTU(t *testing.T) {
 	testBrokenUpWrite(c, maxPayload)
 }
 
-func TestMSSSentOnActiveConnect(t *testing.T) {
+func TestSynOptionsOnActiveConnect(t *testing.T) {
 	const mtu = 1400
 	c := newTestContext(t, mtu)
 	defer c.cleanup()
@@ -1106,6 +1426,14 @@ func TestMSSSentOnActiveConnect(t *testing.T) {
 	c.ep, err = c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &c.wq)
 	if err != nil {
 		c.t.Fatalf("NewEndpoint failed: %v", err)
+	}
+
+	// Set the buffer size to a deterministic size so that we can check the
+	// window scaling option.
+	const rcvBufferSize = 0x20000
+	const wndScale = 2
+	if err := c.ep.SetSockOpt(tcpip.ReceiveBufferSizeOption(rcvBufferSize)); err != nil {
+		c.t.Fatalf("SetSockOpt failed failed: %v", err)
 	}
 
 	// Start connection attempt.
@@ -1124,7 +1452,7 @@ func TestMSSSentOnActiveConnect(t *testing.T) {
 		checker.TCP(
 			checker.DstPort(testPort),
 			checker.TCPFlags(header.TCPFlagSyn),
-			checker.TCPMSS(mtu-header.IPv4MinimumSize-header.TCPMinimumSize),
+			checker.TCPSynOptions(mtu-header.IPv4MinimumSize-header.TCPMinimumSize, wndScale),
 		),
 	)
 
@@ -1139,7 +1467,7 @@ func TestMSSSentOnActiveConnect(t *testing.T) {
 			checker.TCPFlags(header.TCPFlagSyn),
 			checker.SrcPort(tcp.SourcePort()),
 			checker.SeqNum(tcp.SequenceNumber()),
-			checker.TCPMSS(mtu-header.IPv4MinimumSize-header.TCPMinimumSize),
+			checker.TCPSynOptions(mtu-header.IPv4MinimumSize-header.TCPMinimumSize, wndScale),
 		),
 	)
 
@@ -1415,7 +1743,7 @@ func TestFinWithPendingData(t *testing.T) {
 		rcvWnd:  30000,
 	})
 
-	// Write now data, but don't acknowledge it.
+	// Write new data, but don't acknowledge it.
 	if _, err := c.ep.Write(view, nil); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
@@ -1788,4 +2116,59 @@ func TestUpdateListenBacklog(t *testing.T) {
 	}
 
 	ep.Close()
+}
+
+func scaledSendWindow(t *testing.T, scale uint8) {
+	// This test ensures that the endpoint is using the right scaling by
+	// sending a buffer that is larger than the window size, and ensuring
+	// that the endpoint doesn't send more than allowed.
+	c := newTestContext(t, defaultMTU)
+	defer c.cleanup()
+
+	maxPayload := defaultMTU - header.IPv4MinimumSize - header.TCPMinimumSize
+	c.createConnectedWithOptions(789, 0, nil, []byte{
+		header.TCPOptionMSS, 4, byte(maxPayload / 256), byte(maxPayload % 256),
+		header.TCPOptionWS, 3, scale, header.TCPOptionNOP,
+	})
+
+	// Open up the window with a scaled value.
+	c.sendPacket(nil, &headers{
+		srcPort: testPort,
+		dstPort: c.port,
+		flags:   header.TCPFlagAck,
+		seqNum:  790,
+		ackNum:  c.irs.Add(1),
+		rcvWnd:  1,
+	})
+
+	// Send some data. Check that it's capped by the window size.
+	view := buffer.NewView(65535)
+	if _, err := c.ep.Write(view, nil); err != nil {
+		t.Fatalf("Unexpected error from Write: %v", err)
+	}
+
+	// Check that only data that fits in the scaled window is sent.
+	checker.IPv4(c.t, c.getPacket(),
+		checker.PayloadLen((1<<scale)+header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(uint32(c.irs)+1),
+			checker.AckNum(790),
+			checker.TCPFlagsMatch(header.TCPFlagAck, ^uint8(header.TCPFlagPsh)),
+		),
+	)
+
+	// Reset the connection to free resources.
+	c.sendPacket(nil, &headers{
+		srcPort: testPort,
+		dstPort: c.port,
+		flags:   header.TCPFlagRst,
+		seqNum:  790,
+	})
+}
+
+func TestScaledSendWindow(t *testing.T) {
+	for scale := uint8(0); scale <= 14; scale++ {
+		scaledSendWindow(t, scale)
+	}
 }

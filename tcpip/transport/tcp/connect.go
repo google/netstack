@@ -27,6 +27,12 @@ const (
 	handshakeCompleted
 )
 
+const (
+	// maxWndScale is maximum allowed window scaling, as described in
+	// RFC 1323, section 2.3, page 11.
+	maxWndScale = 14
+)
+
 // handshake holds the state used during a TCP 3-way handshake.
 type handshake struct {
 	ep     *endpoint
@@ -46,15 +52,44 @@ type handshake struct {
 
 	// mss is the maximum segment size received from the peer.
 	mss uint16
+
+	// sndWndScale is the send window scale, as defined in RFC 1323. A
+	// negative value means no scaling is supported by the peer.
+	sndWndScale int
+
+	// rcvWndScale is the receive window scale, as defined in RFC 1323.
+	rcvWndScale int
 }
 
 func newHandshake(ep *endpoint, rcvWnd seqnum.Size) (handshake, error) {
-	h := handshake{ep: ep, active: true, rcvWnd: rcvWnd}
+	h := handshake{
+		ep:          ep,
+		active:      true,
+		rcvWnd:      rcvWnd,
+		rcvWndScale: findWndScale(rcvWnd),
+	}
 	if err := h.resetState(); err != nil {
 		return handshake{}, err
 	}
 
 	return h, nil
+}
+
+// findWndScale determines the window scale to use for the given maximum window
+// size.
+func findWndScale(wnd seqnum.Size) int {
+	if wnd < 0x10000 {
+		return 0
+	}
+
+	max := seqnum.Size(0xffff)
+	s := 0
+	for wnd > max && s < maxWndScale {
+		s++
+		max <<= 1
+	}
+
+	return s
 }
 
 // resetState resets the state of the handshake object such that it becomes
@@ -74,15 +109,26 @@ func (h *handshake) resetState() error {
 	return nil
 }
 
+// effectiveRcvWndScale returns the effective receive window scale to be used.
+// If the peer doesn't support window scaling, the effective rcv wnd scale is
+// zero; otherwise it's the value calculated based on the initial rcv wnd.
+func (h *handshake) effectiveRcvWndScale() uint8 {
+	if h.sndWndScale < 0 {
+		return 0
+	}
+	return uint8(h.rcvWndScale)
+}
+
 // resetToSynRcvd resets the state of the handshake object to the SYN-RCVD
 // state.
-func (h *handshake) resetToSynRcvd(iss seqnum.Value, irs seqnum.Value, mss uint16) {
+func (h *handshake) resetToSynRcvd(iss seqnum.Value, irs seqnum.Value, mss uint16, sndWndScale int) {
 	h.active = false
 	h.state = handshakeSynRcvd
 	h.flags = flagSyn | flagAck
 	h.iss = iss
 	h.ackNum = irs + 1
 	h.mss = mss
+	h.sndWndScale = sndWndScale
 }
 
 // checkAck checks if the ACK number, if present, of a segment received during
@@ -125,7 +171,7 @@ func (h *handshake) synSentState(s *segment) error {
 	}
 
 	// Parse the SYN options. Ignore the segment if it's invalid.
-	mss, ok := parseSynOptions(s)
+	mss, sws, ok := parseSynOptions(s)
 	if !ok {
 		return nil
 	}
@@ -134,12 +180,13 @@ func (h *handshake) synSentState(s *segment) error {
 	h.ackNum = s.sequenceNumber + 1
 	h.flags |= flagAck
 	h.mss = mss
+	h.sndWndScale = sws
 
 	// If this is a SYN ACK response, we only need to acknowledge the SYN
 	// and the handshake is completed.
 	if s.flagIsSet(flagAck) {
 		h.state = handshakeCompleted
-		h.ep.sendRaw(nil, flagAck, h.iss+1, h.ackNum, h.rcvWnd)
+		h.ep.sendRaw(nil, flagAck, h.iss+1, h.ackNum, h.rcvWnd>>h.effectiveRcvWndScale())
 		return nil
 	}
 
@@ -147,7 +194,7 @@ func (h *handshake) synSentState(s *segment) error {
 	// but resend our own SYN and wait for it to be acknowledged in the
 	// SYN-RCVD state.
 	h.state = handshakeSynRcvd
-	sendSynTCP(&s.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd)
+	sendSynTCP(&s.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, h.rcvWndScale)
 
 	return nil
 }
@@ -187,7 +234,7 @@ func (h *handshake) synRcvdState(s *segment) error {
 			return err
 		}
 
-		sendSynTCP(&s.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd)
+		sendSynTCP(&s.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, h.rcvWndScale)
 		return nil
 	}
 
@@ -210,7 +257,7 @@ func (h *handshake) execute() error {
 
 	// Send the initial SYN segment and loop until the handshake is
 	// completed.
-	sendSynTCP(&h.ep.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd)
+	sendSynTCP(&h.ep.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, h.rcvWndScale)
 	for h.state != handshakeCompleted {
 		select {
 		case <-rt.C:
@@ -219,10 +266,13 @@ func (h *handshake) execute() error {
 				return tcpip.ErrTimeout
 			}
 			rt.Reset(timeOut)
-			sendSynTCP(&h.ep.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd)
+			sendSynTCP(&h.ep.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, h.rcvWndScale)
 
 		case s := <-h.ep.segmentChan:
 			h.sndWnd = s.window
+			if !s.flagIsSet(flagSyn) && h.sndWndScale > 0 {
+				h.sndWnd <<= uint8(h.sndWndScale)
+			}
 			var err error
 			switch h.state {
 			case handshakeSynRcvd:
@@ -247,11 +297,14 @@ func (h *handshake) execute() error {
 }
 
 // parseSynOptions parses the options received in a syn segment and returns the
-// relevant ones.
-func parseSynOptions(s *segment) (mss uint16, ok bool) {
+// relevant ones. If no window scale option is specified, ws is returned as -1;
+// this is because the absence of the option indicates that the we cannot use
+// window scaling on the receive end either.
+func parseSynOptions(s *segment) (mss uint16, ws int, ok bool) {
 	// Per RFC 1122, page 85: "If an MSS option is not received at
 	// connection setup, TCP MUST assume a default send MSS of 536."
 	mss = 536
+	ws = -1
 	opts := s.options
 	limit := len(opts)
 	for i := 0; i < limit; {
@@ -262,35 +315,54 @@ func parseSynOptions(s *segment) (mss uint16, ok bool) {
 			i++
 		case header.TCPOptionMSS:
 			if i+4 > limit || opts[i+1] != 4 {
-				return 0, false
+				return 0, -1, false
 			}
 			mss = uint16(opts[i+2])<<8 | uint16(opts[i+3])
 			if mss == 0 {
-				return 0, false
+				return 0, -1, false
 			}
 			i += 4
+
+		case header.TCPOptionWS:
+			if i+3 > limit || opts[i+1] != 3 {
+				return 0, -1, false
+			}
+			ws = int(opts[i+2])
+			if ws > maxWndScale {
+				ws = maxWndScale
+			}
+			i += 3
+
 		default:
 			// We don't recognize this option, just skip over it.
 			if i+2 > limit {
-				return 0, false
+				return 0, -1, false
 			}
 			l := int(opts[i+1])
 			if i < 2 || i+l > limit {
-				return 0, false
+				return 0, -1, false
 			}
 			i += l
 		}
 	}
 
-	return mss, true
+	return mss, ws, true
 }
 
-func sendSynTCP(r *stack.Route, id stack.TransportEndpointID, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size) error {
+func sendSynTCP(r *stack.Route, id stack.TransportEndpointID, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size, rcvWndScale int) error {
 	// Initialize the options.
 	mss := r.MTU() - header.TCPMinimumSize
 	options := []byte{
 		// Initialize the MSS option.
 		header.TCPOptionMSS, 4, byte(mss >> 8), byte(mss),
+
+		// Initialize the WS option. It must be the last one so that it
+		// can be removed if rcvWndScale is negative (disabled).
+		header.TCPOptionWS, 3, uint8(rcvWndScale), header.TCPOptionNOP,
+	}
+
+	if rcvWndScale < 0 {
+		options = options[:len(options)-4]
 	}
 
 	return sendTCPWithOptions(r, id, nil, flags, seq, ack, rcvWnd, options)
@@ -407,7 +479,7 @@ func (e *endpoint) handleWrite(ok bool) {
 // with the given error code.
 // This method must only be called from the protocol goroutine.
 func (e *endpoint) resetConnection(err error) {
-	e.sendRaw(nil, flagAck|flagRst, e.snd.sndUna, e.rcv.rcvNxt, e.rcv.rcvNxt.Size(e.rcv.rcvAcc))
+	e.sendRaw(nil, flagAck|flagRst, e.snd.sndUna, e.rcv.rcvNxt, 0)
 
 	e.mu.Lock()
 	e.state = stateError
@@ -441,7 +513,7 @@ func (e *endpoint) protocolMainLoop(passive bool) error {
 		// This is an active connection, so we must initiate the 3-way
 		// handshake, and then inform potential waiters about its
 		// completion.
-		h, err := newHandshake(e, seqnum.Size(e.rcvBufSize))
+		h, err := newHandshake(e, seqnum.Size(e.receiveBufferAvailable()))
 		if err == nil {
 			err = h.execute()
 		}
@@ -458,9 +530,14 @@ func (e *endpoint) protocolMainLoop(passive bool) error {
 			return err
 		}
 
-		// Transfer handshake state to TCP connection.
-		e.snd = newSender(e, h.iss, h.sndWnd, h.mss)
-		e.rcv = newReceiver(e, h.ackNum-1, h.rcvWnd)
+		// Transfer handshake state to TCP connection. We disable
+		// receive window scaling if the peer doesn't support it
+		// (indicated by a negative send window scale).
+		e.snd = newSender(e, h.iss, h.sndWnd, h.mss, h.sndWndScale)
+
+		e.rcvListMu.Lock()
+		e.rcv = newReceiver(e, h.ackNum-1, h.rcvWnd, h.effectiveRcvWndScale())
+		e.rcvListMu.Unlock()
 	}
 
 	// Tell waiters that the endpoint is connected and writable.
@@ -492,6 +569,10 @@ func (e *endpoint) protocolMainLoop(passive bool) error {
 					return nil
 				}
 			} else if s.flagIsSet(flagAck) {
+				// Patch the window size in the segment
+				// according to the send window scale.
+				s.window <<= e.snd.sndWndScale
+
 				// RFC 793, page 41 states that "once in the ESTABLISHED
 				// state all segments must carry current acknowledgment
 				// information."

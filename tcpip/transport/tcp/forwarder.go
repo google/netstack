@@ -32,7 +32,12 @@ type Forwarder struct {
 // NewForwarder allocates and initializes a new forwarder with the given
 // maximum number of in-flight connection attempts. Once the maximum is reached
 // new incoming connection requests will be ignored.
+//
+// If rcvWnd is set to zero, the default buffer size is used instead.
 func NewForwarder(s *stack.Stack, rcvWnd, maxInFlight int, handler func(*ForwarderRequest)) *Forwarder {
+	if rcvWnd == 0 {
+		rcvWnd = defaultBufferSize
+	}
 	return &Forwarder{
 		maxInFlight: maxInFlight,
 		handler:     handler,
@@ -56,7 +61,7 @@ func (f *Forwarder) HandlePacket(r *stack.Route, id stack.TransportEndpointID, v
 		return false
 	}
 
-	mss, ok := parseSynOptions(s)
+	mss, sws, ok := parseSynOptions(s)
 	if !ok {
 		return false
 	}
@@ -78,9 +83,10 @@ func (f *Forwarder) HandlePacket(r *stack.Route, id stack.TransportEndpointID, v
 	f.inFlight[id] = struct{}{}
 	s.incRef()
 	go f.handler(&ForwarderRequest{
-		forwarder: f,
-		segment:   s,
-		mss:       mss,
+		forwarder:   f,
+		segment:     s,
+		mss:         mss,
+		sndWndScale: sws,
 	})
 
 	return true
@@ -90,10 +96,11 @@ func (f *Forwarder) HandlePacket(r *stack.Route, id stack.TransportEndpointID, v
 // and passed to the client. Clients must eventually call Complete() on it, and
 // may optionally create an endpoint to represent it via CreateEndpoint.
 type ForwarderRequest struct {
-	mu        sync.Mutex
-	forwarder *Forwarder
-	segment   *segment
-	mss       uint16
+	mu          sync.Mutex
+	forwarder   *Forwarder
+	segment     *segment
+	mss         uint16
+	sndWndScale int
 }
 
 // ID returns the 4-tuple (src address, src port, dst address, dst port) that
@@ -139,7 +146,7 @@ func (r *ForwarderRequest) CreateEndpoint(queue *waiter.Queue) (tcpip.Endpoint, 
 	}
 
 	f := r.forwarder
-	ep, err := f.listen.createEndpointAndPerformHandshake(r.segment, r.mss)
+	ep, err := f.listen.createEndpointAndPerformHandshake(r.segment, r.mss, r.sndWndScale)
 	if err != nil {
 		return nil, err
 	}
