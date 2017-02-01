@@ -152,6 +152,15 @@ func (vv *VectorisedView) Views() []View {
 	return vv.views
 }
 
+// ByteSlice returns a slice containing the all views as a []byte.
+func (vv *VectorisedView) ByteSlice() [][]byte {
+	s := make([][]byte, len(vv.views))
+	for i := range vv.views {
+		s[i] = []byte(vv.views[i])
+	}
+	return s
+}
+
 // copy returns a deep-copy of the vectorised view.
 // It is an expensive method that should be used only in tests.
 func (vv *VectorisedView) copy() *VectorisedView {
