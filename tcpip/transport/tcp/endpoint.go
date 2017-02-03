@@ -6,6 +6,7 @@ package tcp
 
 import (
 	"io"
+	"math"
 	"sync"
 	"sync/atomic"
 
@@ -31,7 +32,8 @@ const (
 
 // Reasons for notifying the protocol goroutine.
 const (
-	notifyNonZeroReceiveWindow = 1 << iota
+	notifyHandleSegment = 1 << iota
+	notifyNonZeroReceiveWindow
 	notifyReceiveWindowChanged
 	notifyClose
 )
@@ -105,10 +107,10 @@ type endpoint struct {
 	noDelay   bool
 	reuseAddr bool
 
-	// segmentChan is used to hand received segments to the protocol
-	// goroutine. Segments are queued in the channel as long as it is not
-	// full, and dropped when it is.
-	segmentChan chan *segment
+	// segmentQueue is used to hand received segments to the protocol
+	// goroutine. Segments are queued as long as the queue is not full,
+	// and dropped when it is.
+	segmentQueue segmentQueue
 
 	// The following fields are used to manage the send buffer. When
 	// segments are ready to be sent, they are added to sndQueue and the
@@ -143,12 +145,11 @@ type endpoint struct {
 }
 
 func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waiterQueue *waiter.Queue) *endpoint {
-	return &endpoint{
+	e := &endpoint{
 		stack:       stack,
 		netProto:    netProto,
 		waiterQueue: waiterQueue,
 		v6only:      true,
-		segmentChan: make(chan *segment, 64),
 		rcvBufSize:  defaultBufferSize,
 		sndBufSize:  defaultBufferSize,
 		sndChan:     make(chan struct{}, 1),
@@ -156,6 +157,8 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 		noDelay:     true,
 		reuseAddr:   true,
 	}
+	e.segmentQueue.setLimit(2 * e.rcvBufSize)
+	return e
 }
 
 // Readiness returns the current readiness of the endpoint. For example, if
@@ -470,12 +473,19 @@ func (e *endpoint) SetSockOpt(opt interface{}) error {
 			v = 1 << scale
 		}
 
+		// Make sure 2*v doesn't overflow.
+		if int(v) > math.MaxInt32/2 {
+			v = math.MaxInt32 / 2
+		}
+
 		wasZero := e.zeroReceiveWindow(scale)
 		e.rcvBufSize = int(v)
 		if wasZero && !e.zeroReceiveWindow(scale) {
 			mask |= notifyNonZeroReceiveWindow
 		}
 		e.rcvListMu.Unlock()
+
+		e.segmentQueue.setLimit(2 * int(v))
 
 		e.notifyProtocolGoroutine(mask)
 		return nil
@@ -944,10 +954,10 @@ func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv
 	}
 
 	// Send packet to worker goroutine.
-	select {
-	case e.segmentChan <- s:
-	default:
-		// The channel is full, so we drop the segment.
+	if e.segmentQueue.enqueue(s) {
+		e.notifyProtocolGoroutine(notifyHandleSegment)
+	} else {
+		// The queue is full, so we drop the segment.
 		// TODO: Add some stat on this.
 		s.decRef()
 	}

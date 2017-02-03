@@ -16,6 +16,12 @@ import (
 	"github.com/google/netstack/waiter"
 )
 
+// maxSegmentsPerWake is the maximum number of segments to process in the main
+// protocol goroutine per wake-up. Yielding [after this number of segments are
+// processed] allows other events to be processed as well (e.g., timeouts,
+// resets, etc.).
+const maxSegmentsPerWake = 100
+
 type handshakeState int
 
 // The following are the possible states of the TCP connection during a 3-way
@@ -248,6 +254,49 @@ func (h *handshake) synRcvdState(s *segment) error {
 	return nil
 }
 
+// processSegments goes through the segment queue and processes up to
+// maxSegmentsPerWake (if they're available).
+func (h *handshake) processSegments() error {
+	for i := 0; i < maxSegmentsPerWake; i++ {
+		s := h.ep.segmentQueue.dequeue()
+		if s == nil {
+			return nil
+		}
+
+		h.sndWnd = s.window
+		if !s.flagIsSet(flagSyn) && h.sndWndScale > 0 {
+			h.sndWnd <<= uint8(h.sndWndScale)
+		}
+
+		var err error
+		switch h.state {
+		case handshakeSynRcvd:
+			err = h.synRcvdState(s)
+		case handshakeSynSent:
+			err = h.synSentState(s)
+		}
+		s.decRef()
+		if err != nil {
+			return err
+		}
+
+		// We stop processing packets once the handshake is completed,
+		// otherwise we may process packets meant to be processed by
+		// the main protocol goroutine.
+		if h.state == handshakeCompleted {
+			break
+		}
+	}
+
+	// If the queue is not empty, make sure we'll wake up in the next
+	// iteration.
+	if !h.ep.segmentQueue.empty() {
+		h.ep.notifyProtocolGoroutine(notifyHandleSegment)
+	}
+
+	return nil
+}
+
 // execute executes the TCP 3-way handshake.
 func (h *handshake) execute() error {
 	// Initialize the resend timer.
@@ -268,27 +317,16 @@ func (h *handshake) execute() error {
 			rt.Reset(timeOut)
 			sendSynTCP(&h.ep.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, h.rcvWndScale)
 
-		case s := <-h.ep.segmentChan:
-			h.sndWnd = s.window
-			if !s.flagIsSet(flagSyn) && h.sndWndScale > 0 {
-				h.sndWnd <<= uint8(h.sndWndScale)
-			}
-			var err error
-			switch h.state {
-			case handshakeSynRcvd:
-				err = h.synRcvdState(s)
-			case handshakeSynSent:
-				err = h.synSentState(s)
-			}
-			s.decRef()
-			if err != nil {
-				return err
-			}
-
 		case <-h.ep.notifyChan:
 			n := h.ep.fetchNotifications()
 			if n&notifyClose != 0 {
 				return tcpip.ErrAborted
+			}
+
+			if n&notifyHandleSegment != 0 {
+				if err := h.processSegments(); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -500,6 +538,51 @@ func (e *endpoint) completeWorker() {
 	}
 }
 
+// handleSegments pulls segments from the queue and processes them. It returns
+// true if the protocol loop should continue, false otherwise.
+func (e *endpoint) handleSegments() bool {
+	for i := 0; i < maxSegmentsPerWake; i++ {
+		s := e.segmentQueue.dequeue()
+		if s == nil {
+			return true
+		}
+
+		if s.flagIsSet(flagRst) {
+			if e.rcv.acceptable(s.sequenceNumber, 0) {
+				// RFC 793, page 37 states that "in all states
+				// except SYN-SENT, all reset (RST) segments are
+				// validated by checking their SEQ-fields." So
+				// we only process it if it's acceptable.
+				s.decRef()
+				e.mu.Lock()
+				e.state = stateError
+				e.hardError = tcpip.ErrConnectionReset
+				e.mu.Unlock()
+				return false
+			}
+		} else if s.flagIsSet(flagAck) {
+			// Patch the window size in the segment according to the
+			// send window scale.
+			s.window <<= e.snd.sndWndScale
+
+			// RFC 793, page 41 states that "once in the ESTABLISHED
+			// state all segments must carry current acknowledgment
+			// information."
+			e.rcv.handleRcvdSegment(s)
+			e.snd.handleRcvdSegment(s)
+		}
+		s.decRef()
+	}
+
+	// If the queue is not empty, make sure we'll wake up in the next
+	// iteration.
+	if !e.segmentQueue.empty() {
+		e.notifyProtocolGoroutine(notifyHandleSegment)
+	}
+
+	return true
+}
+
 // protocolMainLoop is the main loop of the TCP protocol. It runs in its own
 // goroutine and is responsible for sending segments and handling received
 // segments.
@@ -553,34 +636,6 @@ func (e *endpoint) protocolMainLoop(passive bool) error {
 
 	for !e.rcv.closed || !e.snd.closed || e.snd.sndUna != e.snd.sndNxtList {
 		select {
-		case s := <-e.segmentChan:
-			if s.flagIsSet(flagRst) {
-				if e.rcv.acceptable(s.sequenceNumber, 0) {
-					// RFC 793, page 37 states that "in all
-					// states except SYN-SENT, all reset
-					// (RST) segments are validated by
-					// checking their SEQ-fields." So we
-					// only process it if it's acceptable.
-					s.decRef()
-					e.mu.Lock()
-					e.state = stateError
-					e.hardError = tcpip.ErrConnectionReset
-					e.mu.Unlock()
-					return nil
-				}
-			} else if s.flagIsSet(flagAck) {
-				// Patch the window size in the segment
-				// according to the send window scale.
-				s.window <<= e.snd.sndWndScale
-
-				// RFC 793, page 41 states that "once in the ESTABLISHED
-				// state all segments must carry current acknowledgment
-				// information."
-				e.rcv.handleRcvdSegment(s)
-				e.snd.handleRcvdSegment(s)
-			}
-			s.decRef()
-
 		case _, ok := <-e.sndChan:
 			e.handleWrite(ok)
 
@@ -598,6 +653,12 @@ func (e *endpoint) protocolMainLoop(passive bool) error {
 				// Reset the connection 3 seconds after the
 				// endpoint has been closed.
 				closeTimer = time.After(3 * time.Second)
+			}
+
+			if n&notifyHandleSegment != 0 {
+				if !e.handleSegments() {
+					return nil
+				}
 			}
 
 		case <-closeTimer:

@@ -2172,3 +2172,39 @@ func TestScaledSendWindow(t *testing.T) {
 		scaledSendWindow(t, scale)
 	}
 }
+
+func TestReceivedSegmentQueuing(t *testing.T) {
+	// This test sends 200 segments containing a few bytes each to an
+	// endpoint and checks that they're all received and acknowledged by
+	// the endpoint, that is, that none of the segments are dropped by
+	// internal queues.
+	c := newTestContext(t, defaultMTU)
+	defer c.cleanup()
+
+	c.createConnected(789, 30000, nil)
+
+	// Send 200 segments.
+	data := []byte{1, 2, 3}
+	for i := 0; i < 200; i++ {
+		c.sendPacket(data, &headers{
+			srcPort: testPort,
+			dstPort: c.port,
+			flags:   header.TCPFlagAck,
+			seqNum:  seqnum.Value(790 + i*len(data)),
+			ackNum:  c.irs.Add(1),
+			rcvWnd:  30000,
+		})
+	}
+
+	// Receive all the ACKs.
+	for i := 0; i < 200; i++ {
+		checker.IPv4(c.t, c.getPacket(),
+			checker.TCP(
+				checker.DstPort(testPort),
+				checker.SeqNum(uint32(c.irs)+1),
+				checker.AckNum(uint32(790+(i+1)*len(data))),
+				checker.TCPFlags(header.TCPFlagAck),
+			),
+		)
+	}
+}

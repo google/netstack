@@ -335,15 +335,30 @@ func (e *endpoint) protocolListenLoop(rcvWnd seqnum.Size) error {
 	ctx := newListenContext(e.stack, rcvWnd, v6only, e.netProto)
 
 	for {
-		select {
-		case s := <-e.segmentChan:
-			e.handleListenSegment(ctx, s)
-			s.decRef()
+		<-e.notifyChan
+		n := e.fetchNotifications()
+		if n&notifyClose != 0 {
+			return nil
+		}
 
-		case <-e.notifyChan:
-			n := e.fetchNotifications()
-			if n&notifyClose != 0 {
-				return nil
+		if n&notifyHandleSegment != 0 {
+			// Process at most maxSegmentsPerWake segments.
+			mayRequeue := true
+			for i := 0; i < maxSegmentsPerWake; i++ {
+				s := e.segmentQueue.dequeue()
+				if s == nil {
+					mayRequeue = false
+					break
+				}
+
+				e.handleListenSegment(ctx, s)
+				s.decRef()
+			}
+
+			// If the queue is not empty, make sure we'll wake up
+			// in the next iteration.
+			if mayRequeue && !e.segmentQueue.empty() {
+				e.notifyProtocolGoroutine(notifyHandleSegment)
 			}
 		}
 	}
