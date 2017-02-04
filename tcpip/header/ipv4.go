@@ -61,6 +61,9 @@ type IPv4Fields struct {
 }
 
 // IPv4 represents an ipv4 header stored in a byte array.
+// Most of the methods of IPv4 access to the underlying slice without
+// checking the boundaries and could panic because of 'index out of range'.
+// Always call IsValid() to validate an instance of IPv4 before using other methods.
 type IPv4 []byte
 
 const (

@@ -45,6 +45,9 @@ type IPv6Fields struct {
 }
 
 // IPv6 represents an ipv6 header stored in a byte array.
+// Most of the methods of IPv6 access to the underlying slice without
+// checking the boundaries and could panic because of 'index out of range'.
+// Always call IsValid() to validate an instance of IPv6 before using other methods.
 type IPv6 []byte
 
 const (

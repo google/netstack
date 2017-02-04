@@ -11,13 +11,13 @@
 package ipv4
 
 import (
-	"crypto/rand"
 	"sync/atomic"
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/network/fragmentation"
+	"github.com/google/netstack/tcpip/network/hash"
 	"github.com/google/netstack/tcpip/stack"
 )
 
@@ -98,7 +98,7 @@ func (e *endpoint) WritePacket(r *stack.Route, hdr *buffer.Prependable, payload 
 	if length > header.IPv4MaximumHeaderSize+8 {
 		// Packets of 68 bytes or less are required by RFC 791 to not be
 		// fragmented, so we only assign ids to larger packets.
-		id = atomic.AddUint32(&ids[hash(r, protocol)%buckets], 1)
+		id = atomic.AddUint32(&ids[hashRoute(r, protocol)%buckets], 1)
 	}
 	ip.Encode(&header.IPv4Fields{
 		IHL:         header.IPv4MinimumSize,
@@ -131,7 +131,7 @@ func (e *endpoint) HandlePacket(r *stack.Route, vv *buffer.VectorisedView) {
 	if more || h.FragmentOffset() != 0 {
 		// The packet is a fragment, let's try to reassemble it.
 		last := h.FragmentOffset() + uint16(vv.Size()) - 1
-		tt, ready := e.fragmentation.Process(fragmentID(h), h.FragmentOffset(), last, more, vv)
+		tt, ready := e.fragmentation.Process(hash.IPv4FragmentHash(h), h.FragmentOffset(), last, more, vv)
 		if !ready {
 			return
 		}
@@ -143,15 +143,6 @@ func (e *endpoint) HandlePacket(r *stack.Route, vv *buffer.VectorisedView) {
 		return
 	}
 	e.dispatcher.DeliverTransportPacket(r, p, vv)
-}
-
-func fragmentID(h header.IPv4) uint32 {
-	a := uint32(h.ID()<<16) | uint32(h.Protocol())
-	t := h.SourceAddress()
-	b := uint32(t[0]) | uint32(t[1])<<8 | uint32(t[2])<<16 | uint32(t[3])<<24
-	t = h.DestinationAddress()
-	c := uint32(t[0]) | uint32(t[1])<<8 | uint32(t[2])<<16 | uint32(t[3])<<24
-	return hash3Words(a, b, c, hashIV)
 }
 
 // Close cleans up resources associated with the endpoint.
@@ -190,65 +181,26 @@ func (p *protocol) NewEndpoint(nicid tcpip.NICID, addr tcpip.Address, linkAddrCa
 	return newEndpoint(nicid, addr, dispatcher, linkEP), nil
 }
 
-// hash3Words calculates the Jenkins hash of 3 32-bit words. This is adapted
-// from linux.
-func hash3Words(a, b, c, initval uint32) uint32 {
-	const iv = 0xdeadbeef + (3 << 2)
-	initval += iv
-
-	a += initval
-	b += initval
-	c += initval
-
-	c ^= b
-	c -= rol32(b, 14)
-	a ^= c
-	a -= rol32(c, 11)
-	b ^= a
-	b -= rol32(a, 25)
-	c ^= b
-	c -= rol32(b, 16)
-	a ^= c
-	a -= rol32(c, 4)
-	b ^= a
-	b -= rol32(a, 14)
-	c ^= b
-	c -= rol32(b, 24)
-
-	return c
-}
-
-// hash calculates a hash value for the given route. It uses the source &
+// hashRoute calculates a hash value for the given route. It uses the source &
 // destination address, the transport protocol number, and a random initial
 // value (generated once on initialization) to generate the hash.
-func hash(r *stack.Route, protocol tcpip.TransportProtocolNumber) uint32 {
+func hashRoute(r *stack.Route, protocol tcpip.TransportProtocolNumber) uint32 {
 	t := r.LocalAddress
 	a := uint32(t[0]) | uint32(t[1])<<8 | uint32(t[2])<<16 | uint32(t[3])<<24
 	t = r.RemoteAddress
 	b := uint32(t[0]) | uint32(t[1])<<8 | uint32(t[2])<<16 | uint32(t[3])<<24
-	return hash3Words(a, b, uint32(protocol), hashIV)
-}
-
-// rand32 generates a cryptographic random 32-bit number.
-func rand32() uint32 {
-	r := make([]byte, 4)
-	rand.Read(r)
-	return uint32(r[0]) | uint32(r[1])<<8 | uint32(r[2])<<16 | uint32(r[3])<<24
-}
-
-func rol32(v, shift uint32) uint32 {
-	return (v << shift) | (v >> ((-shift) & 31))
+	return hash.Hash3Words(a, b, uint32(protocol), hashIV)
 }
 
 var (
 	ids    = make([]uint32, buckets)
-	hashIV = rand32()
+	hashIV = hash.Rand32()
 )
 
 func init() {
 	// Randomly initialize the ids.
 	for i := range ids {
-		ids[i] = rand32()
+		ids[i] = hash.Rand32()
 	}
 
 	stack.RegisterNetworkProtocol(ProtocolName, NewProtocol())
