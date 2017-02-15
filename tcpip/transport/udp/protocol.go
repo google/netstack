@@ -52,7 +52,8 @@ func (*protocol) ParsePorts(v buffer.View) (src, dst uint16, err error) {
 
 // HandleUnknownDestinationPacket handles packets targeted at this protocol but
 // that don't match any existing endpoint.
-func (p *protocol) HandleUnknownDestinationPacket(*stack.Route, stack.TransportEndpointID, *buffer.VectorisedView) {
+func (p *protocol) HandleUnknownDestinationPacket(*stack.Route, stack.TransportEndpointID, *buffer.VectorisedView) bool {
+	return true
 }
 
 func init() {

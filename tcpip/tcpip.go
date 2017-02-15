@@ -365,6 +365,9 @@ type Stats struct {
 	// MalformedRcvPackets is the number of packets received by the stack
 	// that were deemed malformed.
 	MalformedRcvdPackets uint64
+
+	// DroppedPackets is the number of packets dropped due to full queues.
+	DroppedPackets uint64
 }
 
 // String implements the fmt.Stringer interface.

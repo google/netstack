@@ -948,7 +948,7 @@ func (e *endpoint) GetRemoteAddress() (tcpip.FullAddress, error) {
 func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv *buffer.VectorisedView) {
 	s := newSegment(r, id, vv)
 	if !s.parse() {
-		// TODO: Inform the stack that the packet is malformed.
+		atomic.AddUint64(&e.stack.MutableStats().MalformedRcvdPackets, 1)
 		s.decRef()
 		return
 	}
@@ -958,7 +958,7 @@ func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv
 		e.notifyProtocolGoroutine(notifyHandleSegment)
 	} else {
 		// The queue is full, so we drop the segment.
-		// TODO: Add some stat on this.
+		atomic.AddUint64(&e.stack.MutableStats().DroppedPackets, 1)
 		s.decRef()
 	}
 }

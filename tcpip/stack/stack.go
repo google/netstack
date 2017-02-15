@@ -113,6 +113,14 @@ func (s *Stack) Stats() tcpip.Stats {
 	return s.stats
 }
 
+// MutableStats returns a mutable copy of the current stats.
+//
+// This is not generally exported via the public interface, but is available
+// internally.
+func (s *Stack) MutableStats() *tcpip.Stats {
+	return &s.stats
+}
+
 // SetRouteTable assigns the route table to be used by this stack. It
 // specifies which NIC to use for a given destination address mask.
 func (s *Stack) SetRouteTable(table []tcpip.Route) {

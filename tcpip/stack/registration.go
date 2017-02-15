@@ -65,7 +65,10 @@ type TransportProtocol interface {
 	// HandleUnknownDestinationPacket handles packets targeted at this
 	// protocol but that don't match any existing endpoint. For example,
 	// it is targeted at a port that have no listeners.
-	HandleUnknownDestinationPacket(r *Route, id TransportEndpointID, vv *buffer.VectorisedView)
+	//
+	// The return value indicates whether the packet was well-formed (for
+	// stats purposes only).
+	HandleUnknownDestinationPacket(r *Route, id TransportEndpointID, vv *buffer.VectorisedView) bool
 }
 
 // TransportDispatcher contains the methods used by the network stack to deliver

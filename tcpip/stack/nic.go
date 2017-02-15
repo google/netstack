@@ -307,7 +307,9 @@ func (n *NIC) DeliverTransportPacket(r *Route, protocol tcpip.TransportProtocolN
 
 	// We could not find an appropriate destination for this packet, so
 	// deliver it to the global handler.
-	transProto.HandleUnknownDestinationPacket(r, id, vv)
+	if !transProto.HandleUnknownDestinationPacket(r, id, vv) {
+		atomic.AddUint64(&n.stack.stats.MalformedRcvdPackets, 1)
+	}
 }
 
 // ID returns the identifier of n.

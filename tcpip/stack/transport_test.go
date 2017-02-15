@@ -163,7 +163,8 @@ func (*fakeTransportProtocol) ParsePorts(buffer.View) (src, dst uint16, err erro
 	return 0, 0, nil
 }
 
-func (*fakeTransportProtocol) HandleUnknownDestinationPacket(*stack.Route, stack.TransportEndpointID, *buffer.VectorisedView) {
+func (*fakeTransportProtocol) HandleUnknownDestinationPacket(*stack.Route, stack.TransportEndpointID, *buffer.VectorisedView) bool {
+	return true
 }
 
 func TestTransportReceive(t *testing.T) {

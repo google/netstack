@@ -194,7 +194,8 @@ func (*pingProtocol) ParsePorts(v buffer.View) (src, dst uint16, err error) {
 	return 0, ident, nil
 }
 
-func (*pingProtocol) HandleUnknownDestinationPacket(*stack.Route, stack.TransportEndpointID, *buffer.VectorisedView) {
+func (*pingProtocol) HandleUnknownDestinationPacket(*stack.Route, stack.TransportEndpointID, *buffer.VectorisedView) bool {
+	return true
 }
 
 func init() {
