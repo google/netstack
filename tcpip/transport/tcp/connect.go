@@ -635,11 +635,14 @@ func (e *endpoint) protocolMainLoop(passive bool) error {
 	var closeTimer <-chan time.Time
 
 	for !e.rcv.closed || !e.snd.closed || e.snd.sndUna != e.snd.sndNxtList {
+		e.workMu.Unlock()
 		select {
 		case _, ok := <-e.sndChan:
+			e.workMu.Lock()
 			e.handleWrite(ok)
 
 		case <-e.notifyChan:
+			e.workMu.Lock()
 			n := e.fetchNotifications()
 			if n&notifyNonZeroReceiveWindow != 0 {
 				e.rcv.nonZeroWindow()
@@ -662,10 +665,12 @@ func (e *endpoint) protocolMainLoop(passive bool) error {
 			}
 
 		case <-closeTimer:
+			e.workMu.Lock()
 			e.resetConnection(tcpip.ErrConnectionAborted)
 			return nil
 
 		case <-e.snd.resendTimer.C:
+			e.workMu.Lock()
 			if !e.snd.retransmitTimerExpired() {
 				e.resetConnection(tcpip.ErrTimeout)
 				return nil

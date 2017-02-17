@@ -15,6 +15,7 @@ import (
 	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/seqnum"
 	"github.com/google/netstack/tcpip/stack"
+	"github.com/google/netstack/tmutex"
 	"github.com/google/netstack/waiter"
 )
 
@@ -47,6 +48,12 @@ const defaultBufferSize = 208 * 1024
 // synchronized. The protocol implementation, however, runs in a single
 // goroutine.
 type endpoint struct {
+	// workMu is used to arbitrate which goroutine may perform protocol
+	// work. Only the main protocol goroutine is expected to call Lock() on
+	// it, but other goroutines (e.g., send) may call TryLock() to eagerly
+	// perform work without having to wait for the main one to wake up.
+	workMu tmutex.Mutex
+
 	// The following fields are initialized at creation time and do not
 	// change throughout the lifetime of the endpoint.
 	stack       *stack.Stack
@@ -158,6 +165,8 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 		reuseAddr:   true,
 	}
 	e.segmentQueue.setLimit(2 * e.rcvBufSize)
+	e.workMu.Init()
+	e.workMu.Lock()
 	return e
 }
 
@@ -378,10 +387,16 @@ func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, error) 
 
 	e.sndBufMu.Unlock()
 
-	// Wake up the protocol goroutine.
-	select {
-	case e.sndChan <- struct{}{}:
-	default:
+	if e.workMu.TryLock() {
+		// Do the work inline.
+		e.handleWrite(true)
+		e.workMu.Unlock()
+	} else {
+		// Let the protocol goroutine do the work.
+		select {
+		case e.sndChan <- struct{}{}:
+		default:
+		}
 	}
 
 	return uintptr(len(v)), nil
