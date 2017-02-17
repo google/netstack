@@ -525,7 +525,7 @@ func (e *baseEndpoint) SetSockOpt(opt interface{}) error {
 		e.setPasscred(v != 0)
 		return nil
 	}
-	return tcpip.ErrInvalidEndpointState
+	return nil
 }
 
 // GetSockOpt implements tcpip.Endpoint.GetSockOpt.
