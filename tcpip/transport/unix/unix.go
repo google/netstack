@@ -381,7 +381,9 @@ func (e *connectedEndpoint) Send(data [][]byte, controlMessages ControlMessages,
 	// receiver actually uses a zero-length receive as an indication that the
 	// stream was closed.
 	if l == 0 && e.endpoint.Type() == SockStream {
-		controlMessages.Release()
+		if controlMessages != nil {
+			controlMessages.Release()
+		}
 		return 0, nil
 	}
 	v := make([]byte, 0, l)
