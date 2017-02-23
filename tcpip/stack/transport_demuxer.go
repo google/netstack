@@ -96,8 +96,13 @@ func (d *transportDemuxer) deliverPacket(r *Route, protocol tcpip.TransportProto
 	}
 
 	eps.mu.RLock()
-	defer eps.mu.RUnlock()
+	b := d.deliverPacketLocked(r, eps, vv, id)
+	eps.mu.RUnlock()
 
+	return b
+}
+
+func (d *transportDemuxer) deliverPacketLocked(r *Route, eps *transportEndpoints, vv *buffer.VectorisedView, id TransportEndpointID) bool {
 	// Try to find a match with the id as provided.
 	if ep := eps.endpoints[id]; ep != nil {
 		ep.HandlePacket(r, id, vv)

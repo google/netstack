@@ -297,11 +297,11 @@ func (e *endpoint) cleanup() {
 // Read reads data from the endpoint.
 func (e *endpoint) Read(*tcpip.FullAddress) (buffer.View, error) {
 	e.mu.RLock()
-	defer e.mu.RUnlock()
 
 	// The endpoint cannot be read from if it's not connected.
-	if e.state != stateConnected {
-		switch e.state {
+	if s := e.state; s != stateConnected {
+		e.mu.RUnlock()
+		switch s {
 		case stateClosed:
 			return buffer.View{}, tcpip.ErrClosedForReceive
 		case stateError:
@@ -312,8 +312,15 @@ func (e *endpoint) Read(*tcpip.FullAddress) (buffer.View, error) {
 	}
 
 	e.rcvListMu.Lock()
-	defer e.rcvListMu.Unlock()
+	v, err := e.readLocked()
+	e.rcvListMu.Unlock()
 
+	e.mu.RUnlock()
+
+	return v, err
+}
+
+func (e *endpoint) readLocked() (buffer.View, error) {
 	if e.rcvBufUsed == 0 {
 		if e.rcvClosed {
 			return buffer.View{}, tcpip.ErrClosedForReceive

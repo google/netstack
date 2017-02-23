@@ -87,6 +87,7 @@ func NonBlockingWrite2(fd int, b1, b2 []byte) error {
 	return nil
 }
 
+//go:noescape
 func blockingPoll(fds unsafe.Pointer, nfds int, timeout int64) (n int, err syscall.Errno)
 
 // BlockingRead reads from a file descriptor that is set up as non-blocking. If
