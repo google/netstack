@@ -213,19 +213,23 @@ func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, retur
 		ce.Lock()
 		e.Lock()
 	}
-	defer e.Unlock()
-	defer ce.Unlock()
 
 	// Check connecting state.
 	if ce.Connected() {
+		e.Unlock()
+		ce.Unlock()
 		return tcpip.ErrAlreadyConnected
 	}
 	if ce.Listening() {
+		e.Unlock()
+		ce.Unlock()
 		return tcpip.ErrInvalidEndpointState
 	}
 
 	// Check bound state.
 	if !e.Listening() {
+		e.Unlock()
+		ce.Unlock()
 		return tcpip.ErrConnectionRefused
 	}
 
@@ -264,13 +268,20 @@ func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, retur
 			returnConnect(&queueReceiver{readQueue: readQueue}, connected)
 		}
 
-		// Notify on the other end.
+		// Notify can deadlock if we are holding these locks.
+		e.Unlock()
+		ce.Unlock()
+
+		// Notify on both ends.
 		e.Notify(waiter.EventIn)
+		ce.WaiterQueue().Notify(waiter.EventOut)
 
 		return nil
 	default:
 		// Busy; return ECONNREFUSED per spec.
 		ne.Close()
+		e.Unlock()
+		ce.Unlock()
 		return tcpip.ErrConnectionRefused
 	}
 }
@@ -286,7 +297,6 @@ func (e *connectionedEndpoint) Connect(server BoundEndpoint) error {
 	returnConnect := func(r Receiver, ce ConnectedEndpoint) {
 		e.receiver = r
 		e.connected = ce
-		e.Notify(waiter.EventOut)
 	}
 
 	return server.BidirectionalConnect(e, returnConnect)
