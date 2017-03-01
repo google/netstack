@@ -380,6 +380,45 @@ func (a Address) String() string {
 	}
 }
 
+// To4 converts the IPv4 address to a 4-byte representation.
+// If the address is not an IPv4 address, To4 returns "".
+func (a Address) To4() Address {
+	const (
+		ipv4len = 4
+		ipv6len = 16
+	)
+	if len(a) == ipv4len {
+		return a
+	}
+	if len(a) == ipv6len &&
+		isZeros(a[0:10]) &&
+		a[10] == 0xff &&
+		a[11] == 0xff {
+		return a[12:16]
+	}
+	return ""
+}
+
+// isZeros reports whether a is all zeros.
+func isZeros(a Address) bool {
+	for i := 0; i < len(a); i++ {
+		if a[i] != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // LinkAddress is a byte slice cast as a string that represents a link address.
 // It is typically a 6-byte MAC address.
 type LinkAddress string
+
+// String implements the fmt.Stringer interface.
+func (a LinkAddress) String() string {
+	switch len(a) {
+	case 6:
+		return fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x", a[0], a[1], a[2], a[3], a[4], a[5])
+	default:
+		return fmt.Sprintf("%x", []byte(a))
+	}
+}
