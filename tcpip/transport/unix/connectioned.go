@@ -13,13 +13,14 @@ import (
 	"github.com/google/netstack/waiter"
 )
 
+// lastID is the last endpoint id issued by UniqueID.  It must be accessed
+// atomically.
+var lastID uint64
+
 // UniqueID is used to generate endpoint ids.
-var UniqueID = func() func() uint64 {
-	var id uint64
-	return func() uint64 {
-		return atomic.AddUint64(&id, 1)
-	}
-}()
+func UniqueID() uint64 {
+	return atomic.AddUint64(&lastID, 1)
+}
 
 // A ConnectingEndpoint is a connectioned unix endpoint that is attempting to
 // connect to a ConnectionedEndpoint.
@@ -94,7 +95,7 @@ type connectionedEndpoint struct {
 	// have another associated connectionedEndpoint.
 	//
 	// If nil, then no listen call has been made.
-	acceptedChan chan *connectionedEndpoint `state:"manual"`
+	acceptedChan chan *connectionedEndpoint
 }
 
 // NewConnectioned creates a new unbound connectionedEndpoint.

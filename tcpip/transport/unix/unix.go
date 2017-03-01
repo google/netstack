@@ -432,7 +432,7 @@ type baseEndpoint struct {
 	path string
 
 	// isBound returns true iff the endpoint is bound.
-	isBound func() bool `state:"manual"`
+	isBound func() bool
 }
 
 // EventRegister implements waiter.Waitable.EventRegister.
