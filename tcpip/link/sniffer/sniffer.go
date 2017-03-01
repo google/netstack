@@ -37,7 +37,7 @@ func New(lower tcpip.LinkEndpointID) tcpip.LinkEndpointID {
 // called by the link-layer endpoint being wrapped when a packet arrives, and
 // logs the packet before forwarding to the actual dispatcher.
 func (e *endpoint) DeliverNetworkPacket(linkEP stack.LinkEndpoint, remoteLinkAddr tcpip.LinkAddress, protocol tcpip.NetworkProtocolNumber, vv *buffer.VectorisedView) {
-	logPacket("recv", protocol, vv.First(), nil)
+	LogPacket("recv", protocol, vv.First(), nil)
 	e.dispatcher.DeliverNetworkPacket(e, remoteLinkAddr, protocol, vv)
 }
 
@@ -69,12 +69,12 @@ func (e *endpoint) LinkAddress() tcpip.LinkAddress {
 // higher-level protocols to write packets; it just logs the packet and forwards
 // the request to the lower endpoint.
 func (e *endpoint) WritePacket(r *stack.Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.NetworkProtocolNumber) error {
-	logPacket("send", protocol, hdr.UsedBytes(), payload)
+	LogPacket("send", protocol, hdr.UsedBytes(), payload)
 	return e.lower.WritePacket(r, hdr, payload, protocol)
 }
 
-// logPacket logs the given packet.
-func logPacket(prefix string, protocol tcpip.NetworkProtocolNumber, b, plb []byte) {
+// LogPacket logs the given packet.
+func LogPacket(prefix string, protocol tcpip.NetworkProtocolNumber, b, plb []byte) {
 	// Figure out the network layer info.
 	var transProto uint8
 	src := tcpip.Address("unknown")
@@ -99,6 +99,16 @@ func logPacket(prefix string, protocol tcpip.NetworkProtocolNumber, b, plb []byt
 		size = ipv6.PayloadLength()
 		b = b[header.IPv6MinimumSize:]
 
+	case header.ARPProtocolNumber:
+		arp := header.ARP(b)
+		log.Printf(
+			"%s arp %v (%v) -> %v (%v) valid:%v",
+			prefix,
+			tcpip.Address(arp.ProtocolAddressSender()), tcpip.LinkAddress(arp.HardwareAddressSender()),
+			tcpip.Address(arp.ProtocolAddressTarget()), tcpip.LinkAddress(arp.HardwareAddressTarget()),
+			arp.IsValid(),
+		)
+		return
 	default:
 		log.Printf("%s unknown network protocol", prefix)
 		return
@@ -110,6 +120,37 @@ func logPacket(prefix string, protocol tcpip.NetworkProtocolNumber, b, plb []byt
 	dstPort := uint16(0)
 	details := ""
 	switch tcpip.TransportProtocolNumber(transProto) {
+	case header.ICMPv4ProtocolNumber:
+		transName = "icmp"
+		icmp := header.ICMPv4(b)
+		icmpType := "unknown"
+		switch icmp.Type() {
+		case header.ICMPv4EchoReply:
+			icmpType = "echo reply"
+		case header.ICMPv4DstUnreachable:
+			icmpType = "destination unreachable"
+		case header.ICMPv4SrcQuench:
+			icmpType = "source quench"
+		case header.ICMPv4Redirect:
+			icmpType = "redirect"
+		case header.ICMPv4Echo:
+			icmpType = "echo"
+		case header.ICMPv4TimeExceeded:
+			icmpType = "time exceeded"
+		case header.ICMPv4ParamProblem:
+			icmpType = "param problem"
+		case header.ICMPv4Timestamp:
+			icmpType = "timestamp"
+		case header.ICMPv4TimestampReply:
+			icmpType = "timestamp reply"
+		case header.ICMPv4InfoRequest:
+			icmpType = "info request"
+		case header.ICMPv4InfoReply:
+			icmpType = "info reply"
+		}
+		log.Printf("%s %s %v -> %v %s len:%d id:%04x code:%d", prefix, transName, src, dst, icmpType, size, id, icmp.Code())
+		return
+
 	case header.UDPProtocolNumber:
 		transName = "udp"
 		udp := header.UDP(b)
@@ -138,7 +179,7 @@ func logPacket(prefix string, protocol tcpip.NetworkProtocolNumber, b, plb []byt
 		details = fmt.Sprintf("flags:0x%02x (%v) seqnum: %v ack: %v win: %v xsum:0x%x", flags, string(flagsStr), tcp.SequenceNumber(), tcp.AckNumber(), tcp.WindowSize(), tcp.Checksum())
 
 	default:
-		log.Printf("%s %v -> %v unknown transport protocol", prefix, src, dst)
+		log.Printf("%s %v -> %v unknown transport protocol: %d", prefix, src, dst, transProto)
 		return
 	}
 
