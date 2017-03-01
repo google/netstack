@@ -209,10 +209,22 @@ func (m *message) Peek() queue.Entry {
 // A Receiver can be used to receive Messages.
 type Receiver interface {
 	// Recv receives a single message. This method does not block.
-	Recv(data [][]byte, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, error)
+	//
+	// notify indicates if RecvNotify should be called.
+	Recv(data [][]byte, numRights uintptr, peek bool) (n uintptr, cm ControlMessages, source tcpip.FullAddress, notify bool, err error)
+
+	// RecvNotify notifies the Receiver of a successful Recv. This must not be
+	// called while holding any endpoint locks.
+	RecvNotify()
 
 	// CloseRecv prevents the receiving of additional Messages.
+	//
+	// After CloseRecv is called, CloseNotify must also be called.
 	CloseRecv()
+
+	// CloseNotify notifies the Receiver of recv being closed. This must not be
+	// called while holding any endpoint locks.
+	CloseNotify()
 
 	// Readable returns if messages should be attempted to be received. This
 	// includes when read has been shutdown.
@@ -229,16 +241,17 @@ type queueReceiver struct {
 }
 
 // Recv implements Receiver.Recv.
-func (q *queueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, error) {
+func (q *queueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, bool, error) {
 	var m queue.Entry
+	var notify bool
 	var err error
 	if peek {
 		m, err = q.readQueue.Peek()
 	} else {
-		m, err = q.readQueue.Dequeue()
+		m, notify, err = q.readQueue.Dequeue()
 	}
 	if err != nil {
-		return 0, nil, tcpip.FullAddress{}, err
+		return 0, nil, tcpip.FullAddress{}, false, err
 	}
 	msg := m.(*message)
 	src := []byte(msg.Data)
@@ -248,7 +261,18 @@ func (q *queueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) (uintp
 		copied += uintptr(n)
 		src = src[n:]
 	}
-	return copied, msg.Control, msg.Address, nil
+	return copied, msg.Control, msg.Address, notify, nil
+}
+
+// RecvNotify implements Receiver.RecvNotify.
+func (q *queueReceiver) RecvNotify() {
+	q.readQueue.WriterQueue.Notify(waiter.EventOut)
+}
+
+// CloseNotify implements Receiver.CloseNotify.
+func (q *queueReceiver) CloseNotify() {
+	q.readQueue.ReaderQueue.Notify(waiter.EventIn)
+	q.readQueue.WriterQueue.Notify(waiter.EventOut)
 }
 
 // CloseRecv implements Receiver.CloseRecv.
@@ -277,18 +301,21 @@ type streamQueueReceiver struct {
 }
 
 // Recv implements Receiver.Recv.
-func (q *streamQueueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, error) {
+func (q *streamQueueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, bool, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
+	var notify bool
 
 	if len(q.buffer) == 0 {
 		// Load the next message into a buffer, even if we are peeking. Peeking
 		// won't consume the message, so it will be still available to be read
 		// the next time Recv() is called.
-		m, err := q.readQueue.Dequeue()
+		m, n, err := q.readQueue.Dequeue()
 		if err != nil {
-			return 0, nil, tcpip.FullAddress{}, err
+			return 0, nil, tcpip.FullAddress{}, false, err
 		}
+		notify = n
 		msg := m.(*message)
 		q.buffer = []byte(msg.Data)
 		q.control = msg.Control
@@ -315,7 +342,7 @@ func (q *streamQueueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) 
 		// Don't consume control message if we are peeking.
 		c = c.Clone()
 	}
-	return copied, c, q.addr, nil
+	return copied, c, q.addr, notify, nil
 }
 
 // A ConnectedEndpoint is an Endpoint that can be used to send Messages.
@@ -327,10 +354,22 @@ type ConnectedEndpoint interface {
 	GetLocalAddress() (tcpip.FullAddress, error)
 
 	// Send sends a single message. This method does not block.
-	Send(data [][]byte, controlMessages ControlMessages, from tcpip.FullAddress) (uintptr, error)
+	//
+	// notify indicates if SendNotify should be called.
+	Send(data [][]byte, controlMessages ControlMessages, from tcpip.FullAddress) (n uintptr, notify bool, err error)
+
+	// SendNotify notifies the ConnectedEndpoint of a successful Send. This
+	// must not be called while holding any endpoint locks.
+	SendNotify()
 
 	// CloseSend prevents the sending of additional Messages.
+	//
+	// After CloseSend is call, CloseNotify must also be called.
 	CloseSend()
+
+	// CloseNotify notifies the ConnectedEndpoint of send being closed. This
+	// must not be called while holding any endpoint locks.
+	CloseNotify()
 
 	// Writable returns if messages should be attempted to be sent. This
 	// includes when write has been shutdown.
@@ -371,7 +410,7 @@ func (e *connectedEndpoint) GetLocalAddress() (tcpip.FullAddress, error) {
 }
 
 // Send implements ConnectedEndpoint.Send.
-func (e *connectedEndpoint) Send(data [][]byte, controlMessages ControlMessages, from tcpip.FullAddress) (uintptr, error) {
+func (e *connectedEndpoint) Send(data [][]byte, controlMessages ControlMessages, from tcpip.FullAddress) (uintptr, bool, error) {
 	var l int
 	for _, d := range data {
 		l += len(d)
@@ -384,13 +423,25 @@ func (e *connectedEndpoint) Send(data [][]byte, controlMessages ControlMessages,
 		if controlMessages != nil {
 			controlMessages.Release()
 		}
-		return 0, nil
+		return 0, false, nil
 	}
 	v := make([]byte, 0, l)
 	for _, d := range data {
 		v = append(v, d...)
 	}
-	return uintptr(l), e.writeQueue.Enqueue(&message{Data: buffer.View(v), Control: controlMessages, Address: from})
+	notify, err := e.writeQueue.Enqueue(&message{Data: buffer.View(v), Control: controlMessages, Address: from})
+	return uintptr(l), notify, err
+}
+
+// SendNotify implements ConnectedEndpoint.SendNotify.
+func (e *connectedEndpoint) SendNotify() {
+	e.writeQueue.ReaderQueue.Notify(waiter.EventIn)
+}
+
+// CloseNotify implements ConnectedEndpoint.CloseNotify.
+func (e *connectedEndpoint) CloseNotify() {
+	e.writeQueue.ReaderQueue.Notify(waiter.EventIn)
+	e.writeQueue.WriterQueue.Notify(waiter.EventOut)
 }
 
 // CloseSend implements ConnectedEndpoint.CloseSend.
@@ -483,15 +534,20 @@ func (e *baseEndpoint) Connected() bool {
 // RecvMsg reads data and a control message from the endpoint.
 func (e *baseEndpoint) RecvMsg(data [][]byte, numRights uintptr, peek bool, addr *tcpip.FullAddress) (uintptr, ControlMessages, error) {
 	e.Lock()
-	defer e.Unlock()
 
 	if e.receiver == nil {
+		e.Unlock()
 		return 0, nil, tcpip.ErrNotConnected
 	}
 
-	n, cms, a, err := e.receiver.Recv(data, numRights, peek)
+	n, cms, a, notify, err := e.receiver.Recv(data, numRights, peek)
+	e.Unlock()
 	if err != nil {
 		return 0, nil, err
+	}
+
+	if notify {
+		e.receiver.RecvNotify()
 	}
 
 	if addr != nil {
@@ -504,17 +560,23 @@ func (e *baseEndpoint) RecvMsg(data [][]byte, numRights uintptr, peek bool, addr
 // This method does not block if the data cannot be written.
 func (e *baseEndpoint) SendMsg(data [][]byte, c ControlMessages, to BoundEndpoint) (uintptr, error) {
 	e.Lock()
-	defer e.Unlock()
 	if !e.Connected() {
+		e.Unlock()
 		return 0, tcpip.ErrNotConnected
 	}
 	if to != nil {
+		e.Unlock()
 		return 0, tcpip.ErrAlreadyConnected
 	}
 
-	n, err := e.connected.Send(data, c, tcpip.FullAddress{Addr: tcpip.Address(e.path)})
+	n, notify, err := e.connected.Send(data, c, tcpip.FullAddress{Addr: tcpip.Address(e.path)})
+	e.Unlock()
 	if err != nil {
 		return 0, err
+	}
+
+	if notify {
+		e.connected.SendNotify()
 	}
 
 	return n, nil
@@ -563,8 +625,8 @@ func (e *baseEndpoint) GetSockOpt(opt interface{}) error {
 // peer.
 func (e *baseEndpoint) Shutdown(flags tcpip.ShutdownFlags) error {
 	e.Lock()
-	defer e.Unlock()
 	if !e.Connected() {
+		e.Unlock()
 		return tcpip.ErrNotConnected
 	}
 
@@ -574,6 +636,16 @@ func (e *baseEndpoint) Shutdown(flags tcpip.ShutdownFlags) error {
 
 	if flags&tcpip.ShutdownWrite != 0 {
 		e.connected.CloseSend()
+	}
+
+	e.Unlock()
+
+	if flags&tcpip.ShutdownRead != 0 {
+		e.receiver.CloseNotify()
+	}
+
+	if flags&tcpip.ShutdownWrite != 0 {
+		e.connected.CloseNotify()
 	}
 
 	return nil

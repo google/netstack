@@ -40,14 +40,19 @@ func (e *connectionlessEndpoint) isBound() bool {
 // paths.
 func (e *connectionlessEndpoint) Close() {
 	e.Lock()
-	defer e.Unlock()
+	var r Receiver
 	if e.Connected() {
 		e.receiver.CloseRecv()
+		r = e.receiver
 		e.receiver = nil
 		e.connected = nil
 	}
 	if e.isBound() {
 		e.path = ""
+	}
+	e.Unlock()
+	if r != nil {
+		r.CloseNotify()
 	}
 }
 
@@ -77,11 +82,13 @@ func (e *connectionlessEndpoint) SendMsg(data [][]byte, c ControlMessages, to Bo
 	}
 
 	e.Lock()
-	defer e.Unlock()
-
-	n, err := connected.Send(data, c, tcpip.FullAddress{Addr: tcpip.Address(e.path)})
+	n, notify, err := connected.Send(data, c, tcpip.FullAddress{Addr: tcpip.Address(e.path)})
+	e.Unlock()
 	if err != nil {
 		return 0, err
+	}
+	if notify {
+		connected.SendNotify()
 	}
 
 	return n, nil

@@ -181,11 +181,14 @@ func (e *connectionedEndpoint) Listening() bool {
 // paths.
 func (e *connectionedEndpoint) Close() {
 	e.Lock()
-	defer e.Unlock()
+	var c ConnectedEndpoint
+	var r Receiver
 	switch {
 	case e.Connected():
 		e.connected.CloseSend()
 		e.receiver.CloseRecv()
+		c = e.connected
+		r = e.receiver
 		e.connected = nil
 		e.receiver = nil
 	case e.isBound():
@@ -197,6 +200,13 @@ func (e *connectionedEndpoint) Close() {
 		}
 		e.acceptedChan = nil
 		e.path = ""
+	}
+	e.Unlock()
+	if c != nil {
+		c.CloseNotify()
+	}
+	if r != nil {
+		r.CloseNotify()
 	}
 }
 

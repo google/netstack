@@ -41,16 +41,21 @@ func New(ReaderQueue *waiter.Queue, WriterQueue *waiter.Queue, limit int64) *Que
 
 // Close closes q for reading and writing. It is immediately not writable and
 // will become unreadble will no more data is pending.
+//
+// Both the read and write queues must be notified after closing:
+// q.ReaderQueue.Notify(waiter.EventIn)
+// q.WriterQueue.Notify(waiter.EventOut)
 func (q *Queue) Close() {
 	q.mu.Lock()
 	q.closed = true
 	q.mu.Unlock()
-
-	q.ReaderQueue.Notify(waiter.EventIn)
-	q.WriterQueue.Notify(waiter.EventOut)
 }
 
 // Reset empties the queue and Releases all of the Entries.
+//
+// Both the read and write queues must be notified after resetting:
+// q.ReaderQueue.Notify(waiter.EventIn)
+// q.WriterQueue.Notify(waiter.EventOut)
 func (q *Queue) Reset() {
 	q.mu.Lock()
 	for cur := q.dataList.Front(); cur != nil; cur = cur.Next() {
@@ -59,9 +64,6 @@ func (q *Queue) Reset() {
 	q.dataList.Reset()
 	q.used = 0
 	q.mu.Unlock()
-
-	q.ReaderQueue.Notify(waiter.EventIn)
-	q.WriterQueue.Notify(waiter.EventOut)
 }
 
 // IsReadable determines if q is currently readable.
@@ -80,36 +82,37 @@ func (q *Queue) IsWritable() bool {
 	return q.closed || q.used < q.limit
 }
 
-// Enqueue adds an entry to the data queue if room is available, and wakes up
-// readers if needed.
-func (q *Queue) Enqueue(e Entry) error {
+// Enqueue adds an entry to the data queue if room is available.
+//
+// If notify is true, ReaderQueue.Notify must be called:
+// q.ReaderQueue.Notify(waiter.EventIn)
+func (q *Queue) Enqueue(e Entry) (notify bool, err error) {
 	q.mu.Lock()
 
 	if q.closed {
 		q.mu.Unlock()
-		return tcpip.ErrClosedForSend
+		return false, tcpip.ErrClosedForSend
 	}
 
 	if q.used >= q.limit {
 		q.mu.Unlock()
-		return tcpip.ErrWouldBlock
+		return false, tcpip.ErrWouldBlock
 	}
 
-	notify := q.dataList.Front() == nil
+	notify = q.dataList.Front() == nil
 	q.used += e.Length()
 	q.dataList.PushBack(e)
 
 	q.mu.Unlock()
 
-	if notify {
-		q.ReaderQueue.Notify(waiter.EventIn)
-	}
-
-	return nil
+	return notify, nil
 }
 
 // Dequeue removes the first entry in the data queue, if one exists.
-func (q *Queue) Dequeue() (Entry, error) {
+//
+// If notify is true, WriterQueue.Notify must be called:
+// q.WriterQueue.Notify(waiter.EventOut)
+func (q *Queue) Dequeue() (e Entry, notify bool, err error) {
 	q.mu.Lock()
 
 	if q.dataList.Front() == nil {
@@ -119,12 +122,12 @@ func (q *Queue) Dequeue() (Entry, error) {
 		}
 		q.mu.Unlock()
 
-		return nil, err
+		return nil, false, err
 	}
 
-	notify := q.used >= q.limit
+	notify = q.used >= q.limit
 
-	e := q.dataList.Front().(Entry)
+	e = q.dataList.Front().(Entry)
 	q.dataList.Remove(e)
 	q.used -= e.Length()
 
@@ -132,11 +135,7 @@ func (q *Queue) Dequeue() (Entry, error) {
 
 	q.mu.Unlock()
 
-	if notify {
-		q.WriterQueue.Notify(waiter.EventOut)
-	}
-
-	return e, nil
+	return e, notify, nil
 }
 
 // Peek returns the first entry in the data queue, if one exists.
