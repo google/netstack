@@ -233,6 +233,10 @@ type Receiver interface {
 	// QueuedSize returns the total amount of data currently receivable.
 	// QueuedSize should return -1 if the operation isn't supported.
 	QueuedSize() int64
+
+	// Release releases any resources owned by the Receiver. It should be
+	// called before droping all references to a Receiver.
+	Release()
 }
 
 // queueReceiver implements Receiver for datagram sockets.
@@ -289,6 +293,9 @@ func (q *queueReceiver) Readable() bool {
 func (q *queueReceiver) QueuedSize() int64 {
 	return q.readQueue.QueuedSize()
 }
+
+// Release implements Receiver.Release.
+func (*queueReceiver) Release() {}
 
 // streamQueueReceiver implements Receiver for stream sockets.
 type streamQueueReceiver struct {
@@ -378,6 +385,10 @@ type ConnectedEndpoint interface {
 	// EventUpdate lets the ConnectedEndpoint know that event registrations
 	// have changed.
 	EventUpdate()
+
+	// Release releases any resources owned by the ConnectedEndpoint. It should
+	// be called before droping all references to a ConnectedEndpoint.
+	Release()
 }
 
 type connectedEndpoint struct {
@@ -456,6 +467,9 @@ func (e *connectedEndpoint) Writable() bool {
 
 // EventUpdate implements ConnectedEndpoint.EventUpdate.
 func (*connectedEndpoint) EventUpdate() {}
+
+// Release implements ConnectedEndpoint.Release.
+func (*connectedEndpoint) Release() {}
 
 // baseEndpoint is an embeddable unix endpoint base used in both the connected and connectionless
 // unix domain socket Endpoint implementations.

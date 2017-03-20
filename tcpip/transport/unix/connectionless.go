@@ -45,6 +45,8 @@ func (e *connectionlessEndpoint) Close() {
 		e.receiver.CloseRecv()
 		r = e.receiver
 		e.receiver = nil
+
+		e.connected.Release()
 		e.connected = nil
 	}
 	if e.isBound() {
@@ -53,6 +55,7 @@ func (e *connectionlessEndpoint) Close() {
 	e.Unlock()
 	if r != nil {
 		r.CloseNotify()
+		r.Release()
 	}
 }
 
@@ -80,6 +83,7 @@ func (e *connectionlessEndpoint) SendMsg(data [][]byte, c ControlMessages, to Bo
 	if err != nil {
 		return 0, tcpip.ErrInvalidEndpointState
 	}
+	defer connected.Release()
 
 	e.Lock()
 	n, notify, err := connected.Send(data, c, tcpip.FullAddress{Addr: tcpip.Address(e.path)})

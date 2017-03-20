@@ -204,9 +204,11 @@ func (e *connectionedEndpoint) Close() {
 	e.Unlock()
 	if c != nil {
 		c.CloseNotify()
+		c.Release()
 	}
 	if r != nil {
 		r.CloseNotify()
+		r.Release()
 	}
 }
 
