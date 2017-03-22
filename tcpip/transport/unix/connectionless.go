@@ -23,7 +23,6 @@ type connectionlessEndpoint struct {
 func NewConnectionless() Endpoint {
 	ep := &connectionlessEndpoint{baseEndpoint{Queue: &waiter.Queue{}}}
 	ep.receiver = &queueReceiver{readQueue: queue.New(&waiter.Queue{}, ep.Queue, initialLimit)}
-	ep.baseEndpoint.isBound = ep.isBound
 	return ep
 }
 

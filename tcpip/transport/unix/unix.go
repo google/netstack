@@ -495,9 +495,6 @@ type baseEndpoint struct {
 	// path is not empty if the endpoint has been bound,
 	// or may be used if the endpoint is connected.
 	path string
-
-	// isBound returns true iff the endpoint is bound.
-	isBound func() bool
 }
 
 // EventRegister implements waiter.Waitable.EventRegister.

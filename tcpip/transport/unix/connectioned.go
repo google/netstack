@@ -100,13 +100,11 @@ type connectionedEndpoint struct {
 
 // NewConnectioned creates a new unbound connectionedEndpoint.
 func NewConnectioned(stype SockType) Endpoint {
-	ep := &connectionedEndpoint{
+	return &connectionedEndpoint{
 		baseEndpoint: baseEndpoint{Queue: &waiter.Queue{}},
 		id:           UniqueID(),
 		stype:        stype,
 	}
-	ep.baseEndpoint.isBound = ep.isBound
-	return ep
 }
 
 // NewPair allocates a new pair of connected unix-domain connectionedEndpoints.
@@ -142,9 +140,6 @@ func NewPair(stype SockType) (Endpoint, Endpoint) {
 		writeQueue: q1,
 	}
 
-	a.baseEndpoint.isBound = a.isBound
-	b.baseEndpoint.isBound = b.isBound
-
 	return a, b
 }
 
@@ -163,7 +158,8 @@ func (e *connectionedEndpoint) WaiterQueue() *waiter.Queue {
 	return e.Queue
 }
 
-// isBound returns true iff the connectionedEndpoint is bound.
+// isBound returns true iff the connectionedEndpoint is bound (but not
+// listening).
 func (e *connectionedEndpoint) isBound() bool {
 	return e.path != "" && e.acceptedChan == nil
 }
@@ -266,7 +262,6 @@ func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, retur
 	} else {
 		ne.receiver = &queueReceiver{readQueue: writeQueue}
 	}
-	ne.baseEndpoint.isBound = ne.isBound
 
 	select {
 	case e.acceptedChan <- ne:
@@ -375,7 +370,7 @@ func (e *connectionedEndpoint) Bind(addr tcpip.FullAddress, commit func() error)
 	if e.Connected() {
 		return tcpip.ErrAlreadyConnected
 	}
-	if e.isBound() {
+	if e.isBound() || e.Listening() {
 		return tcpip.ErrAlreadyBound
 	}
 	if addr.Addr == "" {
