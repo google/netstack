@@ -7,17 +7,25 @@ package hash
 
 import (
 	"crypto/rand"
+	"encoding/binary"
+	"fmt"
 
 	"github.com/google/netstack/tcpip/header"
 )
 
-var hashIV = Rand32()
+var hashIV = RandN32(1)[0]
 
-// Rand32 generates a cryptographic random 32-bit number.
-func Rand32() uint32 {
-	r := make([]byte, 4)
-	rand.Read(r)
-	return uint32(r[0]) | uint32(r[1])<<8 | uint32(r[2])<<16 | uint32(r[3])<<24
+// RandN32 generates a slice of n cryptographic random 32-bit numbers.
+func RandN32(n int) []uint32 {
+	b := make([]byte, 4*n)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("unable to get random numbers: %v", err))
+	}
+	r := make([]uint32, n)
+	for i := range r {
+		r[i] = binary.LittleEndian.Uint32(b[4*i : (4*i + 4)])
+	}
+	return r
 }
 
 // Hash3Words calculates the Jenkins hash of 3 32-bit words. This is adapted

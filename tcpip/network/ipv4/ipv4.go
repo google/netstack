@@ -193,15 +193,19 @@ func hashRoute(r *stack.Route, protocol tcpip.TransportProtocolNumber) uint32 {
 }
 
 var (
-	ids    = make([]uint32, buckets)
-	hashIV = hash.Rand32()
+	ids    []uint32
+	hashIV uint32
 )
 
 func init() {
-	// Randomly initialize the ids.
+	ids = make([]uint32, buckets)
+
+	// Randomly initialize hashIV and the ids.
+	r := hash.RandN32(1 + buckets)
 	for i := range ids {
-		ids[i] = hash.Rand32()
+		ids[i] = r[i]
 	}
+	hashIV = r[buckets]
 
 	stack.RegisterNetworkProtocol(ProtocolName, NewProtocol())
 }
