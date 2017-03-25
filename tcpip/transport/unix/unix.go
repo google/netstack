@@ -166,6 +166,11 @@ type BoundEndpoint interface {
 	// This method will return tcpip.ErrConnectionRefused on a non-SockDgram
 	// endpoint.
 	UnidirectionalConnect() (ConnectedEndpoint, error)
+
+	// Release releases any resources held by the BoundEndpoint. It must be
+	// called before dropping all references to a BoundEndpoint returned by a
+	// function.
+	Release()
 }
 
 // message represents a message passed over a Unix domain socket.
@@ -680,3 +685,6 @@ func (e *baseEndpoint) GetRemoteAddress() (tcpip.FullAddress, error) {
 	}
 	return tcpip.FullAddress{}, tcpip.ErrNotConnected
 }
+
+// Release implements BoundEndpoint.Release.
+func (*baseEndpoint) Release() {}
