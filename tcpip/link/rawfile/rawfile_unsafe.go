@@ -10,6 +10,12 @@ import (
 	"unsafe"
 )
 
+// TODO: Placed here to avoid breakage caused by coverage
+// instrumentation. Any, even unrelated, changes to this file should ensure
+// that coverage still work. See bug for details.
+//go:noescape
+func blockingPoll(fds unsafe.Pointer, nfds int, timeout int64) (n int, err syscall.Errno)
+
 // GetMTU determines the MTU of a network interface device.
 func GetMTU(name string) (int, error) {
 	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_DGRAM, 0)
@@ -86,9 +92,6 @@ func NonBlockingWrite2(fd int, b1, b2 []byte) error {
 
 	return nil
 }
-
-//go:noescape
-func blockingPoll(fds unsafe.Pointer, nfds int, timeout int64) (n int, err syscall.Errno)
 
 // BlockingRead reads from a file descriptor that is set up as non-blocking. If
 // no data is available, it will block in a poll() syscall until the file
