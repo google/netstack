@@ -6,20 +6,17 @@ package unix
 
 import (
 	"sync"
-	"sync/atomic"
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/transport/queue"
 	"github.com/google/netstack/waiter"
 )
 
-// lastID is the last endpoint id issued by UniqueID.  It must be accessed
-// atomically.
-var lastID uint64
-
-// UniqueID is used to generate endpoint ids.
-func UniqueID() uint64 {
-	return atomic.AddUint64(&lastID, 1)
+// UniqueIDProvider generates a sequence of unique identifiers useful for,
+// among other things, lock ordering.
+type UniqueIDProvider interface {
+	// UniqueID returns a new unique identifier.
+	UniqueID() uint64
 }
 
 // A ConnectingEndpoint is a connectioned unix endpoint that is attempting to
@@ -85,6 +82,9 @@ type connectionedEndpoint struct {
 	// lock ordering within connect.
 	id uint64
 
+	// idGenerator is used to generate new unique endpoint identifiers.
+	idGenerator UniqueIDProvider
+
 	// stype is used by connecting sockets to ensure that they are the
 	// same type. The value is typically either tcpip.SockSeqpacket or
 	// tcpip.SockStream.
@@ -99,24 +99,27 @@ type connectionedEndpoint struct {
 }
 
 // NewConnectioned creates a new unbound connectionedEndpoint.
-func NewConnectioned(stype SockType) Endpoint {
+func NewConnectioned(stype SockType, uid UniqueIDProvider) Endpoint {
 	return &connectionedEndpoint{
 		baseEndpoint: baseEndpoint{Queue: &waiter.Queue{}},
-		id:           UniqueID(),
+		id:           uid.UniqueID(),
+		idGenerator:  uid,
 		stype:        stype,
 	}
 }
 
 // NewPair allocates a new pair of connected unix-domain connectionedEndpoints.
-func NewPair(stype SockType) (Endpoint, Endpoint) {
+func NewPair(stype SockType, uid UniqueIDProvider) (Endpoint, Endpoint) {
 	a := &connectionedEndpoint{
 		baseEndpoint: baseEndpoint{Queue: &waiter.Queue{}},
-		id:           UniqueID(),
+		id:           uid.UniqueID(),
+		idGenerator:  uid,
 		stype:        stype,
 	}
 	b := &connectionedEndpoint{
 		baseEndpoint: baseEndpoint{Queue: &waiter.Queue{}},
-		id:           UniqueID(),
+		id:           uid.UniqueID(),
+		idGenerator:  uid,
 		stype:        stype,
 	}
 
@@ -248,8 +251,9 @@ func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, retur
 			path:  e.path,
 			Queue: &waiter.Queue{},
 		},
-		id:    UniqueID(),
-		stype: e.stype,
+		id:          e.idGenerator.UniqueID(),
+		idGenerator: e.idGenerator,
+		stype:       e.stype,
 	}
 	readQueue := queue.New(ce.WaiterQueue(), ne.Queue, initialLimit)
 	writeQueue := queue.New(ne.Queue, ce.WaiterQueue(), initialLimit)
