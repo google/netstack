@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/google/netstack/sleep"
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
@@ -33,8 +34,7 @@ const (
 
 // Reasons for notifying the protocol goroutine.
 const (
-	notifyHandleSegment = 1 << iota
-	notifyNonZeroReceiveWindow
+	notifyNonZeroReceiveWindow = 1 << iota
 	notifyReceiveWindowChanged
 	notifyClose
 )
@@ -121,20 +121,25 @@ type endpoint struct {
 
 	// The following fields are used to manage the send buffer. When
 	// segments are ready to be sent, they are added to sndQueue and the
-	// protocol goroutine is signaled by a write to sndChan.
+	// protocol goroutine is signaled via sndWaker.
 	//
-	// When the send side is closed, the channel is closed (so that the
-	// protocol goroutine is aware), and sndBufSize is set to -1.
+	// When the send side is closed, the protocol goroutine is notified via
+	// sndCloseWaker, and sndBufSize is set to -1.
 	sndBufMu      sync.Mutex
 	sndBufSize    int
 	sndBufUsed    int
 	sndBufInQueue seqnum.Size
 	sndQueue      segmentList
-	sndChan       chan struct{}
+	sndWaker      sleep.Waker
+	sndCloseWaker sleep.Waker
 
-	// notifyChan is used to indicate to the protocol goroutine that it
-	// needs to wake up and check for notifications.
-	notifyChan chan struct{}
+	// newSegmentWaker is used to indicate to the protocol goroutine that
+	// it needs to wake up and handle new segments queued to it.
+	newSegmentWaker sleep.Waker
+
+	// notificationWaker is used to indicate to the protocol goroutine that
+	// it needs to wake up and check for notifications.
+	notificationWaker sleep.Waker
 
 	// notifyFlags is a bitmask of flags used to indicate to the protocol
 	// goroutine what it was notified; this is only accessed atomically.
@@ -159,8 +164,6 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 		v6only:      true,
 		rcvBufSize:  defaultBufferSize,
 		sndBufSize:  defaultBufferSize,
-		sndChan:     make(chan struct{}, 1),
-		notifyChan:  make(chan struct{}, 1),
 		noDelay:     true,
 		reuseAddr:   true,
 	}
@@ -234,10 +237,7 @@ func (e *endpoint) notifyProtocolGoroutine(n uint32) {
 				// We are causing a transition from no flags to
 				// at least one flag set, so we must cause the
 				// protocol goroutine to wake up.
-				select {
-				case e.notifyChan <- struct{}{}:
-				default:
-				}
+				e.notificationWaker.Assert()
 			}
 			return
 		}
@@ -396,14 +396,11 @@ func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, error) 
 
 	if e.workMu.TryLock() {
 		// Do the work inline.
-		e.handleWrite(true)
+		e.handleWrite()
 		e.workMu.Unlock()
 	} else {
 		// Let the protocol goroutine do the work.
-		select {
-		case e.sndChan <- struct{}{}:
-		default:
-		}
+		e.sndWaker.Assert()
 	}
 
 	return uintptr(len(v)), nil
@@ -765,7 +762,7 @@ func (e *endpoint) Shutdown(flags tcpip.ShutdownFlags) error {
 
 			if e.sndBufSize >= 0 {
 				e.sndBufSize = -1
-				close(e.sndChan)
+				e.sndCloseWaker.Assert()
 			}
 		}
 
@@ -977,7 +974,7 @@ func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv
 
 	// Send packet to worker goroutine.
 	if e.segmentQueue.enqueue(s) {
-		e.notifyProtocolGoroutine(notifyHandleSegment)
+		e.newSegmentWaker.Assert()
 	} else {
 		// The queue is full, so we drop the segment.
 		atomic.AddUint64(&e.stack.MutableStats().DroppedPackets, 1)

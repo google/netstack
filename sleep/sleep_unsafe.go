@@ -69,9 +69,14 @@ const (
 )
 
 var (
-	// assertSleeper is a sentinel sleeper. A pointer to it is stored in
+	// assertedSleeper is a sentinel sleeper. A pointer to it is stored in
 	// wakers that are asserted.
 	assertedSleeper Sleeper
+
+	// sentinelWaker is used in a Sleeper sharedList to indicate that it's
+	// done. When such a value is observed by wakers, they won't bother
+	// queueing themselves.
+	sentinelWaker Waker
 )
 
 // Sleeper allows a goroutine to sleep and receive wake up notifications from
@@ -190,12 +195,24 @@ func (s *Sleeper) Fetch(block bool) (id int, ok bool) {
 	}
 }
 
+// Done is used to indicate that the caller won't use this Sleeper anymore. It
+// stores sentinelWaker to sharedList, which prevents wakers from queueing.
+func (s *Sleeper) Done() {
+	atomic.StorePointer(&s.sharedList, uwaker(&sentinelWaker))
+	s.localList = nil
+}
+
 // enqueueAssertedWaker enqueues an asserted waker to the "ready" circular list
 // of wakers that want to notify the sleeper.
 func (s *Sleeper) enqueueAssertedWaker(w *Waker) {
 	// Add the new waker to the front of the list.
 	for {
 		v := (*Waker)(atomic.LoadPointer(&s.sharedList))
+		if v == &sentinelWaker {
+			// The sleeper is done.
+			return
+		}
+
 		w.next = v
 		if atomic.CompareAndSwapPointer(&s.sharedList, uwaker(v), uwaker(w)) {
 			break

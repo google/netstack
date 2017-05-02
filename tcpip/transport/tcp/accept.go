@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/netstack/sleep"
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/seqnum"
 	"github.com/google/netstack/tcpip/stack"
@@ -334,14 +335,18 @@ func (e *endpoint) protocolListenLoop(rcvWnd seqnum.Size) error {
 
 	ctx := newListenContext(e.stack, rcvWnd, v6only, e.netProto)
 
+	s := sleep.Sleeper{}
+	s.AddWaker(&e.notificationWaker, wakerForNotification)
+	s.AddWaker(&e.newSegmentWaker, wakerForNewSegment)
 	for {
-		<-e.notifyChan
-		n := e.fetchNotifications()
-		if n&notifyClose != 0 {
-			return nil
-		}
+		switch index, _ := s.Fetch(true); index {
+		case wakerForNotification:
+			n := e.fetchNotifications()
+			if n&notifyClose != 0 {
+				return nil
+			}
 
-		if n&notifyHandleSegment != 0 {
+		case wakerForNewSegment:
 			// Process at most maxSegmentsPerWake segments.
 			mayRequeue := true
 			for i := 0; i < maxSegmentsPerWake; i++ {
@@ -358,7 +363,7 @@ func (e *endpoint) protocolListenLoop(rcvWnd seqnum.Size) error {
 			// If the queue is not empty, make sure we'll wake up
 			// in the next iteration.
 			if mayRequeue && !e.segmentQueue.empty() {
-				e.notifyProtocolGoroutine(notifyHandleSegment)
+				e.newSegmentWaker.Assert()
 			}
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/google/netstack/sleep"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/seqnum"
@@ -77,6 +78,7 @@ type sender struct {
 	writeList     segmentList
 	resendTimer   *time.Timer
 	resendTimerEn bool
+	resendWaker   sleep.Waker
 
 	// srtt, rttvar & rto are the "smoothed round-trip time", "round-trip
 	// time variation" and "retransmit timeout", as defined in section 2 of
@@ -132,7 +134,6 @@ func stopAndDrainTimer(t *time.Timer, enabled *bool) {
 func newSender(ep *endpoint, iss seqnum.Value, sndWnd seqnum.Size, mss uint16, sndWndScale int) *sender {
 	s := &sender{
 		ep:               ep,
-		resendTimer:      time.NewTimer(time.Hour),
 		sndCwnd:          initialCwnd,
 		sndSsthresh:      math.MaxInt64,
 		sndWnd:           sndWnd,
@@ -156,6 +157,9 @@ func newSender(ep *endpoint, iss seqnum.Value, sndWnd seqnum.Size, mss uint16, s
 		s.maxPayloadSize = m
 	}
 
+	s.resendTimer = time.AfterFunc(time.Hour, func() {
+		s.resendWaker.Assert()
+	})
 	s.resendTimer.Stop()
 
 	return s

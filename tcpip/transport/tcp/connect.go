@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"time"
 
+	"github.com/google/netstack/sleep"
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
@@ -31,6 +32,13 @@ const (
 	handshakeSynSent handshakeState = iota
 	handshakeSynRcvd
 	handshakeCompleted
+)
+
+// The following are used to set up sleepers.
+const (
+	wakerForNotification = iota
+	wakerForNewSegment
+	wakerForResend
 )
 
 const (
@@ -291,7 +299,7 @@ func (h *handshake) processSegments() error {
 	// If the queue is not empty, make sure we'll wake up in the next
 	// iteration.
 	if !h.ep.segmentQueue.empty() {
-		h.ep.notifyProtocolGoroutine(notifyHandleSegment)
+		h.ep.newSegmentWaker.Assert()
 	}
 
 	return nil
@@ -300,16 +308,26 @@ func (h *handshake) processSegments() error {
 // execute executes the TCP 3-way handshake.
 func (h *handshake) execute() error {
 	// Initialize the resend timer.
+	resendWaker := sleep.Waker{}
 	timeOut := time.Duration(time.Second)
-	rt := time.NewTimer(timeOut)
+	rt := time.AfterFunc(timeOut, func() {
+		resendWaker.Assert()
+	})
 	defer rt.Stop()
+
+	// Set up the wakers.
+	s := sleep.Sleeper{}
+	s.AddWaker(&resendWaker, wakerForResend)
+	s.AddWaker(&h.ep.notificationWaker, wakerForNotification)
+	s.AddWaker(&h.ep.newSegmentWaker, wakerForNewSegment)
+	defer s.Done()
 
 	// Send the initial SYN segment and loop until the handshake is
 	// completed.
 	sendSynTCP(&h.ep.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, h.rcvWndScale)
 	for h.state != handshakeCompleted {
-		select {
-		case <-rt.C:
+		switch index, _ := s.Fetch(true); index {
+		case wakerForResend:
 			timeOut *= 2
 			if timeOut > 60*time.Second {
 				return tcpip.ErrTimeout
@@ -317,16 +335,15 @@ func (h *handshake) execute() error {
 			rt.Reset(timeOut)
 			sendSynTCP(&h.ep.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, h.rcvWndScale)
 
-		case <-h.ep.notifyChan:
+		case wakerForNotification:
 			n := h.ep.fetchNotifications()
 			if n&notifyClose != 0 {
 				return tcpip.ErrAborted
 			}
 
-			if n&notifyHandleSegment != 0 {
-				if err := h.processSegments(); err != nil {
-					return err
-				}
+		case wakerForNewSegment:
+			if err := h.processSegments(); err != nil {
+				return err
 			}
 		}
 	}
@@ -480,7 +497,12 @@ func (e *endpoint) sendRaw(data buffer.View, flags byte, seq, ack seqnum.Value, 
 	return sendTCP(&e.route, e.id, data, flags, seq, ack, rcvWnd)
 }
 
-func (e *endpoint) handleWrite(ok bool) {
+func (e *endpoint) handleWrite() bool {
+	// Nothing to do if already closed.
+	if e.snd.closed {
+		return true
+	}
+
 	// Move packets from send queue to send list. The queue is accessible
 	// from other goroutines and protected by the send mutex, while the send
 	// list is only accessible from the handler goroutine, so it needs no
@@ -496,14 +518,6 @@ func (e *endpoint) handleWrite(ok bool) {
 
 	e.sndBufMu.Unlock()
 
-	// If the channel has been closed, queue the FIN packet and mark send
-	// side as closed.
-	if !ok {
-		e.snd.closed = true
-		e.sndChan = nil
-		e.snd.sndNxtList++
-	}
-
 	// Initialize the next segment to write if it's currently nil.
 	if e.snd.writeNext == nil {
 		e.snd.writeNext = first
@@ -511,6 +525,27 @@ func (e *endpoint) handleWrite(ok bool) {
 
 	// Push out any new packets.
 	e.snd.sendData()
+
+	return true
+}
+
+func (e *endpoint) handleClose() bool {
+	// Nothing to do if already closed.
+	if e.snd.closed {
+		return true
+	}
+
+	// Drain the send queue.
+	e.handleWrite()
+
+	// Queue the FIN packet and mark send side as closed.
+	e.snd.closed = true
+	e.snd.sndNxtList++
+
+	// Push out the FIN packet.
+	e.snd.sendData()
+
+	return true
 }
 
 // resetConnection sends a RST segment and puts the endpoint in an error state
@@ -577,7 +612,7 @@ func (e *endpoint) handleSegments() bool {
 	// If the queue is not empty, make sure we'll wake up in the next
 	// iteration.
 	if !e.segmentQueue.empty() {
-		e.notifyProtocolGoroutine(notifyHandleSegment)
+		e.newSegmentWaker.Assert()
 	}
 
 	return true
@@ -587,9 +622,20 @@ func (e *endpoint) handleSegments() bool {
 // goroutine and is responsible for sending segments and handling received
 // segments.
 func (e *endpoint) protocolMainLoop(passive bool) error {
+	var closeTimer *time.Timer
+	var closeWaker sleep.Waker
+
 	defer func() {
 		e.waiterQueue.Notify(waiter.EventIn | waiter.EventOut)
 		e.completeWorker()
+
+		if e.snd != nil {
+			e.snd.resendTimer.Stop()
+		}
+
+		if closeTimer != nil {
+			closeTimer.Stop()
+		}
 	}()
 
 	if !passive {
@@ -630,51 +676,79 @@ func (e *endpoint) protocolMainLoop(passive bool) error {
 
 	e.waiterQueue.Notify(waiter.EventOut)
 
+	// Set up the functions that will be called when the main protocol loop
+	// wakes up.
+	funcs := []struct {
+		w *sleep.Waker
+		f func() bool
+	}{
+		{
+			w: &e.sndWaker,
+			f: e.handleWrite,
+		},
+		{
+			w: &e.sndCloseWaker,
+			f: e.handleClose,
+		},
+		{
+			w: &e.newSegmentWaker,
+			f: e.handleSegments,
+		},
+		{
+			w: &closeWaker,
+			f: func() bool {
+				e.resetConnection(tcpip.ErrConnectionAborted)
+				return false
+			},
+		},
+		{
+			w: &e.snd.resendWaker,
+			f: func() bool {
+				if !e.snd.retransmitTimerExpired() {
+					e.resetConnection(tcpip.ErrTimeout)
+					return false
+				}
+				return true
+			},
+		},
+		{
+			w: &e.notificationWaker,
+			f: func() bool {
+				n := e.fetchNotifications()
+				if n&notifyNonZeroReceiveWindow != 0 {
+					e.rcv.nonZeroWindow()
+				}
+
+				if n&notifyReceiveWindowChanged != 0 {
+					e.rcv.pendingBufSize = seqnum.Size(e.receiveBufferSize())
+				}
+
+				if n&notifyClose != 0 && closeTimer == nil {
+					// Reset the connection 3 seconds after the
+					// endpoint has been closed.
+					closeTimer = time.AfterFunc(3*time.Second, func() {
+						closeWaker.Assert()
+					})
+				}
+				return true
+			},
+		},
+	}
+
+	// Initialize the sleeper based on the wakers in funcs.
+	s := sleep.Sleeper{}
+	for i := range funcs {
+		s.AddWaker(funcs[i].w, i)
+	}
+
 	// Main loop. Handle segments until both send and receive ends of the
 	// connection have completed.
-	var closeTimer <-chan time.Time
-
 	for !e.rcv.closed || !e.snd.closed || e.snd.sndUna != e.snd.sndNxtList {
 		e.workMu.Unlock()
-		select {
-		case _, ok := <-e.sndChan:
-			e.workMu.Lock()
-			e.handleWrite(ok)
-
-		case <-e.notifyChan:
-			e.workMu.Lock()
-			n := e.fetchNotifications()
-			if n&notifyNonZeroReceiveWindow != 0 {
-				e.rcv.nonZeroWindow()
-			}
-
-			if n&notifyReceiveWindowChanged != 0 {
-				e.rcv.pendingBufSize = seqnum.Size(e.receiveBufferSize())
-			}
-
-			if n&notifyClose != 0 && closeTimer == nil {
-				// Reset the connection 3 seconds after the
-				// endpoint has been closed.
-				closeTimer = time.After(3 * time.Second)
-			}
-
-			if n&notifyHandleSegment != 0 {
-				if !e.handleSegments() {
-					return nil
-				}
-			}
-
-		case <-closeTimer:
-			e.workMu.Lock()
-			e.resetConnection(tcpip.ErrConnectionAborted)
+		v, _ := s.Fetch(true)
+		e.workMu.Lock()
+		if !funcs[v].f() {
 			return nil
-
-		case <-e.snd.resendTimer.C:
-			e.workMu.Lock()
-			if !e.snd.retransmitTimerExpired() {
-				e.resetConnection(tcpip.ErrTimeout)
-				return nil
-			}
 		}
 	}
 
