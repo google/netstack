@@ -120,25 +120,6 @@ func (s *Sleeper) AddWaker(w *Waker, id int) {
 	}
 }
 
-// commitSleep signals to wakers that the given g is now sleeping. Wakers can
-// then fetch it and wake it.
-//
-// The commit may fail if wakers have been asserted after our last check, in
-// which case they will have set s.waitingG to zero.
-func commitSleep(g uintptr, s *Sleeper) bool {
-	for {
-		// Check if the wait was aborted.
-		if atomic.LoadUintptr(&s.waitingG) == 0 {
-			return false
-		}
-
-		// Try to store the G so that wakers know who to wake.
-		if atomic.CompareAndSwapUintptr(&s.waitingG, preparingG, g) {
-			return true
-		}
-	}
-}
-
 // Fetch fetches the next wake-up notification. If a notification is immediately
 // available, it is returned right away. Otherwise, the behavior depends on the
 // value of 'block': if true, the current goroutine blocks until a notification
@@ -180,7 +161,7 @@ func (s *Sleeper) Fetch(block bool) (id int, ok bool) {
 				// commitSleep to decide whether to immediately
 				// wake the caller up or to leave it sleeping.
 				const traceEvGoBlockSelect = 24
-				gopark(commitSleep, s, "sleeper", traceEvGoBlockSelect, 0)
+				gopark(commitSleep, &s.waitingG, "sleeper", traceEvGoBlockSelect, 0)
 			}
 
 			// Pull the shared list out and reverse it in the local
@@ -319,8 +300,17 @@ func uwaker(w *Waker) unsafe.Pointer {
 	return unsafe.Pointer(w)
 }
 
+// commitSleep signals to wakers that the given g is now sleeping. Wakers can
+// then fetch it and wake it.
+//
+// The commit may fail if wakers have been asserted after our last check, in
+// which case they will have set s.waitingG to zero.
+//
+// It is written in assembly, so it can be called without a race context.
+func commitSleep(g uintptr, waitingG *uintptr) bool
+
 //go:linkname gopark runtime.gopark
-func gopark(unlockf func(uintptr, *Sleeper) bool, s *Sleeper, reason string, traceEv byte, traceskip int)
+func gopark(unlockf func(uintptr, *uintptr) bool, wg *uintptr, reason string, traceEv byte, traceskip int)
 
 //go:linkname goready runtime.goready
 func goready(g uintptr, traceskip int)
