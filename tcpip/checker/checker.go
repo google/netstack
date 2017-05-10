@@ -7,6 +7,7 @@
 package checker
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/google/netstack/tcpip"
@@ -14,12 +15,12 @@ import (
 )
 
 // NetworkChecker is a function to check a property of a network packet.
-type NetworkChecker func(*testing.T, header.Network)
+type NetworkChecker func(*testing.T, []header.Network)
 
 // TransportChecker is a function to check a property of a transport packet.
 type TransportChecker func(*testing.T, header.Transport)
 
-// IPv4 checks the validity and properties of the given ipv4 packet. It is
+// IPv4 checks the validity and properties of the given IPv4 packet. It is
 // expected to be used in conjunction with other network checkers for specific
 // properties. For example, to check the source and destination address, one
 // would call:
@@ -38,27 +39,27 @@ func IPv4(t *testing.T, b []byte, checkers ...NetworkChecker) {
 	}
 
 	for _, f := range checkers {
-		f(t, ipv4)
+		f(t, []header.Network{ipv4})
 	}
 }
 
-// IPv6 checks the validity and properties of the given ipv4 packet. The usage
+// IPv6 checks the validity and properties of the given IPv6 packet. The usage
 // is similar to IPv4.
 func IPv6(t *testing.T, b []byte, checkers ...NetworkChecker) {
 	ipv6 := header.IPv6(b)
 	if !ipv6.IsValid(len(b)) {
-		t.Fatalf("Not a valid IPv4 packet")
+		t.Fatalf("Not a valid IPv6 packet")
 	}
 
 	for _, f := range checkers {
-		f(t, ipv6)
+		f(t, []header.Network{ipv6})
 	}
 }
 
 // SrcAddr creates a checker that checks the source address.
 func SrcAddr(addr tcpip.Address) NetworkChecker {
-	return func(t *testing.T, h header.Network) {
-		if a := h.SourceAddress(); a != addr {
+	return func(t *testing.T, h []header.Network) {
+		if a := h[0].SourceAddress(); a != addr {
 			t.Fatalf("Bad source address, got %v, want %v", a, addr)
 		}
 	}
@@ -66,8 +67,8 @@ func SrcAddr(addr tcpip.Address) NetworkChecker {
 
 // DstAddr creates a checker that checks the destination address.
 func DstAddr(addr tcpip.Address) NetworkChecker {
-	return func(t *testing.T, h header.Network) {
-		if a := h.DestinationAddress(); a != addr {
+	return func(t *testing.T, h []header.Network) {
+		if a := h[0].DestinationAddress(); a != addr {
 			t.Fatalf("Bad destination address, got %v, want %v", a, addr)
 		}
 	}
@@ -75,8 +76,8 @@ func DstAddr(addr tcpip.Address) NetworkChecker {
 
 // PayloadLen creates a checker that checks the payload length.
 func PayloadLen(plen int) NetworkChecker {
-	return func(t *testing.T, h header.Network) {
-		if l := len(h.Payload()); l != plen {
+	return func(t *testing.T, h []header.Network) {
+		if l := len(h[0].Payload()); l != plen {
 			t.Fatalf("Bad payload length, got %v, want %v", l, plen)
 		}
 	}
@@ -84,9 +85,9 @@ func PayloadLen(plen int) NetworkChecker {
 
 // FragmentOffset creates a checker that checks the FragmentOffset field.
 func FragmentOffset(offset uint16) NetworkChecker {
-	return func(t *testing.T, h header.Network) {
+	return func(t *testing.T, h []header.Network) {
 		// We only do this of IPv4 for now.
-		switch ip := h.(type) {
+		switch ip := h[0].(type) {
 		case header.IPv4:
 			if v := ip.FragmentOffset(); v != offset {
 				t.Fatalf("Bad fragment offset, got %v, want %v", v, offset)
@@ -97,9 +98,9 @@ func FragmentOffset(offset uint16) NetworkChecker {
 
 // FragmentFlags creates a checker that checks the fragment flags field.
 func FragmentFlags(flags uint8) NetworkChecker {
-	return func(t *testing.T, h header.Network) {
+	return func(t *testing.T, h []header.Network) {
 		// We only do this of IPv4 for now.
-		switch ip := h.(type) {
+		switch ip := h[0].(type) {
 		case header.IPv4:
 			if v := ip.Flags(); v != flags {
 				t.Fatalf("Bad fragment offset, got %v, want %v", v, flags)
@@ -110,9 +111,40 @@ func FragmentFlags(flags uint8) NetworkChecker {
 
 // TOS creates a checker that checks the TOS field.
 func TOS(tos uint8, label uint32) NetworkChecker {
-	return func(t *testing.T, h header.Network) {
-		if v, l := h.TOS(); v != tos || l != label {
+	return func(t *testing.T, h []header.Network) {
+		if v, l := h[0].TOS(); v != tos || l != label {
 			t.Fatalf("Bad TOS, got (%v, %v), want (%v,%v)", v, l, tos, label)
+		}
+	}
+}
+
+// Raw creates a checker that checks the bytes of payload.
+// The checker always checks the payload of the last network header.
+// For instance, in case of IPv6 fragments, the payload that will be checked
+// is the one containing the actual data that the packet is carrying, without
+// the bytes added by the IPv6 fragmentation.
+func Raw(want []byte) NetworkChecker {
+	return func(t *testing.T, h []header.Network) {
+		if got := h[len(h)-1].Payload(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("Wrong payload, got %v, want %v", got, want)
+		}
+	}
+}
+
+// IPv6Fragment creates a checker that validates an IPv6 fragment.
+func IPv6Fragment(checkers ...NetworkChecker) NetworkChecker {
+	return func(t *testing.T, h []header.Network) {
+		if p := h[0].TransportProtocol(); p != header.IPv6FragmentHeader {
+			t.Fatalf("Bad protocol, got %v, want %v", p, header.UDPProtocolNumber)
+		}
+
+		ipv6Frag := header.IPv6Fragment(h[0].Payload())
+		if !ipv6Frag.IsValid() {
+			t.Fatalf("Not a valid IPv6 fragment")
+		}
+
+		for _, f := range checkers {
+			f(t, []header.Network{h[0], ipv6Frag})
 		}
 	}
 }
@@ -120,18 +152,21 @@ func TOS(tos uint8, label uint32) NetworkChecker {
 // TCP creates a checker that checks that the transport protocol is TCP and
 // potentially additional transport header fields.
 func TCP(checkers ...TransportChecker) NetworkChecker {
-	return func(t *testing.T, h header.Network) {
-		if p := h.TransportProtocol(); p != header.TCPProtocolNumber {
+	return func(t *testing.T, h []header.Network) {
+		first := h[0]
+		last := h[len(h)-1]
+
+		if p := last.TransportProtocol(); p != header.TCPProtocolNumber {
 			t.Fatalf("Bad protocol, got %v, want %v", p, header.TCPProtocolNumber)
 		}
 
 		// Verify the checksum.
-		tcp := header.TCP(h.Payload())
+		tcp := header.TCP(last.Payload())
 		l := uint16(len(tcp))
 
-		xsum := header.Checksum([]byte(h.SourceAddress()), 0)
-		xsum = header.Checksum([]byte(h.DestinationAddress()), xsum)
-		xsum = header.Checksum([]byte{0, byte(h.TransportProtocol())}, xsum)
+		xsum := header.Checksum([]byte(first.SourceAddress()), 0)
+		xsum = header.Checksum([]byte(first.DestinationAddress()), xsum)
+		xsum = header.Checksum([]byte{0, byte(last.TransportProtocol())}, xsum)
 		xsum = header.Checksum([]byte{byte(l >> 8), byte(l)}, xsum)
 		xsum = header.Checksum(tcp, xsum)
 
@@ -149,12 +184,14 @@ func TCP(checkers ...TransportChecker) NetworkChecker {
 // UDP creates a checker that checks that the transport protocol is UDP and
 // potentially additional transport header fields.
 func UDP(checkers ...TransportChecker) NetworkChecker {
-	return func(t *testing.T, h header.Network) {
-		if p := h.TransportProtocol(); p != header.UDPProtocolNumber {
+	return func(t *testing.T, h []header.Network) {
+		last := h[len(h)-1]
+
+		if p := last.TransportProtocol(); p != header.UDPProtocolNumber {
 			t.Fatalf("Bad protocol, got %v, want %v", p, header.UDPProtocolNumber)
 		}
 
-		udp := header.UDP(h.Payload())
+		udp := header.UDP(last.Payload())
 		for _, f := range checkers {
 			f(t, udp)
 		}
@@ -300,6 +337,15 @@ func TCPSynOptions(mss uint16, wndscale int) TransportChecker {
 
 		if !foundWS && wndscale >= 0 {
 			t.Fatalf("WS option not found. Options: %x", opts)
+		}
+	}
+}
+
+// Payload creates a checker that checks the payload.
+func Payload(want []byte) TransportChecker {
+	return func(t *testing.T, h header.Transport) {
+		if got := h.Payload(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("Wrong payload, got %v, want %v", got, want)
 		}
 	}
 }

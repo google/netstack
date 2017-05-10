@@ -6,6 +6,8 @@ package header
 
 import (
 	"encoding/binary"
+
+	"github.com/google/netstack/tcpip"
 )
 
 const (
@@ -84,4 +86,51 @@ func (b IPv6Fragment) Payload() []byte {
 // ID returns the value of the identifier field of the ipv6 fragment.
 func (b IPv6Fragment) ID() uint32 {
 	return binary.BigEndian.Uint32(b[idV6:])
+}
+
+// TransportProtocol implements Network.TransportProtocol.
+func (b IPv6Fragment) TransportProtocol() tcpip.TransportProtocolNumber {
+	return tcpip.TransportProtocolNumber(b.NextHeader())
+}
+
+// The functions below have been added only to satisfy the Network interface.
+
+// Checksum is not supported by IPv6Fragment.
+func (b IPv6Fragment) Checksum() uint16 {
+	panic("not supported")
+}
+
+// SourceAddress is not supported by IPv6Fragment.
+func (b IPv6Fragment) SourceAddress() tcpip.Address {
+	panic("not supported")
+}
+
+// DestinationAddress is not supported by IPv6Fragment.
+func (b IPv6Fragment) DestinationAddress() tcpip.Address {
+	panic("not supported")
+}
+
+// SetSourceAddress is not supported by IPv6Fragment.
+func (b IPv6Fragment) SetSourceAddress(tcpip.Address) {
+	panic("not supported")
+}
+
+// SetDestinationAddress is not supported by IPv6Fragment.
+func (b IPv6Fragment) SetDestinationAddress(tcpip.Address) {
+	panic("not supported")
+}
+
+// SetChecksum is not supported by IPv6Fragment.
+func (b IPv6Fragment) SetChecksum(uint16) {
+	panic("not supported")
+}
+
+// TOS is not supported by IPv6Fragment.
+func (b IPv6Fragment) TOS() (uint8, uint32) {
+	panic("not supported")
+}
+
+// SetTOS is not supported by IPv6Fragment.
+func (b IPv6Fragment) SetTOS(t uint8, l uint32) {
+	panic("not supported")
 }
