@@ -6,12 +6,12 @@ package fragmentation
 
 import (
 	"container/heap"
+	"fmt"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/google/netstack/tcpip/buffer"
-	"log"
 )
 
 type hole struct {
@@ -90,7 +90,7 @@ func (r *reassembler) process(first, last uint16, more bool, vv *buffer.Vectoris
 	}
 	res, err := r.heap.reassemble()
 	if err != nil {
-		log.Panicf("reassemble failed with: %v. There is probably a bug in the code handling the holes.", err)
+		panic(fmt.Sprintf("reassemble failed with: %v. There is probably a bug in the code handling the holes.", err))
 	}
 	r.done = true
 	return res, true, consumed
