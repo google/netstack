@@ -2196,15 +2196,25 @@ func TestReceivedSegmentQueuing(t *testing.T) {
 		})
 	}
 
-	// Receive all the ACKs.
-	for i := 0; i < 200; i++ {
-		checker.IPv4(c.t, c.getPacket(),
+	// Receive ACKs for all segments.
+	last := seqnum.Value(790 + 200*len(data))
+	for {
+		b := c.getPacket()
+		checker.IPv4(c.t, b,
 			checker.TCP(
 				checker.DstPort(testPort),
 				checker.SeqNum(uint32(c.irs)+1),
-				checker.AckNum(uint32(790+(i+1)*len(data))),
 				checker.TCPFlags(header.TCPFlagAck),
 			),
 		)
+		tcp := header.TCP(header.IPv4(b).Payload())
+		ack := seqnum.Value(tcp.AckNumber())
+		if ack == last {
+			break
+		}
+
+		if last.LessThan(ack) {
+			t.Fatalf("Acknowledge (%v) beyond the expected (%v)", ack, last)
+		}
 	}
 }

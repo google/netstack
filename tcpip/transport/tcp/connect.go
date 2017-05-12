@@ -576,10 +576,12 @@ func (e *endpoint) completeWorker() {
 // handleSegments pulls segments from the queue and processes them. It returns
 // true if the protocol loop should continue, false otherwise.
 func (e *endpoint) handleSegments() bool {
+	checkRequeue := true
 	for i := 0; i < maxSegmentsPerWake; i++ {
 		s := e.segmentQueue.dequeue()
 		if s == nil {
-			return true
+			checkRequeue = false
+			break
 		}
 
 		if s.flagIsSet(flagRst) {
@@ -611,8 +613,13 @@ func (e *endpoint) handleSegments() bool {
 
 	// If the queue is not empty, make sure we'll wake up in the next
 	// iteration.
-	if !e.segmentQueue.empty() {
+	if checkRequeue && !e.segmentQueue.empty() {
 		e.newSegmentWaker.Assert()
+	}
+
+	// Send an ACK for all processed packets if needed.
+	if e.rcv.rcvNxt != e.snd.maxSentAck {
+		e.snd.sendAck()
 	}
 
 	return true
@@ -662,7 +669,7 @@ func (e *endpoint) protocolMainLoop(passive bool) error {
 		// Transfer handshake state to TCP connection. We disable
 		// receive window scaling if the peer doesn't support it
 		// (indicated by a negative send window scale).
-		e.snd = newSender(e, h.iss, h.sndWnd, h.mss, h.sndWndScale)
+		e.snd = newSender(e, h.iss, h.ackNum-1, h.sndWnd, h.mss, h.sndWndScale)
 
 		e.rcvListMu.Lock()
 		e.rcv = newReceiver(e, h.ackNum-1, h.rcvWnd, h.effectiveRcvWndScale())

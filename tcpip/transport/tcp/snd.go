@@ -95,6 +95,9 @@ type sender struct {
 	// sndWndScale is the number of bits to shift left when reading the send
 	// window size from a segment.
 	sndWndScale uint8
+
+	// maxSentAck is the maxium acknowledgement actually sent.
+	maxSentAck seqnum.Value
 }
 
 // fastRecovery holds information related to fast recovery from a packet loss.
@@ -131,7 +134,7 @@ func stopAndDrainTimer(t *time.Timer, enabled *bool) {
 	}
 }
 
-func newSender(ep *endpoint, iss seqnum.Value, sndWnd seqnum.Size, mss uint16, sndWndScale int) *sender {
+func newSender(ep *endpoint, iss, irs seqnum.Value, sndWnd seqnum.Size, mss uint16, sndWndScale int) *sender {
 	s := &sender{
 		ep:               ep,
 		sndCwnd:          initialCwnd,
@@ -144,6 +147,7 @@ func newSender(ep *endpoint, iss seqnum.Value, sndWnd seqnum.Size, mss uint16, s
 		rttMeasureSeqNum: iss + 1,
 		lastSendTime:     time.Now(),
 		maxPayloadSize:   int(mss),
+		maxSentAck:       irs + 1,
 	}
 
 	// A negative sndWndScale means that no scaling is in use, otherwise we
@@ -165,11 +169,8 @@ func newSender(ep *endpoint, iss seqnum.Value, sndWnd seqnum.Size, mss uint16, s
 	return s
 }
 
-// sendAck sends an ACK segment. If canDelay is true, the ACK may be delayed by
-// up to 500ms, in the hopes that a data segment will be sent soon and thus
-// avoid the ACK-only segment; if canDelay is false, an ACK segment is sent
-// immediately.
-func (s *sender) sendAck(canDelay bool) {
+// sendAck sends an ACK segment.
+func (s *sender) sendAck() {
 	s.sendSegment(nil, flagAck, s.sndNxt)
 }
 
@@ -531,18 +532,18 @@ func (s *sender) sendSegment(data *buffer.VectorisedView, flags byte, seq seqnum
 		s.rttMeasureTime = s.lastSendTime
 	}
 
+	rcvNxt, rcvWnd := s.ep.rcv.getSendParams()
+
+	// Remember the max sent ack.
+	s.maxSentAck = rcvNxt
+
 	if data == nil {
-		rcvNxt, rcvWnd := s.ep.rcv.getSendParams()
 		return s.ep.sendRaw(nil, flags, seq, rcvNxt, rcvWnd)
 	}
 
 	if len(data.Views()) > 1 {
 		panic("send path does not support views with multiple buffers")
 	}
-	rcvNxt, rcvWnd := s.ep.rcv.getSendParams()
-	if err := s.ep.sendRaw(data.First(), flags, seq, rcvNxt, rcvWnd); err != nil {
-		return err
-	}
 
-	return nil
+	return s.ep.sendRaw(data.First(), flags, seq, rcvNxt, rcvWnd)
 }

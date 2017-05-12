@@ -210,7 +210,7 @@ func (l *listenContext) createConnectedEndpoint(s *segment, iss seqnum.Value, ir
 	//
 	// The receiver at least temporarily has a zero receive window scale,
 	// but the caller may change it (before starting the protocol loop).
-	n.snd = newSender(n, iss, s.window, mss, sndWndScale)
+	n.snd = newSender(n, iss, irs, s.window, mss, sndWndScale)
 	n.rcv = newReceiver(n, irs, l.rcvWnd, 0)
 
 	return n, nil

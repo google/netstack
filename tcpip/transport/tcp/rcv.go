@@ -80,7 +80,7 @@ func (r *receiver) nonZeroWindow() {
 	}
 
 	// Immediately send an ack.
-	r.ep.snd.sendAck(false)
+	r.ep.snd.sendAck()
 }
 
 // consumeSegment attemps to consume a segment that was received by r. The
@@ -120,7 +120,7 @@ func (r *receiver) consumeSegment(s *segment, segSeq seqnum.Value, segLen seqnum
 		r.rcvNxt++
 
 		// Send ACK immediately.
-		r.ep.snd.sendAck(false)
+		r.ep.snd.sendAck()
 
 		// Tell any readers that no more data will come.
 		r.closed = true
@@ -158,12 +158,11 @@ func (r *receiver) handleRcvdSegment(s *segment) {
 	// If the sequence number range is outside the acceptable range, just
 	// send an ACK. This is according to RFC 793, page 37.
 	if !r.acceptable(segSeq, segLen) {
-		r.ep.snd.sendAck(false)
+		r.ep.snd.sendAck()
 		return
 	}
 
 	// Defer segment processing if it can't be consumed now.
-	originalRcvNxt := r.rcvNxt
 	if !r.consumeSegment(s, segSeq, segLen) {
 		if segLen > 0 || s.flagIsSet(flagFin) {
 			// We only store the segment if it's within our buffer
@@ -176,7 +175,7 @@ func (r *receiver) handleRcvdSegment(s *segment) {
 
 			// Immediately send an ack so that the peer knows it may
 			// have to retransmit.
-			r.ep.snd.sendAck(false)
+			r.ep.snd.sendAck()
 		}
 		return
 	}
@@ -198,12 +197,5 @@ func (r *receiver) handleRcvdSegment(s *segment) {
 		heap.Pop(&r.pendingRcvdSegments)
 		r.pendingBufUsed -= s.logicalLen()
 		s.decRef()
-	}
-
-	// Send a potentially delayed ACK if the receive window changed. If the
-	// receive send was closed, we have already sent an immediate ACK, so
-	// there is no need to send another one.
-	if r.rcvNxt != originalRcvNxt && !r.closed {
-		r.ep.snd.sendAck(true)
 	}
 }
