@@ -317,15 +317,6 @@ func uwaker(w *Waker) unsafe.Pointer {
 	return unsafe.Pointer(w)
 }
 
-// commitSleep signals to wakers that the given g is now sleeping. Wakers can
-// then fetch it and wake it.
-//
-// The commit may fail if wakers have been asserted after our last check, in
-// which case they will have set s.waitingG to zero.
-//
-// It is written in assembly, so it can be called without a race context.
-func commitSleep(g uintptr, waitingG *uintptr) bool
-
 //go:linkname gopark runtime.gopark
 func gopark(unlockf func(uintptr, *uintptr) bool, wg *uintptr, reason string, traceEv byte, traceskip int)
 

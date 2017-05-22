@@ -2,7 +2,7 @@
 
 #define preparingG 1
 
-// See sleep_unsafe.go for a description of commitSleep.
+// See commit_noasm.go for a description of commitSleep.
 //
 // func commitSleep(g uintptr, waitingG *uintptr) bool
 TEXT ·commitSleep(SB),NOSPLIT,$0-24
