@@ -29,7 +29,7 @@ type endpoint struct {
 	fd int
 
 	// mtu (maximum transmission unit) is the maximum size of a packet.
-	mtu int
+	mtu uint32
 
 	// closed is a function to be called when the FD's peer (if any) closes
 	// its end of the communication pipe.
@@ -41,7 +41,7 @@ type endpoint struct {
 }
 
 // New creates a new fd-based endpoint.
-func New(fd int, mtu int, closed func(error)) tcpip.LinkEndpointID {
+func New(fd int, mtu uint32, closed func(error)) tcpip.LinkEndpointID {
 	syscall.SetNonblock(fd, true)
 
 	e := &endpoint{
@@ -65,7 +65,7 @@ func (e *endpoint) Attach(dispatcher stack.NetworkDispatcher) {
 // MTU implements stack.LinkEndpoint.MTU. It returns the value initialized
 // during construction.
 func (e *endpoint) MTU() uint32 {
-	return uint32(e.mtu)
+	return e.mtu
 }
 
 // MaxHeaderLength returns the maximum size of the header. Given that it
@@ -168,4 +168,36 @@ func (e *endpoint) dispatchLoop(d stack.NetworkDispatcher) error {
 			return err
 		}
 	}
+}
+
+// InjectableEndpoint is an injectable fd-based endpoint. The endpoint writes
+// to the FD, but does not read from it. All reads come from injected packets.
+type InjectableEndpoint struct {
+	endpoint
+
+	dispatcher stack.NetworkDispatcher
+}
+
+// Attach saves the stack network-layer dispatcher for use later when packets
+// are injected.
+func (e *InjectableEndpoint) Attach(dispatcher stack.NetworkDispatcher) {
+	e.dispatcher = dispatcher
+}
+
+// Inject injects an inbound packet.
+func (e *InjectableEndpoint) Inject(protocol tcpip.NetworkProtocolNumber, vv *buffer.VectorisedView) {
+	uu := vv.Clone(nil)
+	e.dispatcher.DeliverNetworkPacket(e, "", protocol, &uu)
+}
+
+// NewInjectable creates a new fd-based InjectableEndpoint.
+func NewInjectable(fd int, mtu uint32) (tcpip.LinkEndpointID, *InjectableEndpoint) {
+	syscall.SetNonblock(fd, true)
+
+	e := &InjectableEndpoint{endpoint: endpoint{
+		fd:  fd,
+		mtu: mtu,
+	}}
+
+	return stack.RegisterLinkEndpoint(e), e
 }

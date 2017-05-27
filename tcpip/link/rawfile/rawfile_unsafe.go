@@ -17,7 +17,7 @@ import (
 func blockingPoll(fds unsafe.Pointer, nfds int, timeout int64) (n int, err syscall.Errno)
 
 // GetMTU determines the MTU of a network interface device.
-func GetMTU(name string) (int, error) {
+func GetMTU(name string) (uint32, error) {
 	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_DGRAM, 0)
 	if err != nil {
 		return 0, err
@@ -37,7 +37,7 @@ func GetMTU(name string) (int, error) {
 		return 0, errno
 	}
 
-	return int(ifreq.mtu), nil
+	return uint32(ifreq.mtu), nil
 }
 
 // NonBlockingWrite writes the given buffer to a file descriptor. It fails if
