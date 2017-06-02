@@ -367,9 +367,12 @@ func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, error) 
 		}
 	}
 
-	var views [1]buffer.View
-	vv := v.ToVectorisedView(views)
-	s := newSegment(&e.route, e.id, &vv)
+	// Nothing to do if the buffer is empty.
+	if len(v) == 0 {
+		return 0, nil
+	}
+
+	s := newSegmentFromView(&e.route, e.id, v)
 
 	e.sndBufMu.Lock()
 
@@ -758,12 +761,25 @@ func (e *endpoint) Shutdown(flags tcpip.ShutdownFlags) error {
 		// Close for write.
 		if (flags & tcpip.ShutdownWrite) != 0 {
 			e.sndBufMu.Lock()
-			defer e.sndBufMu.Unlock()
 
-			if e.sndBufSize >= 0 {
-				e.sndBufSize = -1
-				e.sndCloseWaker.Assert()
+			if e.sndBufSize < 0 {
+				// Already closed.
+				e.sndBufMu.Unlock()
+				break
 			}
+
+			// Queue fin segment.
+			s := newSegmentFromView(&e.route, e.id, nil)
+			e.sndQueue.PushBack(s)
+			e.sndBufInQueue++
+
+			// Mark endpoint as closed.
+			e.sndBufSize = -1
+
+			e.sndBufMu.Unlock()
+
+			// Tell protocol goroutine to close.
+			e.sndCloseWaker.Assert()
 		}
 
 	case stateListen:

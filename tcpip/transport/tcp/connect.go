@@ -498,11 +498,6 @@ func (e *endpoint) sendRaw(data buffer.View, flags byte, seq, ack seqnum.Value, 
 }
 
 func (e *endpoint) handleWrite() bool {
-	// Nothing to do if already closed.
-	if e.snd.closed {
-		return true
-	}
-
 	// Move packets from send queue to send list. The queue is accessible
 	// from other goroutines and protected by the send mutex, while the send
 	// list is only accessible from the handler goroutine, so it needs no
@@ -530,20 +525,11 @@ func (e *endpoint) handleWrite() bool {
 }
 
 func (e *endpoint) handleClose() bool {
-	// Nothing to do if already closed.
-	if e.snd.closed {
-		return true
-	}
-
 	// Drain the send queue.
 	e.handleWrite()
 
-	// Queue the FIN packet and mark send side as closed.
+	// Mark send side as closed.
 	e.snd.closed = true
-	e.snd.sndNxtList++
-
-	// Push out the FIN packet.
-	e.snd.sendData()
 
 	return true
 }

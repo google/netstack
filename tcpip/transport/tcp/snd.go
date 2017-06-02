@@ -213,10 +213,8 @@ func (s *sender) resendSegment() {
 	s.rttMeasureSeqNum = s.sndNxt
 
 	// Resend the segment.
-	if seg := s.writeList.Front(); seg == nil {
-		s.sendSegment(nil, flagAck|flagFin, s.sndUna)
-	} else {
-		s.sendSegment(&seg.data, flagAck|flagPsh, s.sndUna)
+	if seg := s.writeList.Front(); seg != nil {
+		s.sendSegment(&seg.data, seg.flags, seg.sequenceNumber)
 	}
 }
 
@@ -294,34 +292,43 @@ func (s *sender) sendData() {
 		// We abuse the flags field to determine if we have already
 		// assigned a sequence number to this segment.
 		if seg.flags == 0 {
-			seg.flags = flagAck
 			seg.sequenceNumber = s.sndNxt
+			seg.flags = flagAck | flagPsh
 		}
 
-		if !seg.sequenceNumber.LessThan(end) {
-			break
+		var segEnd seqnum.Value
+		if seg.data.Size() == 0 {
+			// We're sending a FIN.
+			seg.flags = flagAck | flagFin
+			segEnd = seg.sequenceNumber.Add(1)
+		} else {
+			// We're sending a non-FIN segment.
+			if !seg.sequenceNumber.LessThan(end) {
+				break
+			}
+
+			available := int(seg.sequenceNumber.Size(end))
+			if available > limit {
+				available = limit
+			}
+
+			if seg.data.Size() > available {
+				// Split this segment up.
+				nSeg := seg.clone()
+				nSeg.data.TrimFront(available)
+				nSeg.sequenceNumber.UpdateForward(seqnum.Size(available))
+				s.writeList.InsertAfter(seg, nSeg)
+				seg.data.CapLength(available)
+			}
+
+			s.outstanding++
+			segEnd = seg.sequenceNumber.Add(seqnum.Size(seg.data.Size()))
 		}
 
-		available := int(seg.sequenceNumber.Size(end))
-		if available > limit {
-			available = limit
-		}
-
-		if seg.data.Size() > available {
-			// Split this segment up.
-			nSeg := seg.clone()
-			nSeg.data.TrimFront(available)
-			nSeg.sequenceNumber.UpdateForward(seqnum.Size(available))
-			s.writeList.InsertAfter(seg, nSeg)
-			seg.data.CapLength(available)
-		}
-
-		s.outstanding++
-		s.sendSegment(&seg.data, flagAck|flagPsh, seg.sequenceNumber)
+		s.sendSegment(&seg.data, seg.flags, seg.sequenceNumber)
 
 		// Update sndNxt if we actually sent new data (as opposed to
 		// retransmitting some previously sent data).
-		segEnd := seg.sequenceNumber.Add(seqnum.Size(seg.data.Size()))
 		if s.sndNxt.LessThan(segEnd) {
 			s.sndNxt = segEnd
 		}
@@ -329,12 +336,6 @@ func (s *sender) sendData() {
 
 	// Remember the next segment we'll write.
 	s.writeNext = seg
-
-	// Send FIN segment if the send side is closed.
-	if s.closed && s.sndNxt+1 == s.sndNxtList {
-		s.sendSegment(nil, flagAck|flagFin, s.sndNxt)
-		s.sndNxt++
-	}
 
 	s.enableResendTimer()
 }

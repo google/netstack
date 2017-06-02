@@ -55,6 +55,17 @@ func newSegment(r *stack.Route, id stack.TransportEndpointID, vv *buffer.Vectori
 	return s
 }
 
+func newSegmentFromView(r *stack.Route, id stack.TransportEndpointID, v buffer.View) *segment {
+	s := &segment{
+		refCnt: 1,
+		id:     id,
+		route:  r.Clone(),
+	}
+	s.views[0] = v
+	s.data = buffer.NewVectorisedView(len(v), s.views[:1])
+	return s
+}
+
 func (s *segment) clone() *segment {
 	t := &segment{
 		refCnt:         1,

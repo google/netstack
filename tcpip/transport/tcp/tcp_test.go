@@ -360,14 +360,24 @@ func TestConnectResetAfterClose(t *testing.T) {
 
 	// Wait for the ep to give up waiting for a FIN, and send a RST.
 	time.Sleep(3 * time.Second)
-	checker.IPv4(c.t, c.getPacket(),
-		checker.TCP(
-			checker.DstPort(testPort),
-			checker.SeqNum(uint32(c.irs)+1),
-			checker.AckNum(790),
-			checker.TCPFlags(header.TCPFlagAck|header.TCPFlagRst),
-		),
-	)
+	for {
+		b := c.getPacket()
+		tcp := header.TCP(header.IPv4(b).Payload())
+		if tcp.Flags() == header.TCPFlagAck|header.TCPFlagFin {
+			// This is a retransmit of the FIN, ignore it.
+			continue
+		}
+
+		checker.IPv4(c.t, b,
+			checker.TCP(
+				checker.DstPort(testPort),
+				checker.SeqNum(uint32(c.irs)+1),
+				checker.AckNum(790),
+				checker.TCPFlags(header.TCPFlagAck|header.TCPFlagRst),
+			),
+		)
+		break
+	}
 }
 
 func TestSimpleReceive(t *testing.T) {
@@ -1639,6 +1649,60 @@ func TestFinImmediately(t *testing.T) {
 	)
 }
 
+func TestFinRetransmit(t *testing.T) {
+	c := newTestContext(t, defaultMTU)
+	defer c.cleanup()
+
+	c.createConnected(789, 30000, nil)
+
+	// Shutdown immediately, check that we get a FIN.
+	if err := c.ep.Shutdown(tcpip.ShutdownWrite); err != nil {
+		t.Fatalf("Unexpected error from Shutdown: %v", err)
+	}
+
+	checker.IPv4(c.t, c.getPacket(),
+		checker.PayloadLen(header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(uint32(c.irs)+1),
+			checker.AckNum(790),
+			checker.TCPFlags(header.TCPFlagAck|header.TCPFlagFin),
+		),
+	)
+
+	// Don't acknowledge yet. We should get a retransmit of the FIN.
+	checker.IPv4(c.t, c.getPacket(),
+		checker.PayloadLen(header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(uint32(c.irs)+1),
+			checker.AckNum(790),
+			checker.TCPFlags(header.TCPFlagAck|header.TCPFlagFin),
+		),
+	)
+
+	// Ack and send FIN as well.
+	c.sendPacket(nil, &headers{
+		srcPort: testPort,
+		dstPort: c.port,
+		flags:   header.TCPFlagAck | header.TCPFlagFin,
+		seqNum:  790,
+		ackNum:  c.irs.Add(2),
+		rcvWnd:  30000,
+	})
+
+	// Check that the stack acks the FIN.
+	checker.IPv4(c.t, c.getPacket(),
+		checker.PayloadLen(header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(uint32(c.irs)+2),
+			checker.AckNum(791),
+			checker.TCPFlags(header.TCPFlagAck),
+		),
+	)
+}
+
 func TestFinWithNoPendingData(t *testing.T) {
 	c := newTestContext(t, defaultMTU)
 	defer c.cleanup()
@@ -1794,6 +1858,107 @@ func TestFinWithPendingData(t *testing.T) {
 			checker.TCPFlags(header.TCPFlagAck),
 		),
 	)
+}
+
+func TestFinWithPartialAck(t *testing.T) {
+	c := newTestContext(t, defaultMTU)
+	defer c.cleanup()
+
+	c.createConnected(789, 30000, nil)
+
+	// Write something out, and acknowledge it to get cwnd to 2. Also send
+	// FIN from the test side.
+	view := buffer.NewView(10)
+	if _, err := c.ep.Write(view, nil); err != nil {
+		t.Fatalf("Unexpected error from Write: %v", err)
+	}
+
+	next := uint32(c.irs) + 1
+	checker.IPv4(c.t, c.getPacket(),
+		checker.PayloadLen(len(view)+header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(next),
+			checker.AckNum(790),
+			checker.TCPFlagsMatch(header.TCPFlagAck, ^uint8(header.TCPFlagPsh)),
+		),
+	)
+	next += uint32(len(view))
+
+	c.sendPacket(nil, &headers{
+		srcPort: testPort,
+		dstPort: c.port,
+		flags:   header.TCPFlagAck | header.TCPFlagFin,
+		seqNum:  790,
+		ackNum:  seqnum.Value(next),
+		rcvWnd:  30000,
+	})
+
+	// Check that we get an ACK for the fin.
+	checker.IPv4(c.t, c.getPacket(),
+		checker.PayloadLen(header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(next),
+			checker.AckNum(791),
+			checker.TCPFlagsMatch(header.TCPFlagAck, ^uint8(header.TCPFlagPsh)),
+		),
+	)
+
+	// Write new data, but don't acknowledge it.
+	if _, err := c.ep.Write(view, nil); err != nil {
+		t.Fatalf("Unexpected error from Write: %v", err)
+	}
+
+	checker.IPv4(c.t, c.getPacket(),
+		checker.PayloadLen(len(view)+header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(next),
+			checker.AckNum(791),
+			checker.TCPFlagsMatch(header.TCPFlagAck, ^uint8(header.TCPFlagPsh)),
+		),
+	)
+	next += uint32(len(view))
+
+	// Shutdown the connection, check that we do get a FIN.
+	if err := c.ep.Shutdown(tcpip.ShutdownWrite); err != nil {
+		t.Fatalf("Unexpected error from Shutdown: %v", err)
+	}
+
+	checker.IPv4(c.t, c.getPacket(),
+		checker.PayloadLen(header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(next),
+			checker.AckNum(791),
+			checker.TCPFlags(header.TCPFlagAck|header.TCPFlagFin),
+		),
+	)
+	next++
+
+	// Send an ACK for the data, but not for the FIN yet.
+	c.sendPacket(nil, &headers{
+		srcPort: testPort,
+		dstPort: c.port,
+		flags:   header.TCPFlagAck,
+		seqNum:  791,
+		ackNum:  seqnum.Value(next - 1),
+		rcvWnd:  30000,
+	})
+
+	// Check that we don't get a retransmit of the FIN.
+	c.checkNoPacketTimeout("FIN retransmitted when data was ack'd", 100*time.Millisecond)
+
+	// Ack the FIN.
+	c.sendPacket(nil, &headers{
+		srcPort: testPort,
+		dstPort: c.port,
+		flags:   header.TCPFlagAck | header.TCPFlagFin,
+		seqNum:  791,
+		ackNum:  seqnum.Value(next),
+		rcvWnd:  30000,
+	})
 }
 
 func TestExponentialIncreaseDuringSlowStart(t *testing.T) {
