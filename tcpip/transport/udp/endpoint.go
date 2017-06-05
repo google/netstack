@@ -319,6 +319,17 @@ func (e *endpoint) GetSockOpt(opt interface{}) error {
 			*o = 1
 		}
 		return nil
+
+	case *tcpip.ReceiveQueueSizeOption:
+		e.rcvMu.Lock()
+		if e.rcvList.Empty() {
+			*o = 0
+		} else {
+			p := e.rcvList.Front()
+			*o = tcpip.ReceiveQueueSizeOption(p.data.Size())
+		}
+		e.rcvMu.Unlock()
+		return nil
 	}
 
 	return tcpip.ErrInvalidEndpointState
