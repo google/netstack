@@ -217,6 +217,11 @@ func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, retur
 		return tcpip.ErrConnectionRefused
 	}
 
+	// Check if ce is e to avoid a deadlock.
+	if ce, ok := ce.(*connectionedEndpoint); ok && ce == e {
+		return tcpip.ErrInvalidEndpointState
+	}
+
 	// Do a dance to safely acquire locks on both endpoints.
 	if e.id < ce.ID() {
 		e.Lock()
