@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/netstack/sleep"
+	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/seqnum"
@@ -527,7 +528,7 @@ func (s *sender) handleRcvdSegment(seg *segment) {
 
 // sendSegment sends a new segment containing the given payload, flags and
 // sequence number.
-func (s *sender) sendSegment(data *buffer.VectorisedView, flags byte, seq seqnum.Value) error {
+func (s *sender) sendSegment(data *buffer.VectorisedView, flags byte, seq seqnum.Value) *tcpip.Error {
 	s.lastSendTime = time.Now()
 	if seq == s.rttMeasureSeqNum {
 		s.rttMeasureTime = s.lastSendTime

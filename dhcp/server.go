@@ -52,7 +52,7 @@ func NewServer(ctx context.Context, stack *stack.Stack, addrs []tcpip.Address, c
 		leases:   make(map[tcpip.LinkAddress]serverLease),
 	}
 
-	var err error
+	var err *tcpip.Error
 	s.ep, err = s.stack.NewEndpoint(udp.ProtocolNumber, ipv4.ProtocolNumber, &s.wq)
 	if err != nil {
 		return nil, fmt.Errorf("dhcp: server endpoint: %v", err)
@@ -61,7 +61,7 @@ func NewServer(ctx context.Context, stack *stack.Stack, addrs []tcpip.Address, c
 		Addr: "",
 		Port: serverPort,
 	}
-	if err = s.ep.Bind(serverBroadcast, nil); err != nil {
+	if err := s.ep.Bind(serverBroadcast, nil); err != nil {
 		return nil, fmt.Errorf("dhcp: server bind: %v", err)
 	}
 

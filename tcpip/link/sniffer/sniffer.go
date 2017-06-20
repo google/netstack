@@ -68,7 +68,7 @@ func (e *endpoint) LinkAddress() tcpip.LinkAddress {
 // WritePacket implements the stack.LinkEndpoint interface. It is called by
 // higher-level protocols to write packets; it just logs the packet and forwards
 // the request to the lower endpoint.
-func (e *endpoint) WritePacket(r *stack.Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.NetworkProtocolNumber) error {
+func (e *endpoint) WritePacket(r *stack.Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.NetworkProtocolNumber) *tcpip.Error {
 	LogPacket("send", protocol, hdr.UsedBytes(), payload)
 	return e.lower.WritePacket(r, hdr, payload, protocol)
 }

@@ -103,7 +103,7 @@ func (c *testContext) cleanup() {
 }
 
 func (c *testContext) createV6Endpoint(v4only bool) {
-	var err error
+	var err *tcpip.Error
 	c.ep, err = c.s.NewEndpoint(udp.ProtocolNumber, ipv6.ProtocolNumber, &c.wq)
 	if err != nil {
 		c.t.Fatalf("NewEndpoint failed: %v", err)
@@ -386,7 +386,7 @@ func TestV4ReadOnV4(t *testing.T) {
 	defer c.cleanup()
 
 	// Create v4 UDP endpoint.
-	var err error
+	var err *tcpip.Error
 	c.ep, err = c.s.NewEndpoint(udp.ProtocolNumber, ipv4.ProtocolNumber, &c.wq)
 	if err != nil {
 		c.t.Fatalf("NewEndpoint failed: %v", err)

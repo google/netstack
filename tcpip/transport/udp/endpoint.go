@@ -5,8 +5,6 @@
 package udp
 
 import (
-	"errors"
-	"io"
 	"sync"
 
 	"github.com/google/netstack/tcpip"
@@ -33,8 +31,6 @@ const (
 	stateConnected
 	stateClosed
 )
-
-var errRetryPrepare = errors.New("prepare operation must be retried")
 
 // endpoint represents a UDP endpoint. This struct serves as the interface
 // between users of the endpoint and the protocol implementation; it is legal to
@@ -91,7 +87,7 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 
 // NewConnectedEndpoint creates a new endpoint in the connected state using the
 // provided route.
-func NewConnectedEndpoint(stack *stack.Stack, r *stack.Route, id stack.TransportEndpointID, waiterQueue *waiter.Queue) (tcpip.Endpoint, error) {
+func NewConnectedEndpoint(stack *stack.Stack, r *stack.Route, id stack.TransportEndpointID, waiterQueue *waiter.Queue) (tcpip.Endpoint, *tcpip.Error) {
 	ep := newEndpoint(stack, r.NetProto, waiterQueue)
 
 	// Register new endpoint so that packets are routed to it.
@@ -139,7 +135,7 @@ func (e *endpoint) Close() {
 
 // Read reads data from the endpoint. This method does not block if
 // there is no data pending.
-func (e *endpoint) Read(addr *tcpip.FullAddress) (buffer.View, error) {
+func (e *endpoint) Read(addr *tcpip.FullAddress) (buffer.View, *tcpip.Error) {
 	e.rcvMu.Lock()
 
 	if e.rcvList.Empty() {
@@ -168,20 +164,20 @@ func (e *endpoint) Read(addr *tcpip.FullAddress) (buffer.View, error) {
 // binds it if it's still in the initial state. To do so, it must first
 // reacquire the mutex in exclusive mode.
 //
-// Returns errRetryPrepare if preparation should be retried.
-func (e *endpoint) prepareForWrite(to *tcpip.FullAddress) error {
+// Returns true for retry if preparation should be retried.
+func (e *endpoint) prepareForWrite(to *tcpip.FullAddress) (retry bool, err *tcpip.Error) {
 	switch e.state {
 	case stateInitial:
 	case stateConnected:
-		return nil
+		return false, nil
 
 	case stateBound:
 		if to == nil {
-			return tcpip.ErrDestinationRequired
+			return false, tcpip.ErrDestinationRequired
 		}
-		return nil
+		return false, nil
 	default:
-		return tcpip.ErrInvalidEndpointState
+		return false, tcpip.ErrInvalidEndpointState
 	}
 
 	e.mu.RUnlock()
@@ -193,32 +189,32 @@ func (e *endpoint) prepareForWrite(to *tcpip.FullAddress) error {
 	// The state changed when we released the shared locked and re-acquired
 	// it in exclusive mode. Try again.
 	if e.state != stateInitial {
-		return errRetryPrepare
+		return true, nil
 	}
 
 	// The state is still 'initial', so try to bind the endpoint.
 	if err := e.bindLocked(tcpip.FullAddress{}, nil); err != nil {
-		return err
+		return false, err
 	}
 
-	return errRetryPrepare
+	return true, nil
 }
 
 // Write writes data to the endpoint's peer. This method does not block
 // if the data cannot be written.
-func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, error) {
+func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, *tcpip.Error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	// Prepare for write.
 	for {
-		err := e.prepareForWrite(to)
-		if err == nil {
-			break
+		retry, err := e.prepareForWrite(to)
+		if err != nil {
+			return 0, err
 		}
 
-		if err != errRetryPrepare {
-			return 0, err
+		if !retry {
+			break
 		}
 	}
 
@@ -259,12 +255,12 @@ func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, error) 
 }
 
 // Peek only returns data from a single datagram, so do nothing here.
-func (e *endpoint) Peek(io.Writer) (uintptr, error) {
+func (e *endpoint) Peek([][]byte) (uintptr, *tcpip.Error) {
 	return 0, nil
 }
 
 // SetSockOpt sets a socket option. Currently not supported.
-func (e *endpoint) SetSockOpt(opt interface{}) error {
+func (e *endpoint) SetSockOpt(opt interface{}) *tcpip.Error {
 	// TODO: Actually implement this.
 	switch v := opt.(type) {
 	case tcpip.V6OnlyOption:
@@ -287,7 +283,7 @@ func (e *endpoint) SetSockOpt(opt interface{}) error {
 }
 
 // GetSockOpt implements tcpip.Endpoint.GetSockOpt.
-func (e *endpoint) GetSockOpt(opt interface{}) error {
+func (e *endpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 	switch o := opt.(type) {
 	case tcpip.ErrorOption:
 		return nil
@@ -337,7 +333,7 @@ func (e *endpoint) GetSockOpt(opt interface{}) error {
 
 // sendUDP sends a UDP segment via the provided network endpoint and under the
 // provided identity.
-func sendUDP(r *stack.Route, data buffer.View, localPort, remotePort uint16) error {
+func sendUDP(r *stack.Route, data buffer.View, localPort, remotePort uint16) *tcpip.Error {
 	// Allocate a buffer for the UDP header.
 	hdr := buffer.NewPrependable(header.UDPMinimumSize + int(r.MaxHeaderLength()))
 
@@ -362,7 +358,7 @@ func sendUDP(r *stack.Route, data buffer.View, localPort, remotePort uint16) err
 	return r.WritePacket(&hdr, data, ProtocolNumber)
 }
 
-func (e *endpoint) checkV4Mapped(addr *tcpip.FullAddress, allowMismatch bool) (tcpip.NetworkProtocolNumber, error) {
+func (e *endpoint) checkV4Mapped(addr *tcpip.FullAddress, allowMismatch bool) (tcpip.NetworkProtocolNumber, *tcpip.Error) {
 	netProto := e.netProto
 	if header.IsV4MappedAddress(addr.Addr) {
 		// Fail if using a v4 mapped address on a v6only endpoint.
@@ -387,7 +383,7 @@ func (e *endpoint) checkV4Mapped(addr *tcpip.FullAddress, allowMismatch bool) (t
 }
 
 // Connect connects the endpoint to its peer. Specifying a NIC is optional.
-func (e *endpoint) Connect(addr tcpip.FullAddress) error {
+func (e *endpoint) Connect(addr tcpip.FullAddress) *tcpip.Error {
 	if addr.Port == 0 {
 		// We don't support connecting to port zero.
 		return tcpip.ErrInvalidEndpointState
@@ -471,13 +467,13 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) error {
 }
 
 // ConnectEndpoint is not supported.
-func (*endpoint) ConnectEndpoint(tcpip.Endpoint) error {
+func (*endpoint) ConnectEndpoint(tcpip.Endpoint) *tcpip.Error {
 	return tcpip.ErrInvalidEndpointState
 }
 
 // Shutdown closes the read and/or write end of the endpoint connection
 // to its peer.
-func (e *endpoint) Shutdown(flags tcpip.ShutdownFlags) error {
+func (e *endpoint) Shutdown(flags tcpip.ShutdownFlags) *tcpip.Error {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -500,16 +496,16 @@ func (e *endpoint) Shutdown(flags tcpip.ShutdownFlags) error {
 }
 
 // Listen is not supported by UDP, it just fails.
-func (*endpoint) Listen(int) error {
+func (*endpoint) Listen(int) *tcpip.Error {
 	return tcpip.ErrNotSupported
 }
 
 // Accept is not supported by UDP, it just fails.
-func (*endpoint) Accept() (tcpip.Endpoint, *waiter.Queue, error) {
+func (*endpoint) Accept() (tcpip.Endpoint, *waiter.Queue, *tcpip.Error) {
 	return nil, nil, tcpip.ErrNotSupported
 }
 
-func (e *endpoint) registerWithStack(nicid tcpip.NICID, netProtos []tcpip.NetworkProtocolNumber, id stack.TransportEndpointID) (stack.TransportEndpointID, error) {
+func (e *endpoint) registerWithStack(nicid tcpip.NICID, netProtos []tcpip.NetworkProtocolNumber, id stack.TransportEndpointID) (stack.TransportEndpointID, *tcpip.Error) {
 	if id.LocalPort != 0 {
 		// The endpoint already has a local port, just attempt to
 		// register it.
@@ -518,7 +514,7 @@ func (e *endpoint) registerWithStack(nicid tcpip.NICID, netProtos []tcpip.Networ
 	}
 
 	// We need to find a port for the endpoint.
-	_, err := e.stack.PickEphemeralPort(func(p uint16) (bool, error) {
+	_, err := e.stack.PickEphemeralPort(func(p uint16) (bool, *tcpip.Error) {
 		id.LocalPort = p
 		err := e.stack.RegisterTransportEndpoint(nicid, netProtos, ProtocolNumber, id, e)
 		switch err {
@@ -534,7 +530,7 @@ func (e *endpoint) registerWithStack(nicid tcpip.NICID, netProtos []tcpip.Networ
 	return id, err
 }
 
-func (e *endpoint) bindLocked(addr tcpip.FullAddress, commit func() error) error {
+func (e *endpoint) bindLocked(addr tcpip.FullAddress, commit func() *tcpip.Error) *tcpip.Error {
 	// Don't allow binding once endpoint is not in the initial state
 	// anymore.
 	if e.state != stateInitial {
@@ -596,7 +592,7 @@ func (e *endpoint) bindLocked(addr tcpip.FullAddress, commit func() error) error
 
 // Bind binds the endpoint to a specific local address and port.
 // Specifying a NIC is optional.
-func (e *endpoint) Bind(addr tcpip.FullAddress, commit func() error) error {
+func (e *endpoint) Bind(addr tcpip.FullAddress, commit func() *tcpip.Error) *tcpip.Error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -612,7 +608,7 @@ func (e *endpoint) Bind(addr tcpip.FullAddress, commit func() error) error {
 }
 
 // GetLocalAddress returns the address to which the endpoint is bound.
-func (e *endpoint) GetLocalAddress() (tcpip.FullAddress, error) {
+func (e *endpoint) GetLocalAddress() (tcpip.FullAddress, *tcpip.Error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -624,7 +620,7 @@ func (e *endpoint) GetLocalAddress() (tcpip.FullAddress, error) {
 }
 
 // GetRemoteAddress returns the address to which the endpoint is connected.
-func (e *endpoint) GetRemoteAddress() (tcpip.FullAddress, error) {
+func (e *endpoint) GetRemoteAddress() (tcpip.FullAddress, *tcpip.Error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 

@@ -42,7 +42,7 @@ func TestTimeouts(t *testing.T) {
 	}
 }
 
-func newLoopbackStack() (*stack.Stack, error) {
+func newLoopbackStack() (*stack.Stack, *tcpip.Error) {
 	// Create the stack and add a NIC.
 	s := stack.New([]string{ipv4.ProtocolName, ipv6.ProtocolName}, []string{tcp.ProtocolName, udp.ProtocolName}).(*stack.Stack)
 
@@ -79,7 +79,7 @@ type testConnection struct {
 	ep tcpip.Endpoint
 }
 
-func connect(s *stack.Stack, addr tcpip.FullAddress) (*testConnection, error) {
+func connect(s *stack.Stack, addr tcpip.FullAddress) (*testConnection, *tcpip.Error) {
 	wq := &waiter.Queue{}
 	ep, err := s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, wq)
 
@@ -117,9 +117,9 @@ func TestCloseReader(t *testing.T) {
 
 	s.AddAddress(NICID, ipv4.ProtocolNumber, addr.Addr)
 
-	l, err := NewListener(s, addr, ipv4.ProtocolNumber)
-	if err != nil {
-		t.Fatalf("NewListener() = %v", err)
+	l, e := NewListener(s, addr, ipv4.ProtocolNumber)
+	if e != nil {
+		t.Fatalf("NewListener() = %v", e)
 	}
 	done := make(chan struct{})
 	go func() {
@@ -141,7 +141,7 @@ func TestCloseReader(t *testing.T) {
 		n, err := c.Read(buf)
 		got, ok := err.(*net.OpError)
 		want := tcpip.ErrConnectionAborted
-		if n != 0 || !ok || got.Err != want {
+		if n != 0 || !ok || got.Err.Error() != want.String() {
 			t.Errorf("c.Read() = (%d, %v), want (0, OpError(%v))", n, err, want)
 		}
 		t.Logf("c.Read() = %d, %v", n, err)
@@ -194,13 +194,13 @@ func TestCloseReaderWithForwarder(t *testing.T) {
 
 		buf := make([]byte, 256)
 		t.Log("c.Read()")
-		n, err := c.Read(buf)
-		got, ok := err.(*net.OpError)
+		n, e := c.Read(buf)
+		got, ok := e.(*net.OpError)
 		want := tcpip.ErrConnectionAborted
-		if n != 0 || !ok || got.Err != want {
-			t.Errorf("c.Read() = (%d, %v), want (0, OpError(%v))", n, err, want)
+		if n != 0 || !ok || got.Err.Error() != want.String() {
+			t.Errorf("c.Read() = (%d, %v), want (0, OpError(%v))", n, e, want)
 		}
-		t.Logf("c.Read() = %d, %v", n, err)
+		t.Logf("c.Read() = %d, %v", n, e)
 	})
 	s.SetTransportProtocolHandler(tcp.ProtocolNumber, fwd.HandlePacket)
 
@@ -228,9 +228,9 @@ func TestDeadlineChange(t *testing.T) {
 
 	s.AddAddress(NICID, ipv4.ProtocolNumber, addr.Addr)
 
-	l, err := NewListener(s, addr, ipv4.ProtocolNumber)
-	if err != nil {
-		t.Fatalf("NewListener() = %v", err)
+	l, e := NewListener(s, addr, ipv4.ProtocolNumber)
+	if e != nil {
+		t.Fatalf("NewListener() = %v", e)
 	}
 	done := make(chan struct{})
 	go func() {

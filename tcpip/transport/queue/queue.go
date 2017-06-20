@@ -86,7 +86,7 @@ func (q *Queue) IsWritable() bool {
 //
 // If notify is true, ReaderQueue.Notify must be called:
 // q.ReaderQueue.Notify(waiter.EventIn)
-func (q *Queue) Enqueue(e Entry) (notify bool, err error) {
+func (q *Queue) Enqueue(e Entry) (notify bool, err *tcpip.Error) {
 	q.mu.Lock()
 
 	if q.closed {
@@ -112,7 +112,7 @@ func (q *Queue) Enqueue(e Entry) (notify bool, err error) {
 //
 // If notify is true, WriterQueue.Notify must be called:
 // q.WriterQueue.Notify(waiter.EventOut)
-func (q *Queue) Dequeue() (e Entry, notify bool, err error) {
+func (q *Queue) Dequeue() (e Entry, notify bool, err *tcpip.Error) {
 	q.mu.Lock()
 
 	if q.dataList.Front() == nil {
@@ -139,7 +139,7 @@ func (q *Queue) Dequeue() (e Entry, notify bool, err error) {
 }
 
 // Peek returns the first entry in the data queue, if one exists.
-func (q *Queue) Peek() (Entry, error) {
+func (q *Queue) Peek() (Entry, *tcpip.Error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 

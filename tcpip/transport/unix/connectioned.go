@@ -37,7 +37,7 @@ type ConnectingEndpoint interface {
 	Type() SockType
 
 	// GetLocalAddress returns the bound path.
-	GetLocalAddress() (tcpip.FullAddress, error)
+	GetLocalAddress() (tcpip.FullAddress, *tcpip.Error)
 
 	// Locker protects the following methods. While locked, only the holder of
 	// the lock can change the return value of the protected methods.
@@ -212,7 +212,7 @@ func (e *connectionedEndpoint) Close() {
 }
 
 // BidirectionalConnect implements BoundEndpoint.BidirectionalConnect.
-func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, returnConnect func(Receiver, ConnectedEndpoint)) error {
+func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, returnConnect func(Receiver, ConnectedEndpoint)) *tcpip.Error {
 	if ce.Type() != e.stype {
 		return tcpip.ErrConnectionRefused
 	}
@@ -304,13 +304,13 @@ func (e *connectionedEndpoint) BidirectionalConnect(ce ConnectingEndpoint, retur
 }
 
 // UnidirectionalConnect implements BoundEndpoint.UnidirectionalConnect.
-func (e *connectionedEndpoint) UnidirectionalConnect() (ConnectedEndpoint, error) {
+func (e *connectionedEndpoint) UnidirectionalConnect() (ConnectedEndpoint, *tcpip.Error) {
 	return nil, tcpip.ErrConnectionRefused
 }
 
 // Connect attempts to directly connect to another Endpoint.
 // Implements Endpoint.Connect.
-func (e *connectionedEndpoint) Connect(server BoundEndpoint) error {
+func (e *connectionedEndpoint) Connect(server BoundEndpoint) *tcpip.Error {
 	returnConnect := func(r Receiver, ce ConnectedEndpoint) {
 		e.receiver = r
 		e.connected = ce
@@ -320,7 +320,7 @@ func (e *connectionedEndpoint) Connect(server BoundEndpoint) error {
 }
 
 // Listen starts listening on the connection.
-func (e *connectionedEndpoint) Listen(backlog int) error {
+func (e *connectionedEndpoint) Listen(backlog int) *tcpip.Error {
 	e.Lock()
 	defer e.Unlock()
 	if e.Listening() {
@@ -347,7 +347,7 @@ func (e *connectionedEndpoint) Listen(backlog int) error {
 }
 
 // Accept accepts a new connection.
-func (e *connectionedEndpoint) Accept() (Endpoint, error) {
+func (e *connectionedEndpoint) Accept() (Endpoint, *tcpip.Error) {
 	e.Lock()
 	defer e.Unlock()
 
@@ -373,7 +373,7 @@ func (e *connectionedEndpoint) Accept() (Endpoint, error) {
 //
 // Bind will fail only if the socket is connected, bound or the passed address
 // is invalid (the empty string).
-func (e *connectionedEndpoint) Bind(addr tcpip.FullAddress, commit func() error) error {
+func (e *connectionedEndpoint) Bind(addr tcpip.FullAddress, commit func() *tcpip.Error) *tcpip.Error {
 	e.Lock()
 	defer e.Unlock()
 	if e.Connected() {

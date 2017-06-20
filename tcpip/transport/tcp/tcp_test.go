@@ -211,7 +211,7 @@ func (c *testContext) createConnected(iss seqnum.Value, rcvWnd seqnum.Size, epRc
 
 func (c *testContext) createConnectedWithOptions(iss seqnum.Value, rcvWnd seqnum.Size, epRcvBuf *tcpip.ReceiveBufferSizeOption, options []byte) {
 	// Create TCP endpoint.
-	var err error
+	var err *tcpip.Error
 	c.ep, err = c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &c.wq)
 	if err != nil {
 		c.t.Fatalf("NewEndpoint failed: %v", err)
@@ -1401,9 +1401,9 @@ func TestForwarderSendMSSLessThanMTU(t *testing.T) {
 	defer c.cleanup()
 
 	s := c.s.(*stack.Stack)
-	ch := make(chan error, 1)
+	ch := make(chan *tcpip.Error, 1)
 	f := tcp.NewForwarder(s, 65536, 10, func(r *tcp.ForwarderRequest) {
-		var err error
+		var err *tcpip.Error
 		c.ep, err = r.CreateEndpoint(&c.wq)
 		ch <- err
 	})
@@ -1432,7 +1432,7 @@ func TestSynOptionsOnActiveConnect(t *testing.T) {
 	defer c.cleanup()
 
 	// Create TCP endpoint.
-	var err error
+	var err *tcpip.Error
 	c.ep, err = c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &c.wq)
 	if err != nil {
 		c.t.Fatalf("NewEndpoint failed: %v", err)

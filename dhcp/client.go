@@ -166,7 +166,7 @@ func (c *Client) Request(ctx context.Context, requestedAddr tcpip.Address) error
 			case <-ch:
 				continue
 			case <-ctx.Done():
-				return tcpip.ErrAborted
+				return fmt.Errorf("reading dhcp offer: %v", tcpip.ErrAborted)
 			}
 		}
 		h = header(v)
@@ -185,7 +185,7 @@ func (c *Client) Request(ctx context.Context, requestedAddr tcpip.Address) error
 	addr := tcpip.Address(h.yiaddr())
 	if err := c.stack.AddAddress(c.nicid, ipv4.ProtocolNumber, addr); err != nil {
 		if err != tcpip.ErrDuplicateAddress {
-			return err
+			return fmt.Errorf("adding address: %v", err)
 		}
 	}
 	defer func() {
@@ -220,7 +220,7 @@ func (c *Client) Request(ctx context.Context, requestedAddr tcpip.Address) error
 			case <-ch:
 				continue
 			case <-ctx.Done():
-				return tcpip.ErrAborted
+				return fmt.Errorf("reading dhcp ack: %v", tcpip.ErrAborted)
 			}
 		}
 		h = header(v)
@@ -228,16 +228,16 @@ func (c *Client) Request(ctx context.Context, requestedAddr tcpip.Address) error
 			break
 		}
 	}
-	opts, err := h.options()
-	if err != nil {
-		return fmt.Errorf("dhcp ack: %v", err)
+	opts, e := h.options()
+	if e != nil {
+		return fmt.Errorf("dhcp ack: %v", e)
 	}
 	if err := cfg.decode(opts); err != nil {
 		return fmt.Errorf("dhcp ack bad options: %v", err)
 	}
-	msgtype, err := opts.dhcpMsgType()
-	if err != nil {
-		return fmt.Errorf("dhcp ack: %v", err)
+	msgtype, e := opts.dhcpMsgType()
+	if e != nil {
+		return fmt.Errorf("dhcp ack: %v", e)
 	}
 	ack = msgtype == dhcpACK
 	if !ack {

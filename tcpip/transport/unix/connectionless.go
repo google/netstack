@@ -59,12 +59,12 @@ func (e *connectionlessEndpoint) Close() {
 }
 
 // BidirectionalConnect implements BoundEndpoint.BidirectionalConnect.
-func (e *connectionlessEndpoint) BidirectionalConnect(ce ConnectingEndpoint, returnConnect func(Receiver, ConnectedEndpoint)) error {
+func (e *connectionlessEndpoint) BidirectionalConnect(ce ConnectingEndpoint, returnConnect func(Receiver, ConnectedEndpoint)) *tcpip.Error {
 	return tcpip.ErrConnectionRefused
 }
 
 // UnidirectionalConnect implements BoundEndpoint.UnidirectionalConnect.
-func (e *connectionlessEndpoint) UnidirectionalConnect() (ConnectedEndpoint, error) {
+func (e *connectionlessEndpoint) UnidirectionalConnect() (ConnectedEndpoint, *tcpip.Error) {
 	return &connectedEndpoint{
 		endpoint:   e,
 		writeQueue: e.receiver.(*queueReceiver).readQueue,
@@ -73,7 +73,7 @@ func (e *connectionlessEndpoint) UnidirectionalConnect() (ConnectedEndpoint, err
 
 // SendMsg writes data and a control message to the specified endpoint.
 // This method does not block if the data cannot be written.
-func (e *connectionlessEndpoint) SendMsg(data [][]byte, c ControlMessages, to BoundEndpoint) (uintptr, error) {
+func (e *connectionlessEndpoint) SendMsg(data [][]byte, c ControlMessages, to BoundEndpoint) (uintptr, *tcpip.Error) {
 	if to == nil {
 		return e.baseEndpoint.SendMsg(data, c, nil)
 	}
@@ -103,7 +103,7 @@ func (e *connectionlessEndpoint) Type() SockType {
 }
 
 // Connect attempts to connect directly to server.
-func (e *connectionlessEndpoint) Connect(server BoundEndpoint) error {
+func (e *connectionlessEndpoint) Connect(server BoundEndpoint) *tcpip.Error {
 	connected, err := server.UnidirectionalConnect()
 	if err != nil {
 		return err
@@ -117,12 +117,12 @@ func (e *connectionlessEndpoint) Connect(server BoundEndpoint) error {
 }
 
 // Listen starts listening on the connection.
-func (e *connectionlessEndpoint) Listen(int) error {
+func (e *connectionlessEndpoint) Listen(int) *tcpip.Error {
 	return tcpip.ErrNotSupported
 }
 
 // Accept accepts a new connection.
-func (e *connectionlessEndpoint) Accept() (Endpoint, error) {
+func (e *connectionlessEndpoint) Accept() (Endpoint, *tcpip.Error) {
 	return nil, tcpip.ErrNotSupported
 }
 
@@ -134,7 +134,7 @@ func (e *connectionlessEndpoint) Accept() (Endpoint, error) {
 //
 // Bind will fail only if the socket is connected, bound or the passed address
 // is invalid (the empty string).
-func (e *connectionlessEndpoint) Bind(addr tcpip.FullAddress, commit func() error) error {
+func (e *connectionlessEndpoint) Bind(addr tcpip.FullAddress, commit func() *tcpip.Error) *tcpip.Error {
 	e.Lock()
 	defer e.Unlock()
 	if e.isBound() {

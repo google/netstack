@@ -4,7 +4,6 @@
 package ports
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/google/netstack/tcpip"
@@ -25,7 +24,7 @@ func TestPortReservation(t *testing.T) {
 	for _, test := range []struct {
 		port uint16
 		ip   tcpip.Address
-		want error
+		want *tcpip.Error
 	}{
 		{
 			port: 80,
@@ -84,30 +83,30 @@ func TestPortReservation(t *testing.T) {
 
 func TestPickEphemeralPort(t *testing.T) {
 	pm := NewPortManager()
-	customErr := errors.New("fake error")
+	customErr := &tcpip.Error{}
 	for _, test := range []struct {
 		name     string
-		f        func(port uint16) (bool, error)
-		wantErr  error
+		f        func(port uint16) (bool, *tcpip.Error)
+		wantErr  *tcpip.Error
 		wantPort uint16
 	}{
 		{
 			name: "no-port-available",
-			f: func(port uint16) (bool, error) {
+			f: func(port uint16) (bool, *tcpip.Error) {
 				return false, nil
 			},
 			wantErr: tcpip.ErrNoPortAvailable,
 		},
 		{
 			name: "port-tester-error",
-			f: func(port uint16) (bool, error) {
+			f: func(port uint16) (bool, *tcpip.Error) {
 				return false, customErr
 			},
 			wantErr: customErr,
 		},
 		{
 			name: "only-port-16042-available",
-			f: func(port uint16) (bool, error) {
+			f: func(port uint16) (bool, *tcpip.Error) {
 				if port == firstEphemeral+42 {
 					return true, nil
 				}
@@ -117,7 +116,7 @@ func TestPickEphemeralPort(t *testing.T) {
 		},
 		{
 			name: "only-port-under-16000-available",
-			f: func(port uint16) (bool, error) {
+			f: func(port uint16) (bool, *tcpip.Error) {
 				if port < firstEphemeral {
 					return true, nil
 				}

@@ -2,12 +2,15 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// Package rawfile contains utilities for using the netstack with raw host
+// files on Linux hosts.
 package rawfile
 
 import (
-	"fmt"
 	"syscall"
 	"unsafe"
+
+	"github.com/google/netstack/tcpip"
 )
 
 // TODO: Placed here to avoid breakage caused by coverage
@@ -42,19 +45,15 @@ func GetMTU(name string) (uint32, error) {
 
 // NonBlockingWrite writes the given buffer to a file descriptor. It fails if
 // partial data is written.
-func NonBlockingWrite(fd int, buf []byte) error {
+func NonBlockingWrite(fd int, buf []byte) *tcpip.Error {
 	var ptr unsafe.Pointer
 	if len(buf) > 0 {
 		ptr = unsafe.Pointer(&buf[0])
 	}
 
-	n, _, e := syscall.RawSyscall(syscall.SYS_WRITE, uintptr(fd), uintptr(ptr), uintptr(len(buf)))
+	_, _, e := syscall.RawSyscall(syscall.SYS_WRITE, uintptr(fd), uintptr(ptr), uintptr(len(buf)))
 	if e != 0 {
-		return e
-	}
-
-	if n != uintptr(len(buf)) {
-		return fmt.Errorf("wrong number of bytes written: expected %d, got %d", len(buf), n)
+		return TranslateErrno(e)
 	}
 
 	return nil
@@ -62,7 +61,7 @@ func NonBlockingWrite(fd int, buf []byte) error {
 
 // NonBlockingWrite2 writes up to two byte slices to a file descriptor in a
 // single syscall. It fails if partial data is written.
-func NonBlockingWrite2(fd int, b1, b2 []byte) error {
+func NonBlockingWrite2(fd int, b1, b2 []byte) *tcpip.Error {
 	// If the is no second buffer, issue a regular write.
 	if len(b2) == 0 {
 		return NonBlockingWrite(fd, b1)
@@ -81,13 +80,9 @@ func NonBlockingWrite2(fd int, b1, b2 []byte) error {
 		},
 	}
 
-	n, _, e := syscall.RawSyscall(syscall.SYS_WRITEV, uintptr(fd), uintptr(unsafe.Pointer(&iovec[0])), 2)
+	_, _, e := syscall.RawSyscall(syscall.SYS_WRITEV, uintptr(fd), uintptr(unsafe.Pointer(&iovec[0])), 2)
 	if e != 0 {
-		return e
-	}
-
-	if n != uintptr(len(b1)+len(b2)) {
-		return fmt.Errorf("wrong number of bytes written: expected %d, got %d", len(b1)+len(b2), n)
+		return TranslateErrno(e)
 	}
 
 	return nil
@@ -96,7 +91,7 @@ func NonBlockingWrite2(fd int, b1, b2 []byte) error {
 // BlockingRead reads from a file descriptor that is set up as non-blocking. If
 // no data is available, it will block in a poll() syscall until the file
 // descirptor becomes readable.
-func BlockingRead(fd int, b []byte) (int, error) {
+func BlockingRead(fd int, b []byte) (int, *tcpip.Error) {
 	for {
 		n, _, e := syscall.RawSyscall(syscall.SYS_READ, uintptr(fd), uintptr(unsafe.Pointer(&b[0])), uintptr(len(b)))
 		if e == 0 {
@@ -114,7 +109,7 @@ func BlockingRead(fd int, b []byte) (int, error) {
 
 		_, e = blockingPoll(unsafe.Pointer(&event), 1, -1)
 		if e != 0 && e != syscall.EINTR {
-			return 0, e
+			return 0, TranslateErrno(e)
 		}
 	}
 }
@@ -122,7 +117,7 @@ func BlockingRead(fd int, b []byte) (int, error) {
 // BlockingReadv reads from a file descriptor that is set up as non-blocking and
 // stores the data in a list of iovecs buffers. If no data is available, it will
 // block in a poll() syscall until the file descirptor becomes readable.
-func BlockingReadv(fd int, iovecs []syscall.Iovec) (int, error) {
+func BlockingReadv(fd int, iovecs []syscall.Iovec) (int, *tcpip.Error) {
 	for {
 		n, _, e := syscall.RawSyscall(syscall.SYS_READV, uintptr(fd), uintptr(unsafe.Pointer(&iovecs[0])), uintptr(len(iovecs)))
 		if e == 0 {
@@ -140,7 +135,7 @@ func BlockingReadv(fd int, iovecs []syscall.Iovec) (int, error) {
 
 		_, e = blockingPoll(unsafe.Pointer(&event), 1, -1)
 		if e != 0 && e != syscall.EINTR {
-			return 0, e
+			return 0, TranslateErrno(e)
 		}
 	}
 }

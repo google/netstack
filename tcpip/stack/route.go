@@ -65,7 +65,7 @@ func (r *Route) PseudoHeaderChecksum(protocol tcpip.TransportProtocolNumber) uin
 }
 
 // WritePacket writes the packet through the given route.
-func (r *Route) WritePacket(hdr *buffer.Prependable, payload buffer.View, protocol tcpip.TransportProtocolNumber) error {
+func (r *Route) WritePacket(hdr *buffer.Prependable, payload buffer.View, protocol tcpip.TransportProtocolNumber) *tcpip.Error {
 	return r.ref.ep.WritePacket(r, hdr, payload, protocol)
 }
 

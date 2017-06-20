@@ -75,7 +75,7 @@ type handshake struct {
 	rcvWndScale int
 }
 
-func newHandshake(ep *endpoint, rcvWnd seqnum.Size) (handshake, error) {
+func newHandshake(ep *endpoint, rcvWnd seqnum.Size) (handshake, *tcpip.Error) {
 	h := handshake{
 		ep:          ep,
 		active:      true,
@@ -108,10 +108,10 @@ func findWndScale(wnd seqnum.Size) int {
 
 // resetState resets the state of the handshake object such that it becomes
 // ready for a new 3-way handshake.
-func (h *handshake) resetState() error {
+func (h *handshake) resetState() *tcpip.Error {
 	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {
-		return err
+		panic(err)
 	}
 
 	h.state = handshakeSynSent
@@ -164,7 +164,7 @@ func (h *handshake) checkAck(s *segment) bool {
 
 // synSentState handles a segment received when the TCP 3-way handshake is in
 // the SYN-SENT state.
-func (h *handshake) synSentState(s *segment) error {
+func (h *handshake) synSentState(s *segment) *tcpip.Error {
 	// RFC 793, page 37, states that in the SYN-SENT state, a reset is
 	// acceptable if the ack field acknowledges the SYN.
 	if s.flagIsSet(flagRst) {
@@ -215,7 +215,7 @@ func (h *handshake) synSentState(s *segment) error {
 
 // synRcvdState handles a segment received when the TCP 3-way handshake is in
 // the SYN-RCVD state.
-func (h *handshake) synRcvdState(s *segment) error {
+func (h *handshake) synRcvdState(s *segment) *tcpip.Error {
 	if s.flagIsSet(flagRst) {
 		// RFC 793, page 37, states that in the SYN-RCVD state, a reset
 		// is acceptable if the sequence number is in the window.
@@ -264,7 +264,7 @@ func (h *handshake) synRcvdState(s *segment) error {
 
 // processSegments goes through the segment queue and processes up to
 // maxSegmentsPerWake (if they're available).
-func (h *handshake) processSegments() error {
+func (h *handshake) processSegments() *tcpip.Error {
 	for i := 0; i < maxSegmentsPerWake; i++ {
 		s := h.ep.segmentQueue.dequeue()
 		if s == nil {
@@ -276,7 +276,7 @@ func (h *handshake) processSegments() error {
 			h.sndWnd <<= uint8(h.sndWndScale)
 		}
 
-		var err error
+		var err *tcpip.Error
 		switch h.state {
 		case handshakeSynRcvd:
 			err = h.synRcvdState(s)
@@ -306,7 +306,7 @@ func (h *handshake) processSegments() error {
 }
 
 // execute executes the TCP 3-way handshake.
-func (h *handshake) execute() error {
+func (h *handshake) execute() *tcpip.Error {
 	// Initialize the resend timer.
 	resendWaker := sleep.Waker{}
 	timeOut := time.Duration(time.Second)
@@ -404,7 +404,7 @@ func parseSynOptions(s *segment) (mss uint16, ws int, ok bool) {
 	return mss, ws, true
 }
 
-func sendSynTCP(r *stack.Route, id stack.TransportEndpointID, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size, rcvWndScale int) error {
+func sendSynTCP(r *stack.Route, id stack.TransportEndpointID, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size, rcvWndScale int) *tcpip.Error {
 	// Initialize the options.
 	mss := r.MTU() - header.TCPMinimumSize
 	options := []byte{
@@ -425,7 +425,7 @@ func sendSynTCP(r *stack.Route, id stack.TransportEndpointID, flags byte, seq, a
 
 // sendTCPWithOptions sends a TCP segment with the provided options via the
 // provided network endpoint and under the provided identity.
-func sendTCPWithOptions(r *stack.Route, id stack.TransportEndpointID, data buffer.View, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size, opts []byte) error {
+func sendTCPWithOptions(r *stack.Route, id stack.TransportEndpointID, data buffer.View, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size, opts []byte) *tcpip.Error {
 	// Allocate a buffer for the TCP header.
 	hdr := buffer.NewPrependable(header.TCPMinimumSize + int(r.MaxHeaderLength()) + len(opts))
 
@@ -460,7 +460,7 @@ func sendTCPWithOptions(r *stack.Route, id stack.TransportEndpointID, data buffe
 
 // sendTCP sends a TCP segment via the provided network endpoint and under the
 // provided identity.
-func sendTCP(r *stack.Route, id stack.TransportEndpointID, data buffer.View, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size) error {
+func sendTCP(r *stack.Route, id stack.TransportEndpointID, data buffer.View, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size) *tcpip.Error {
 	// Allocate a buffer for the TCP header.
 	hdr := buffer.NewPrependable(header.TCPMinimumSize + int(r.MaxHeaderLength()))
 
@@ -493,7 +493,7 @@ func sendTCP(r *stack.Route, id stack.TransportEndpointID, data buffer.View, fla
 }
 
 // sendRaw sends a TCP segment to the endpoint's peer.
-func (e *endpoint) sendRaw(data buffer.View, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size) error {
+func (e *endpoint) sendRaw(data buffer.View, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size) *tcpip.Error {
 	return sendTCP(&e.route, e.id, data, flags, seq, ack, rcvWnd)
 }
 
@@ -537,7 +537,7 @@ func (e *endpoint) handleClose() bool {
 // resetConnection sends a RST segment and puts the endpoint in an error state
 // with the given error code.
 // This method must only be called from the protocol goroutine.
-func (e *endpoint) resetConnection(err error) {
+func (e *endpoint) resetConnection(err *tcpip.Error) {
 	e.sendRaw(nil, flagAck|flagRst, e.snd.sndUna, e.rcv.rcvNxt, 0)
 
 	e.mu.Lock()
@@ -614,7 +614,7 @@ func (e *endpoint) handleSegments() bool {
 // protocolMainLoop is the main loop of the TCP protocol. It runs in its own
 // goroutine and is responsible for sending segments and handling received
 // segments.
-func (e *endpoint) protocolMainLoop(passive bool) error {
+func (e *endpoint) protocolMainLoop(passive bool) *tcpip.Error {
 	var closeTimer *time.Timer
 	var closeWaker sleep.Waker
 

@@ -33,7 +33,7 @@ type endpoint struct {
 
 	// closed is a function to be called when the FD's peer (if any) closes
 	// its end of the communication pipe.
-	closed func(error)
+	closed func(*tcpip.Error)
 
 	vv     *buffer.VectorisedView
 	iovecs []syscall.Iovec
@@ -41,7 +41,7 @@ type endpoint struct {
 }
 
 // New creates a new fd-based endpoint.
-func New(fd int, mtu uint32, closed func(error)) tcpip.LinkEndpointID {
+func New(fd int, mtu uint32, closed func(*tcpip.Error)) tcpip.LinkEndpointID {
 	syscall.SetNonblock(fd, true)
 
 	e := &endpoint{
@@ -81,7 +81,7 @@ func (*endpoint) LinkAddress() tcpip.LinkAddress {
 
 // WritePacket writes outbound packets to the file descriptor. If it is not
 // currently writable, the packet is dropped.
-func (e *endpoint) WritePacket(_ *stack.Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.NetworkProtocolNumber) error {
+func (e *endpoint) WritePacket(_ *stack.Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.NetworkProtocolNumber) *tcpip.Error {
 	if payload == nil {
 		return rawfile.NonBlockingWrite(e.fd, hdr.UsedBytes())
 
@@ -117,7 +117,7 @@ func (e *endpoint) allocateViews(bufConfig []int) {
 }
 
 // dispatch reads one packet from the file descriptor and dispatches it.
-func (e *endpoint) dispatch(d stack.NetworkDispatcher, largeV buffer.View) (bool, error) {
+func (e *endpoint) dispatch(d stack.NetworkDispatcher, largeV buffer.View) (bool, *tcpip.Error) {
 	e.allocateViews(BufConfig)
 
 	n, err := rawfile.BlockingReadv(e.fd, e.iovecs)
@@ -157,7 +157,7 @@ func (e *endpoint) dispatch(d stack.NetworkDispatcher, largeV buffer.View) (bool
 
 // dispatchLoop reads packets from the file descriptor in a loop and dispatches
 // them to the network stack.
-func (e *endpoint) dispatchLoop(d stack.NetworkDispatcher) error {
+func (e *endpoint) dispatchLoop(d stack.NetworkDispatcher) *tcpip.Error {
 	v := buffer.NewView(header.MaxIPPacketSize)
 	for {
 		cont, err := e.dispatch(d, v)

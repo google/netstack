@@ -62,7 +62,7 @@ func (e *endpoint) echoReplier() {
 	}
 }
 
-func sendICMPv4(r *stack.Route, typ header.ICMPv4Type, code byte, data buffer.View) error {
+func sendICMPv4(r *stack.Route, typ header.ICMPv4Type, code byte, data buffer.View) *tcpip.Error {
 	hdr := buffer.NewPrependable(header.ICMPv4MinimumSize + int(r.MaxHeaderLength()))
 
 	icmpv4 := header.ICMPv4(hdr.Prepend(header.ICMPv4MinimumSize))
@@ -85,7 +85,7 @@ type Pinger struct {
 
 // Ping sends echo requests to an ICMPv4 endpoint.
 // Responses are streamed to the channel ch.
-func (p *Pinger) Ping(ctx context.Context, ch chan<- PingReply) error {
+func (p *Pinger) Ping(ctx context.Context, ch chan<- PingReply) *tcpip.Error {
 	count := p.Count
 	if count == 0 {
 		count = 1<<16 - 1
@@ -110,7 +110,7 @@ func (p *Pinger) Ping(ctx context.Context, ch chan<- PingReply) error {
 		RemoteAddress: p.Addr,
 	}
 
-	_, err = p.Stack.PickEphemeralPort(func(port uint16) (bool, error) {
+	_, err = p.Stack.PickEphemeralPort(func(port uint16) (bool, *tcpip.Error) {
 		id.LocalPort = port
 		err := p.Stack.RegisterTransportEndpoint(p.NICID, netProtos, pingProtocolNumber, id, ep)
 		switch err {
@@ -174,14 +174,14 @@ func (p *Pinger) Ping(ctx context.Context, ch chan<- PingReply) error {
 
 // PingReply summarizes an ICMP echo reply.
 type PingReply struct {
-	Error     error // reports any errors sending a ping request
+	Error     *tcpip.Error // reports any errors sending a ping request
 	Duration  time.Duration
 	SeqNumber uint16
 }
 
 type pingProtocol struct{}
 
-func (*pingProtocol) NewEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waiterQueue *waiter.Queue) (tcpip.Endpoint, error) {
+func (*pingProtocol) NewEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waiterQueue *waiter.Queue) (tcpip.Endpoint, *tcpip.Error) {
 	return nil, tcpip.ErrNotSupported // endpoints are created directly
 }
 
@@ -189,7 +189,7 @@ func (*pingProtocol) Number() tcpip.TransportProtocolNumber { return pingProtoco
 
 func (*pingProtocol) MinimumPacketSize() int { return header.ICMPv4EchoMinimumSize }
 
-func (*pingProtocol) ParsePorts(v buffer.View) (src, dst uint16, err error) {
+func (*pingProtocol) ParsePorts(v buffer.View) (src, dst uint16, err *tcpip.Error) {
 	ident := binary.BigEndian.Uint16(v[4:])
 	return 0, ident, nil
 }

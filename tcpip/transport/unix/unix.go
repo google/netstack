@@ -68,13 +68,13 @@ type Endpoint interface {
 	// If peek is true, no data should be consumed from the Endpoint. Any and
 	// all data returned from a peek should be available in the next call to
 	// RecvMsg.
-	RecvMsg(data [][]byte, numRights uintptr, peek bool, addr *tcpip.FullAddress) (uintptr, ControlMessages, error)
+	RecvMsg(data [][]byte, numRights uintptr, peek bool, addr *tcpip.FullAddress) (uintptr, ControlMessages, *tcpip.Error)
 
 	// SendMsg writes data and a control message to the endpoint's peer.
 	// This method does not block if the data cannot be written.
 	//
 	// SendMsg does not take ownership of any of its arguments on error.
-	SendMsg([][]byte, ControlMessages, BoundEndpoint) (uintptr, error)
+	SendMsg([][]byte, ControlMessages, BoundEndpoint) (uintptr, *tcpip.Error)
 
 	// Connect connects this endpoint directly to another.
 	//
@@ -82,22 +82,22 @@ type Endpoint interface {
 	// endpoint passed in as a parameter.
 	//
 	// The error codes are the same as Connect.
-	Connect(server BoundEndpoint) error
+	Connect(server BoundEndpoint) *tcpip.Error
 
 	// Shutdown closes the read and/or write end of the endpoint connection
 	// to its peer.
-	Shutdown(flags tcpip.ShutdownFlags) error
+	Shutdown(flags tcpip.ShutdownFlags) *tcpip.Error
 
 	// Listen puts the endpoint in "listen" mode, which allows it to accept
 	// new connections.
-	Listen(backlog int) error
+	Listen(backlog int) *tcpip.Error
 
 	// Accept returns a new endpoint if a peer has established a connection
 	// to an endpoint previously set to listen mode. This method does not
 	// block if no new connections are available.
 	//
 	// The returned Queue is the wait queue for the newly created endpoint.
-	Accept() (Endpoint, error)
+	Accept() (Endpoint, *tcpip.Error)
 
 	// Bind binds the endpoint to a specific local address and port.
 	// Specifying a NIC is optional.
@@ -105,26 +105,26 @@ type Endpoint interface {
 	// An optional commit function will be executed atomically with respect
 	// to binding the endpoint. If this returns an error, the bind will not
 	// occur and the error will be propagated back to the caller.
-	Bind(address tcpip.FullAddress, commit func() error) error
+	Bind(address tcpip.FullAddress, commit func() *tcpip.Error) *tcpip.Error
 
 	// Type return the socket type, typically either SockStream, SockDgram
 	// or SockSeqpacket.
 	Type() SockType
 
 	// GetLocalAddress returns the address to which the endpoint is bound.
-	GetLocalAddress() (tcpip.FullAddress, error)
+	GetLocalAddress() (tcpip.FullAddress, *tcpip.Error)
 
 	// GetRemoteAddress returns the address to which the endpoint is
 	// connected.
-	GetRemoteAddress() (tcpip.FullAddress, error)
+	GetRemoteAddress() (tcpip.FullAddress, *tcpip.Error)
 
 	// SetSockOpt sets a socket option. opt should be one of the tcpip.*Option
 	// types.
-	SetSockOpt(opt interface{}) error
+	SetSockOpt(opt interface{}) *tcpip.Error
 
 	// GetSockOpt gets a socket option. opt should be a pointer to one of the
 	// tcpip.*Option types.
-	GetSockOpt(opt interface{}) error
+	GetSockOpt(opt interface{}) *tcpip.Error
 }
 
 // A Credentialer is a socket or endpoint that supports the SO_PASSCRED socket
@@ -159,13 +159,13 @@ type BoundEndpoint interface {
 	//
 	// This method will return tcpip.ErrConnectionRefused on endpoints with a
 	// type that isn't SockStream or SockSeqpacket.
-	BidirectionalConnect(ep ConnectingEndpoint, returnConnect func(Receiver, ConnectedEndpoint)) error
+	BidirectionalConnect(ep ConnectingEndpoint, returnConnect func(Receiver, ConnectedEndpoint)) *tcpip.Error
 
 	// UnidirectionalConnect establishes a write-only connection to a unix endpoint.
 	//
 	// This method will return tcpip.ErrConnectionRefused on a non-SockDgram
 	// endpoint.
-	UnidirectionalConnect() (ConnectedEndpoint, error)
+	UnidirectionalConnect() (ConnectedEndpoint, *tcpip.Error)
 
 	// Release releases any resources held by the BoundEndpoint. It must be
 	// called before dropping all references to a BoundEndpoint returned by a
@@ -216,7 +216,7 @@ type Receiver interface {
 	// Recv receives a single message. This method does not block.
 	//
 	// notify indicates if RecvNotify should be called.
-	Recv(data [][]byte, numRights uintptr, peek bool) (n uintptr, cm ControlMessages, source tcpip.FullAddress, notify bool, err error)
+	Recv(data [][]byte, numRights uintptr, peek bool) (n uintptr, cm ControlMessages, source tcpip.FullAddress, notify bool, err *tcpip.Error)
 
 	// RecvNotify notifies the Receiver of a successful Recv. This must not be
 	// called while holding any endpoint locks.
@@ -250,10 +250,10 @@ type queueReceiver struct {
 }
 
 // Recv implements Receiver.Recv.
-func (q *queueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, bool, error) {
+func (q *queueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, bool, *tcpip.Error) {
 	var m queue.Entry
 	var notify bool
-	var err error
+	var err *tcpip.Error
 	if peek {
 		m, err = q.readQueue.Peek()
 	} else {
@@ -313,7 +313,7 @@ type streamQueueReceiver struct {
 }
 
 // Recv implements Receiver.Recv.
-func (q *streamQueueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, bool, error) {
+func (q *streamQueueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, bool, *tcpip.Error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -363,12 +363,12 @@ type ConnectedEndpoint interface {
 	Passcred() bool
 
 	// GetLocalAddress implements Endpoint.GetLocalAddress.
-	GetLocalAddress() (tcpip.FullAddress, error)
+	GetLocalAddress() (tcpip.FullAddress, *tcpip.Error)
 
 	// Send sends a single message. This method does not block.
 	//
 	// notify indicates if SendNotify should be called.
-	Send(data [][]byte, controlMessages ControlMessages, from tcpip.FullAddress) (n uintptr, notify bool, err error)
+	Send(data [][]byte, controlMessages ControlMessages, from tcpip.FullAddress) (n uintptr, notify bool, err *tcpip.Error)
 
 	// SendNotify notifies the ConnectedEndpoint of a successful Send. This
 	// must not be called while holding any endpoint locks.
@@ -406,7 +406,7 @@ type connectedEndpoint struct {
 		Passcred() bool
 
 		// GetLocalAddress implements Endpoint.GetLocalAddress.
-		GetLocalAddress() (tcpip.FullAddress, error)
+		GetLocalAddress() (tcpip.FullAddress, *tcpip.Error)
 
 		// Type implements Endpoint.Type.
 		Type() SockType
@@ -421,12 +421,12 @@ func (e *connectedEndpoint) Passcred() bool {
 }
 
 // GetLocalAddress implements ConnectedEndpoint.GetLocalAddress.
-func (e *connectedEndpoint) GetLocalAddress() (tcpip.FullAddress, error) {
+func (e *connectedEndpoint) GetLocalAddress() (tcpip.FullAddress, *tcpip.Error) {
 	return e.endpoint.GetLocalAddress()
 }
 
 // Send implements ConnectedEndpoint.Send.
-func (e *connectedEndpoint) Send(data [][]byte, controlMessages ControlMessages, from tcpip.FullAddress) (uintptr, bool, error) {
+func (e *connectedEndpoint) Send(data [][]byte, controlMessages ControlMessages, from tcpip.FullAddress) (uintptr, bool, *tcpip.Error) {
 	var l int
 	for _, d := range data {
 		l += len(d)
@@ -548,7 +548,7 @@ func (e *baseEndpoint) Connected() bool {
 }
 
 // RecvMsg reads data and a control message from the endpoint.
-func (e *baseEndpoint) RecvMsg(data [][]byte, numRights uintptr, peek bool, addr *tcpip.FullAddress) (uintptr, ControlMessages, error) {
+func (e *baseEndpoint) RecvMsg(data [][]byte, numRights uintptr, peek bool, addr *tcpip.FullAddress) (uintptr, ControlMessages, *tcpip.Error) {
 	e.Lock()
 
 	if e.receiver == nil {
@@ -574,7 +574,7 @@ func (e *baseEndpoint) RecvMsg(data [][]byte, numRights uintptr, peek bool, addr
 
 // SendMsg writes data and a control message to the endpoint's peer.
 // This method does not block if the data cannot be written.
-func (e *baseEndpoint) SendMsg(data [][]byte, c ControlMessages, to BoundEndpoint) (uintptr, error) {
+func (e *baseEndpoint) SendMsg(data [][]byte, c ControlMessages, to BoundEndpoint) (uintptr, *tcpip.Error) {
 	e.Lock()
 	if !e.Connected() {
 		e.Unlock()
@@ -599,7 +599,7 @@ func (e *baseEndpoint) SendMsg(data [][]byte, c ControlMessages, to BoundEndpoin
 }
 
 // SetSockOpt sets a socket option. Currently not supported.
-func (e *baseEndpoint) SetSockOpt(opt interface{}) error {
+func (e *baseEndpoint) SetSockOpt(opt interface{}) *tcpip.Error {
 	switch v := opt.(type) {
 	case tcpip.PasscredOption:
 		e.setPasscred(v != 0)
@@ -609,7 +609,7 @@ func (e *baseEndpoint) SetSockOpt(opt interface{}) error {
 }
 
 // GetSockOpt implements tcpip.Endpoint.GetSockOpt.
-func (e *baseEndpoint) GetSockOpt(opt interface{}) error {
+func (e *baseEndpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 	switch o := opt.(type) {
 	case tcpip.ErrorOption:
 		return nil
@@ -639,7 +639,7 @@ func (e *baseEndpoint) GetSockOpt(opt interface{}) error {
 
 // Shutdown closes the read and/or write end of the endpoint connection to its
 // peer.
-func (e *baseEndpoint) Shutdown(flags tcpip.ShutdownFlags) error {
+func (e *baseEndpoint) Shutdown(flags tcpip.ShutdownFlags) *tcpip.Error {
 	e.Lock()
 	if !e.Connected() {
 		e.Unlock()
@@ -668,7 +668,7 @@ func (e *baseEndpoint) Shutdown(flags tcpip.ShutdownFlags) error {
 }
 
 // GetLocalAddress returns the bound path.
-func (e *baseEndpoint) GetLocalAddress() (tcpip.FullAddress, error) {
+func (e *baseEndpoint) GetLocalAddress() (tcpip.FullAddress, *tcpip.Error) {
 	e.Lock()
 	defer e.Unlock()
 	return tcpip.FullAddress{Addr: tcpip.Address(e.path)}, nil
@@ -676,7 +676,7 @@ func (e *baseEndpoint) GetLocalAddress() (tcpip.FullAddress, error) {
 
 // GetRemoteAddress returns the local address of the connected endpoint (if
 // available).
-func (e *baseEndpoint) GetRemoteAddress() (tcpip.FullAddress, error) {
+func (e *baseEndpoint) GetRemoteAddress() (tcpip.FullAddress, *tcpip.Error) {
 	e.Lock()
 	c := e.connected
 	e.Unlock()

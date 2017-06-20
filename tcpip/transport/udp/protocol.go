@@ -34,7 +34,7 @@ func (*protocol) Number() tcpip.TransportProtocolNumber {
 }
 
 // NewEndpoint creates a new udp endpoint.
-func (*protocol) NewEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waiterQueue *waiter.Queue) (tcpip.Endpoint, error) {
+func (*protocol) NewEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waiterQueue *waiter.Queue) (tcpip.Endpoint, *tcpip.Error) {
 	return newEndpoint(stack, netProto, waiterQueue), nil
 }
 
@@ -45,7 +45,7 @@ func (*protocol) MinimumPacketSize() int {
 
 // ParsePorts returns the source and destination ports stored in the given udp
 // packet.
-func (*protocol) ParsePorts(v buffer.View) (src, dst uint16, err error) {
+func (*protocol) ParsePorts(v buffer.View) (src, dst uint16, err *tcpip.Error) {
 	h := header.UDP(v)
 	return h.SourcePort(), h.DestinationPort(), nil
 }

@@ -146,9 +146,9 @@ func main() {
 
 	// Create TCP endpoint.
 	var wq waiter.Queue
-	ep, err := s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &wq)
+	ep, e := s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &wq)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(e)
 	}
 
 	// Bind if a port is specified.
@@ -161,16 +161,16 @@ func main() {
 	// Issue connect request and wait for it to complete.
 	waitEntry, notifyCh := waiter.NewChannelEntry(nil)
 	wq.EventRegister(&waitEntry, waiter.EventOut)
-	err = ep.Connect(remote)
-	if err == tcpip.ErrConnectStarted {
+	terr := ep.Connect(remote)
+	if terr == tcpip.ErrConnectStarted {
 		fmt.Println("Connect is pending...")
 		<-notifyCh
-		err = ep.GetSockOpt(tcpip.ErrorOption{})
+		terr = ep.GetSockOpt(tcpip.ErrorOption{})
 	}
 	wq.EventUnregister(&waitEntry)
 
-	if err != nil {
-		log.Fatal("Unable to connect: ", err)
+	if terr != nil {
+		log.Fatal("Unable to connect: ", terr)
 	}
 
 	fmt.Println("Connected")

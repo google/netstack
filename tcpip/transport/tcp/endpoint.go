@@ -5,7 +5,6 @@
 package tcp
 
 import (
-	"io"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -63,7 +62,7 @@ type endpoint struct {
 	// lastError represents the last error that the endpoint reported;
 	// access to it is protected by the following mutex.
 	lastErrorMu sync.Mutex
-	lastError   error
+	lastError   *tcpip.Error
 
 	// The following fields are used to manage the receive queue. The
 	// protocol goroutine adds ready-for-delivery segments to rcvList,
@@ -98,7 +97,7 @@ type endpoint struct {
 	// hardError is meaningful only when state is stateError, it stores the
 	// error to be returned when read/write syscalls are called and the
 	// endpoint is in this state.
-	hardError error
+	hardError *tcpip.Error
 
 	// workerRunning specifies if a worker goroutine is running.
 	workerRunning bool
@@ -295,7 +294,7 @@ func (e *endpoint) cleanup() {
 }
 
 // Read reads data from the endpoint.
-func (e *endpoint) Read(*tcpip.FullAddress) (buffer.View, error) {
+func (e *endpoint) Read(*tcpip.FullAddress) (buffer.View, *tcpip.Error) {
 	e.mu.RLock()
 
 	// The endpoint cannot be read from if it's not connected.
@@ -320,7 +319,7 @@ func (e *endpoint) Read(*tcpip.FullAddress) (buffer.View, error) {
 	return v, err
 }
 
-func (e *endpoint) readLocked() (buffer.View, error) {
+func (e *endpoint) readLocked() (buffer.View, *tcpip.Error) {
 	if e.rcvBufUsed == 0 {
 		if e.rcvClosed {
 			return buffer.View{}, tcpip.ErrClosedForReceive
@@ -349,7 +348,7 @@ func (e *endpoint) readLocked() (buffer.View, error) {
 }
 
 // Write writes data to the endpoint's peer.
-func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, error) {
+func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, *tcpip.Error) {
 	if to != nil {
 		return 0, tcpip.ErrAlreadyConnected
 	}
@@ -412,7 +411,7 @@ func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, error) 
 // Peek reads data without consuming it from the endpoint.
 //
 // This method does not block if there is no data pending.
-func (e *endpoint) Peek(w io.Writer) (uintptr, error) {
+func (e *endpoint) Peek(vec [][]byte) (uintptr, *tcpip.Error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -438,18 +437,34 @@ func (e *endpoint) Peek(w io.Writer) (uintptr, error) {
 		return 0, tcpip.ErrWouldBlock
 	}
 
+	// Make a copy of vec so we can modify the slide headers.
+	vec = append([][]byte(nil), vec...)
+
 	var num uintptr
 
 	for s := e.rcvList.Front(); s != nil; s = s.Next() {
 		views := s.data.Views()
+
 		for i := s.viewToDeliver; i < len(views); i++ {
-			n, err := w.Write(views[i])
-			num += uintptr(n)
-			if err != nil {
-				return num, err
+			v := views[i]
+
+			for len(v) > 0 {
+				if len(vec) == 0 {
+					return num, nil
+				}
+				if len(vec[0]) == 0 {
+					vec = vec[1:]
+					continue
+				}
+
+				n := copy(vec[0], v)
+				v = v[n:]
+				vec[0] = vec[0][n:]
+				num += uintptr(n)
 			}
 		}
 	}
+
 	return num, nil
 }
 
@@ -466,7 +481,7 @@ func (e *endpoint) zeroReceiveWindow(scale uint8) bool {
 }
 
 // SetSockOpt sets a socket option.
-func (e *endpoint) SetSockOpt(opt interface{}) error {
+func (e *endpoint) SetSockOpt(opt interface{}) *tcpip.Error {
 	switch v := opt.(type) {
 	case tcpip.NoDelayOption:
 		e.mu.Lock()
@@ -533,7 +548,7 @@ func (e *endpoint) SetSockOpt(opt interface{}) error {
 }
 
 // readyReceiveSize returns the number of bytes ready to be received.
-func (e *endpoint) readyReceiveSize() (int, error) {
+func (e *endpoint) readyReceiveSize() (int, *tcpip.Error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -549,7 +564,7 @@ func (e *endpoint) readyReceiveSize() (int, error) {
 }
 
 // GetSockOpt implements tcpip.Endpoint.GetSockOpt.
-func (e *endpoint) GetSockOpt(opt interface{}) error {
+func (e *endpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 	switch o := opt.(type) {
 	case tcpip.ErrorOption:
 		e.lastErrorMu.Lock()
@@ -621,7 +636,7 @@ func (e *endpoint) GetSockOpt(opt interface{}) error {
 	return tcpip.ErrInvalidEndpointState
 }
 
-func (e *endpoint) checkV4Mapped(addr *tcpip.FullAddress) (tcpip.NetworkProtocolNumber, error) {
+func (e *endpoint) checkV4Mapped(addr *tcpip.FullAddress) (tcpip.NetworkProtocolNumber, *tcpip.Error) {
 	netProto := e.netProto
 	if header.IsV4MappedAddress(addr.Addr) {
 		// Fail if using a v4 mapped address on a v6only endpoint.
@@ -646,7 +661,7 @@ func (e *endpoint) checkV4Mapped(addr *tcpip.FullAddress) (tcpip.NetworkProtocol
 }
 
 // Connect connects the endpoint to its peer.
-func (e *endpoint) Connect(addr tcpip.FullAddress) error {
+func (e *endpoint) Connect(addr tcpip.FullAddress) *tcpip.Error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -708,7 +723,7 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) error {
 	} else {
 		// The endpoint doesn't have a local port yet, so try to get
 		// one.
-		_, err := e.stack.PickEphemeralPort(func(p uint16) (bool, error) {
+		_, err := e.stack.PickEphemeralPort(func(p uint16) (bool, *tcpip.Error) {
 			e.id.LocalPort = p
 			err := e.stack.RegisterTransportEndpoint(nicid, netProtos, ProtocolNumber, e.id, e)
 			switch err {
@@ -746,13 +761,13 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) error {
 }
 
 // ConnectEndpoint is not supported.
-func (*endpoint) ConnectEndpoint(tcpip.Endpoint) error {
+func (*endpoint) ConnectEndpoint(tcpip.Endpoint) *tcpip.Error {
 	return tcpip.ErrInvalidEndpointState
 }
 
 // Shutdown closes the read and/or write end of the endpoint connection to its
 // peer.
-func (e *endpoint) Shutdown(flags tcpip.ShutdownFlags) error {
+func (e *endpoint) Shutdown(flags tcpip.ShutdownFlags) *tcpip.Error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -797,7 +812,7 @@ func (e *endpoint) Shutdown(flags tcpip.ShutdownFlags) error {
 
 // Listen puts the endpoint in "listen" mode, which allows it to accept
 // new connections.
-func (e *endpoint) Listen(backlog int) error {
+func (e *endpoint) Listen(backlog int) *tcpip.Error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -850,7 +865,7 @@ func (e *endpoint) startAcceptedLoop(waiterQueue *waiter.Queue) {
 
 // Accept returns a new endpoint if a peer has established a connection
 // to an endpoint previously set to listen mode.
-func (e *endpoint) Accept() (tcpip.Endpoint, *waiter.Queue, error) {
+func (e *endpoint) Accept() (tcpip.Endpoint, *waiter.Queue, *tcpip.Error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -875,7 +890,7 @@ func (e *endpoint) Accept() (tcpip.Endpoint, *waiter.Queue, error) {
 }
 
 // Bind binds the endpoint to a specific local port and optionally address.
-func (e *endpoint) Bind(addr tcpip.FullAddress, commit func() error) (retErr error) {
+func (e *endpoint) Bind(addr tcpip.FullAddress, commit func() *tcpip.Error) (retErr *tcpip.Error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -951,7 +966,7 @@ func (e *endpoint) Bind(addr tcpip.FullAddress, commit func() error) (retErr err
 }
 
 // GetLocalAddress returns the address to which the endpoint is bound.
-func (e *endpoint) GetLocalAddress() (tcpip.FullAddress, error) {
+func (e *endpoint) GetLocalAddress() (tcpip.FullAddress, *tcpip.Error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -963,7 +978,7 @@ func (e *endpoint) GetLocalAddress() (tcpip.FullAddress, error) {
 }
 
 // GetRemoteAddress returns the address to which the endpoint is connected.
-func (e *endpoint) GetRemoteAddress() (tcpip.FullAddress, error) {
+func (e *endpoint) GetRemoteAddress() (tcpip.FullAddress, *tcpip.Error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 

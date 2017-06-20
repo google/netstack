@@ -137,7 +137,7 @@ func (r *ForwarderRequest) Complete(sendReset bool) {
 
 // CreateEndpoint creates a TCP endpoint for the connection request, performing
 // the 3-way handshake in the process.
-func (r *ForwarderRequest) CreateEndpoint(queue *waiter.Queue) (tcpip.Endpoint, error) {
+func (r *ForwarderRequest) CreateEndpoint(queue *waiter.Queue) (tcpip.Endpoint, *tcpip.Error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

@@ -72,7 +72,7 @@ func newDualTestContext(t *testing.T, mtu uint32) *testContext {
 }
 
 func (c *testContext) createV6Endpoint(v4only bool) {
-	var err error
+	var err *tcpip.Error
 	c.ep, err = c.s.NewEndpoint(tcp.ProtocolNumber, ipv6.ProtocolNumber, &c.wq)
 	if err != nil {
 		c.t.Fatalf("NewEndpoint failed: %v", err)
@@ -666,7 +666,7 @@ func TestV4AcceptOnV4(t *testing.T) {
 	defer c.cleanup()
 
 	// Create TCP endpoint.
-	var err error
+	var err *tcpip.Error
 	c.ep, err = c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &c.wq)
 	if err != nil {
 		c.t.Fatalf("NewEndpoint failed: %v", err)

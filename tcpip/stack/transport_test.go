@@ -5,7 +5,6 @@
 package stack_test
 
 import (
-	"io"
 	"testing"
 
 	"github.com/google/netstack/tcpip"
@@ -47,11 +46,11 @@ func (*fakeTransportEndpoint) Readiness(mask waiter.EventMask) waiter.EventMask 
 	return mask
 }
 
-func (*fakeTransportEndpoint) Read(*tcpip.FullAddress) (buffer.View, error) {
+func (*fakeTransportEndpoint) Read(*tcpip.FullAddress) (buffer.View, *tcpip.Error) {
 	return buffer.View{}, nil
 }
 
-func (f *fakeTransportEndpoint) Write(v buffer.View, _ *tcpip.FullAddress) (uintptr, error) {
+func (f *fakeTransportEndpoint) Write(v buffer.View, _ *tcpip.FullAddress) (uintptr, *tcpip.Error) {
 	if len(f.route.RemoteAddress) == 0 {
 		return 0, tcpip.ErrNoRoute
 	}
@@ -65,17 +64,17 @@ func (f *fakeTransportEndpoint) Write(v buffer.View, _ *tcpip.FullAddress) (uint
 	return uintptr(len(v)), nil
 }
 
-func (f *fakeTransportEndpoint) Peek(io.Writer) (uintptr, error) {
+func (f *fakeTransportEndpoint) Peek([][]byte) (uintptr, *tcpip.Error) {
 	return 0, nil
 }
 
 // SetSockOpt sets a socket option. Currently not supported.
-func (*fakeTransportEndpoint) SetSockOpt(interface{}) error {
+func (*fakeTransportEndpoint) SetSockOpt(interface{}) *tcpip.Error {
 	return tcpip.ErrInvalidEndpointState
 }
 
 // GetSockOpt implements tcpip.Endpoint.GetSockOpt.
-func (*fakeTransportEndpoint) GetSockOpt(opt interface{}) error {
+func (*fakeTransportEndpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 	switch opt.(type) {
 	case tcpip.ErrorOption:
 		return nil
@@ -83,7 +82,7 @@ func (*fakeTransportEndpoint) GetSockOpt(opt interface{}) error {
 	return tcpip.ErrInvalidEndpointState
 }
 
-func (f *fakeTransportEndpoint) Connect(addr tcpip.FullAddress) error {
+func (f *fakeTransportEndpoint) Connect(addr tcpip.FullAddress) *tcpip.Error {
 	f.peerAddr = addr.Addr
 
 	// Find the route.
@@ -105,34 +104,34 @@ func (f *fakeTransportEndpoint) Connect(addr tcpip.FullAddress) error {
 	return nil
 }
 
-func (f *fakeTransportEndpoint) ConnectEndpoint(e tcpip.Endpoint) error {
+func (f *fakeTransportEndpoint) ConnectEndpoint(e tcpip.Endpoint) *tcpip.Error {
 	return nil
 }
 
-func (*fakeTransportEndpoint) Shutdown(tcpip.ShutdownFlags) error {
+func (*fakeTransportEndpoint) Shutdown(tcpip.ShutdownFlags) *tcpip.Error {
 	return nil
 }
 
 func (*fakeTransportEndpoint) Reset() {
 }
 
-func (*fakeTransportEndpoint) Listen(int) error {
+func (*fakeTransportEndpoint) Listen(int) *tcpip.Error {
 	return nil
 }
 
-func (*fakeTransportEndpoint) Accept() (tcpip.Endpoint, *waiter.Queue, error) {
+func (*fakeTransportEndpoint) Accept() (tcpip.Endpoint, *waiter.Queue, *tcpip.Error) {
 	return nil, nil, nil
 }
 
-func (*fakeTransportEndpoint) Bind(_ tcpip.FullAddress, commit func() error) error {
+func (*fakeTransportEndpoint) Bind(_ tcpip.FullAddress, commit func() *tcpip.Error) *tcpip.Error {
 	return commit()
 }
 
-func (*fakeTransportEndpoint) GetLocalAddress() (tcpip.FullAddress, error) {
+func (*fakeTransportEndpoint) GetLocalAddress() (tcpip.FullAddress, *tcpip.Error) {
 	return tcpip.FullAddress{}, nil
 }
 
-func (*fakeTransportEndpoint) GetRemoteAddress() (tcpip.FullAddress, error) {
+func (*fakeTransportEndpoint) GetRemoteAddress() (tcpip.FullAddress, *tcpip.Error) {
 	return tcpip.FullAddress{}, nil
 }
 
@@ -151,7 +150,7 @@ func (*fakeTransportProtocol) Number() tcpip.TransportProtocolNumber {
 	return fakeTransNumber
 }
 
-func (f *fakeTransportProtocol) NewEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, _ *waiter.Queue) (tcpip.Endpoint, error) {
+func (f *fakeTransportProtocol) NewEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, _ *waiter.Queue) (tcpip.Endpoint, *tcpip.Error) {
 	return newFakeTransportEndpoint(stack, f, netProto), nil
 }
 
@@ -159,7 +158,7 @@ func (*fakeTransportProtocol) MinimumPacketSize() int {
 	return fakeTransHeaderLen
 }
 
-func (*fakeTransportProtocol) ParsePorts(buffer.View) (src, dst uint16, err error) {
+func (*fakeTransportProtocol) ParsePorts(buffer.View) (src, dst uint16, err *tcpip.Error) {
 	return 0, 0, nil
 }
 

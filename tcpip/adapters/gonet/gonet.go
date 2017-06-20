@@ -42,7 +42,7 @@ func NewListener(s tcpip.Stack, addr tcpip.FullAddress, network tcpip.NetworkPro
 	var wq waiter.Queue
 	tcpEP, err := s.NewEndpoint(tcp.ProtocolNumber, network, &wq)
 	if err != nil {
-		return nil, err
+		return nil, errors.New(err.String())
 	}
 
 	if err := tcpEP.Bind(addr, nil); err != nil {
@@ -51,7 +51,7 @@ func NewListener(s tcpip.Stack, addr tcpip.FullAddress, network tcpip.NetworkPro
 			Op:   "bind",
 			Net:  "tcp",
 			Addr: fullToTCPAddr(addr),
-			Err:  err,
+			Err:  errors.New(err.String()),
 		}
 	}
 
@@ -61,7 +61,7 @@ func NewListener(s tcpip.Stack, addr tcpip.FullAddress, network tcpip.NetworkPro
 			Op:   "listen",
 			Net:  "tcp",
 			Addr: fullToTCPAddr(addr),
-			Err:  err,
+			Err:  errors.New(err.String()),
 		}
 	}
 
@@ -160,7 +160,7 @@ func (l *Listener) Accept() (net.Conn, error) {
 			Op:   "accept",
 			Net:  "tcp",
 			Addr: l.Addr(),
-			Err:  err,
+			Err:  errors.New(err.String()),
 		}
 	}
 
@@ -184,7 +184,7 @@ func (c *Conn) Read(b []byte) (int, error) {
 	}
 
 	if len(c.read) == 0 {
-		var err error
+		var err *tcpip.Error
 		c.read, err = c.ep.Read(nil)
 
 		if err == tcpip.ErrWouldBlock {
@@ -210,7 +210,7 @@ func (c *Conn) Read(b []byte) (int, error) {
 		}
 
 		if err != nil {
-			return 0, c.newOpError("read", err)
+			return 0, c.newOpError("read", errors.New(err.String()))
 		}
 	}
 
@@ -250,7 +250,7 @@ func (c *Conn) Write(b []byte) (int, error) {
 	// There is no guarantee that all of the condition #1s will occur before
 	// all of the condition #2s or visa-versa.
 	var (
-		err      error
+		err      *tcpip.Error
 		nbytes   int
 		reg      bool
 		notifyCh chan struct{}
@@ -288,7 +288,7 @@ func (c *Conn) Write(b []byte) (int, error) {
 		return nbytes, nil
 	}
 
-	return 0, c.newOpError("write", err)
+	return 0, c.newOpError("write", errors.New(err.String()))
 }
 
 // Close implements net.Conn.Close.

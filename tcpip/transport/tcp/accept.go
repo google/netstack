@@ -183,7 +183,7 @@ func (l *listenContext) isCookieValid(id stack.TransportEndpointID, cookie seqnu
 
 // createConnectedEndpoint creates a new connected endpoint, with the connection
 // parameters given by the arguments.
-func (l *listenContext) createConnectedEndpoint(s *segment, iss seqnum.Value, irs seqnum.Value, mss uint16, sndWndScale int) (*endpoint, error) {
+func (l *listenContext) createConnectedEndpoint(s *segment, iss seqnum.Value, irs seqnum.Value, mss uint16, sndWndScale int) (*endpoint, *tcpip.Error) {
 	// Create a new endpoint.
 	netProto := l.netProto
 	if netProto == 0 {
@@ -218,7 +218,7 @@ func (l *listenContext) createConnectedEndpoint(s *segment, iss seqnum.Value, ir
 
 // createEndpoint creates a new endpoint in connected state and then performs
 // the TCP 3-way handshake.
-func (l *listenContext) createEndpointAndPerformHandshake(s *segment, mss uint16, sndWndScale int) (*endpoint, error) {
+func (l *listenContext) createEndpointAndPerformHandshake(s *segment, mss uint16, sndWndScale int) (*endpoint, *tcpip.Error) {
 	// Create new endpoint.
 	irs := s.sequenceNumber
 	cookie := l.createCookie(s.id, irs, encodeMSS(mss))
@@ -313,7 +313,7 @@ func (e *endpoint) handleListenSegment(ctx *listenContext, s *segment) {
 
 // protocolListenLoop is the main loop of a listening TCP endpoint. It runs in
 // its own goroutine and is responsible for handling connection requests.
-func (e *endpoint) protocolListenLoop(rcvWnd seqnum.Size) error {
+func (e *endpoint) protocolListenLoop(rcvWnd seqnum.Size) *tcpip.Error {
 	defer func() {
 		// Mark endpoint as closed. This will prevent goroutines running
 		// handleSynSegment() from attempting to queue new connections

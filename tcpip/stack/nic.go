@@ -88,7 +88,7 @@ func (n *NIC) findEndpoint(address tcpip.Address) *referencedNetworkEndpoint {
 	return ref
 }
 
-func (n *NIC) addAddressLocked(protocol tcpip.NetworkProtocolNumber, addr tcpip.Address, replace bool) (*referencedNetworkEndpoint, error) {
+func (n *NIC) addAddressLocked(protocol tcpip.NetworkProtocolNumber, addr tcpip.Address, replace bool) (*referencedNetworkEndpoint, *tcpip.Error) {
 	netProto, ok := n.stack.networkProtocols[protocol]
 	if !ok {
 		return nil, tcpip.ErrUnknownProtocol
@@ -126,7 +126,7 @@ func (n *NIC) addAddressLocked(protocol tcpip.NetworkProtocolNumber, addr tcpip.
 
 // AddAddress adds a new address to n, so that it starts accepting packets
 // targeted at the given address (and network protocol).
-func (n *NIC) AddAddress(protocol tcpip.NetworkProtocolNumber, addr tcpip.Address) error {
+func (n *NIC) AddAddress(protocol tcpip.NetworkProtocolNumber, addr tcpip.Address) *tcpip.Error {
 	// Add the endpoint.
 	n.mu.Lock()
 	_, err := n.addAddressLocked(protocol, addr, false)
@@ -185,7 +185,7 @@ func (n *NIC) removeEndpoint(r *referencedNetworkEndpoint) {
 }
 
 // RemoveAddress removes an address from n.
-func (n *NIC) RemoveAddress(addr tcpip.Address) error {
+func (n *NIC) RemoveAddress(addr tcpip.Address) *tcpip.Error {
 	n.mu.Lock()
 	r := n.endpoints[NetworkEndpointID{addr}]
 	if r == nil || !r.holdsInsertRef {
