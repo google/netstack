@@ -49,27 +49,27 @@ var processTestCases = []struct {
 	{
 		comment: "One ID",
 		in: []processInput{
-			processInput{id: 0, first: 0, last: 1, more: true, vv: vv(2, "01")},
-			processInput{id: 0, first: 2, last: 3, more: false, vv: vv(2, "23")},
+			{id: 0, first: 0, last: 1, more: true, vv: vv(2, "01")},
+			{id: 0, first: 2, last: 3, more: false, vv: vv(2, "23")},
 		},
 		out: []processOutput{
-			processOutput{vv: emptyVv(), done: false},
-			processOutput{vv: vv(4, "01", "23"), done: true},
+			{vv: emptyVv(), done: false},
+			{vv: vv(4, "01", "23"), done: true},
 		},
 	},
 	{
 		comment: "Two IDs",
 		in: []processInput{
-			processInput{id: 0, first: 0, last: 1, more: true, vv: vv(2, "01")},
-			processInput{id: 1, first: 0, last: 1, more: true, vv: vv(2, "ab")},
-			processInput{id: 1, first: 2, last: 3, more: false, vv: vv(2, "cd")},
-			processInput{id: 0, first: 2, last: 3, more: false, vv: vv(2, "23")},
+			{id: 0, first: 0, last: 1, more: true, vv: vv(2, "01")},
+			{id: 1, first: 0, last: 1, more: true, vv: vv(2, "ab")},
+			{id: 1, first: 2, last: 3, more: false, vv: vv(2, "cd")},
+			{id: 0, first: 2, last: 3, more: false, vv: vv(2, "23")},
 		},
 		out: []processOutput{
-			processOutput{vv: emptyVv(), done: false},
-			processOutput{vv: emptyVv(), done: false},
-			processOutput{vv: vv(4, "ab", "cd"), done: true},
-			processOutput{vv: vv(4, "01", "23"), done: true},
+			{vv: emptyVv(), done: false},
+			{vv: emptyVv(), done: false},
+			{vv: vv(4, "ab", "cd"), done: true},
+			{vv: vv(4, "01", "23"), done: true},
 		},
 	},
 }

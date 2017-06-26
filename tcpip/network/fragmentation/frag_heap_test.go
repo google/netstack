@@ -20,56 +20,56 @@ var reassambleTestCases = []struct {
 	{
 		comment: "Non-overlapping in-order",
 		in: []fragment{
-			fragment{offset: 0, vv: vv(1, "0")},
-			fragment{offset: 1, vv: vv(1, "1")},
+			{offset: 0, vv: vv(1, "0")},
+			{offset: 1, vv: vv(1, "1")},
 		},
 		want: vv(2, "0", "1"),
 	},
 	{
 		comment: "Non-overlapping out-of-order",
 		in: []fragment{
-			fragment{offset: 1, vv: vv(1, "1")},
-			fragment{offset: 0, vv: vv(1, "0")},
+			{offset: 1, vv: vv(1, "1")},
+			{offset: 0, vv: vv(1, "0")},
 		},
 		want: vv(2, "0", "1"),
 	},
 	{
 		comment: "Duplicated packets",
 		in: []fragment{
-			fragment{offset: 0, vv: vv(1, "0")},
-			fragment{offset: 0, vv: vv(1, "0")},
+			{offset: 0, vv: vv(1, "0")},
+			{offset: 0, vv: vv(1, "0")},
 		},
 		want: vv(1, "0"),
 	},
 	{
 		comment: "Overlapping in-order",
 		in: []fragment{
-			fragment{offset: 0, vv: vv(2, "01")},
-			fragment{offset: 1, vv: vv(2, "12")},
+			{offset: 0, vv: vv(2, "01")},
+			{offset: 1, vv: vv(2, "12")},
 		},
 		want: vv(3, "01", "2"),
 	},
 	{
 		comment: "Overlapping out-of-order",
 		in: []fragment{
-			fragment{offset: 1, vv: vv(2, "12")},
-			fragment{offset: 0, vv: vv(2, "01")},
+			{offset: 1, vv: vv(2, "12")},
+			{offset: 0, vv: vv(2, "01")},
 		},
 		want: vv(3, "01", "2"),
 	},
 	{
 		comment: "Overlapping subset in-order",
 		in: []fragment{
-			fragment{offset: 0, vv: vv(3, "012")},
-			fragment{offset: 1, vv: vv(1, "1")},
+			{offset: 0, vv: vv(3, "012")},
+			{offset: 1, vv: vv(1, "1")},
 		},
 		want: vv(3, "012"),
 	},
 	{
 		comment: "Overlapping subset out-of-order",
 		in: []fragment{
-			fragment{offset: 1, vv: vv(1, "1")},
-			fragment{offset: 0, vv: vv(3, "012")},
+			{offset: 1, vv: vv(1, "1")},
+			{offset: 0, vv: vv(3, "012")},
 		},
 		want: vv(3, "012"),
 	},
