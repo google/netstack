@@ -132,3 +132,16 @@ func TestMemoryLimitsIgnoresDuplicates(t *testing.T) {
 		t.Errorf("Wrong size, duplicates are not handled correctly: got=%d, want=%d.", got, want)
 	}
 }
+
+func TestFragmentationViewsDoNotEscape(t *testing.T) {
+	f := NewFragmentation(1024, DefaultReassembleTimeout)
+	in := vv(2, "0", "1")
+	f.Process(0, 0, 1, true, in)
+	// Modify input view.
+	in.RemoveFirst()
+	got, _ := f.Process(0, 2, 2, false, vv(1, "2"))
+	want := vv(3, "0", "1", "2")
+	if !reflect.DeepEqual(got, *want) {
+		t.Errorf("Process() returned a wrong vv. Got %v. Want %v", got, *want)
+	}
+}

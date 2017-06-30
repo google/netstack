@@ -80,7 +80,8 @@ func (r *reassembler) process(first, last uint16, more bool, vv *buffer.Vectoris
 	}
 	if r.updateHoles(first, last, more) {
 		// We store the incoming packet only if it filled some holes.
-		heap.Push(&r.heap, fragment{offset: first, vv: vv})
+		uu := vv.Clone(nil)
+		heap.Push(&r.heap, fragment{offset: first, vv: &uu})
 		consumed = vv.Size()
 		r.size += consumed
 	}
