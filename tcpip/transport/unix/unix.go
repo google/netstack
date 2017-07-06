@@ -235,9 +235,13 @@ type Receiver interface {
 	// includes when read has been shutdown.
 	Readable() bool
 
-	// QueuedSize returns the total amount of data currently receivable.
-	// QueuedSize should return -1 if the operation isn't supported.
-	QueuedSize() int64
+	// RecvQueuedSize returns the total amount of data currently receivable.
+	// RecvQueuedSize should return -1 if the operation isn't supported.
+	RecvQueuedSize() int64
+
+	// RecvMaxQueueSize returns maximum value for RecvQueuedSize.
+	// RecvMaxQueueSize should return -1 if the operation isn't supported.
+	RecvMaxQueueSize() int64
 
 	// Release releases any resources owned by the Receiver. It should be
 	// called before droping all references to a Receiver.
@@ -294,9 +298,14 @@ func (q *queueReceiver) Readable() bool {
 	return q.readQueue.IsReadable()
 }
 
-// QueuedSize implements Receiver.QueuedSize.
-func (q *queueReceiver) QueuedSize() int64 {
+// RecvQueuedSize implements Receiver.RecvQueuedSize.
+func (q *queueReceiver) RecvQueuedSize() int64 {
 	return q.readQueue.QueuedSize()
+}
+
+// RecvMaxQueueSize implements ConnectedEndpoint.RecvMaxQueueSize.
+func (q *queueReceiver) RecvMaxQueueSize() int64 {
+	return q.readQueue.MaxQueueSize()
 }
 
 // Release implements Receiver.Release.
@@ -391,6 +400,15 @@ type ConnectedEndpoint interface {
 	// have changed.
 	EventUpdate()
 
+	// SendQueuedSize returns the total amount of data currently queued for
+	// sending. SendQueuedSize should return -1 if the operation isn't
+	// supported.
+	SendQueuedSize() int64
+
+	// SendMaxQueueSize returns maximum value for SendQueuedSize.
+	// SendMaxQueueSize should return -1 if the operation isn't supported.
+	SendMaxQueueSize() int64
+
 	// Release releases any resources owned by the ConnectedEndpoint. It should
 	// be called before droping all references to a ConnectedEndpoint.
 	Release()
@@ -472,6 +490,16 @@ func (e *connectedEndpoint) Writable() bool {
 
 // EventUpdate implements ConnectedEndpoint.EventUpdate.
 func (*connectedEndpoint) EventUpdate() {}
+
+// SendQueuedSize implements ConnectedEndpoint.SendQueuedSize.
+func (e *connectedEndpoint) SendQueuedSize() int64 {
+	return e.writeQueue.QueuedSize()
+}
+
+// SendMaxQueueSize implements ConnectedEndpoint.SendMaxQueueSize.
+func (e *connectedEndpoint) SendMaxQueueSize() int64 {
+	return e.writeQueue.MaxQueueSize()
+}
 
 // Release implements ConnectedEndpoint.Release.
 func (*connectedEndpoint) Release() {}
@@ -613,13 +641,26 @@ func (e *baseEndpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 	switch o := opt.(type) {
 	case tcpip.ErrorOption:
 		return nil
+	case *tcpip.SendQueueSizeOption:
+		e.Lock()
+		if !e.Connected() {
+			e.Unlock()
+			return tcpip.ErrNotConnected
+		}
+		qs := tcpip.SendQueueSizeOption(e.connected.SendQueuedSize())
+		e.Unlock()
+		if qs < 0 {
+			return tcpip.ErrQueueSizeNotSupported
+		}
+		*o = qs
+		return nil
 	case *tcpip.ReceiveQueueSizeOption:
 		e.Lock()
 		if !e.Connected() {
 			e.Unlock()
 			return tcpip.ErrNotConnected
 		}
-		qs := tcpip.ReceiveQueueSizeOption(e.receiver.QueuedSize())
+		qs := tcpip.ReceiveQueueSizeOption(e.receiver.RecvQueuedSize())
 		e.Unlock()
 		if qs < 0 {
 			return tcpip.ErrQueueSizeNotSupported
@@ -632,6 +673,32 @@ func (e *baseEndpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 		} else {
 			*o = tcpip.PasscredOption(0)
 		}
+		return nil
+	case *tcpip.SendBufferSizeOption:
+		e.Lock()
+		if !e.Connected() {
+			e.Unlock()
+			return tcpip.ErrNotConnected
+		}
+		qs := tcpip.SendBufferSizeOption(e.connected.SendMaxQueueSize())
+		e.Unlock()
+		if qs < 0 {
+			return tcpip.ErrQueueSizeNotSupported
+		}
+		*o = qs
+		return nil
+	case *tcpip.ReceiveBufferSizeOption:
+		e.Lock()
+		if e.receiver == nil {
+			e.Unlock()
+			return tcpip.ErrNotConnected
+		}
+		qs := tcpip.ReceiveBufferSizeOption(e.receiver.RecvMaxQueueSize())
+		e.Unlock()
+		if qs < 0 {
+			return tcpip.ErrQueueSizeNotSupported
+		}
+		*o = qs
 		return nil
 	}
 	return tcpip.ErrInvalidEndpointState

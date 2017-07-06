@@ -159,3 +159,8 @@ func (q *Queue) Peek() (Entry, *tcpip.Error) {
 func (q *Queue) QueuedSize() int64 {
 	return q.used
 }
+
+// MaxQueueSize returns the maximum number of bytes storable in the queue.
+func (q *Queue) MaxQueueSize() int64 {
+	return q.limit
+}

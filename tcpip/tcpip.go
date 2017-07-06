@@ -266,6 +266,10 @@ type SendBufferSizeOption int
 // receive buffer size option.
 type ReceiveBufferSizeOption int
 
+// SendQueueSizeOption is used in GetSockOpt to specify that the number of
+// unread bytes in the output buffer should be returned.
+type SendQueueSizeOption int
+
 // ReceiveQueueSizeOption is used in GetSockOpt to specify that the number of
 // unread bytes in the input buffer should be returned.
 type ReceiveQueueSizeOption int
