@@ -88,14 +88,8 @@ type Waitable interface {
 	EventUnregister(e *Entry)
 }
 
-// Entry represents a waiter that can be add to the a wait queue. It can
-// only be in one queue at a time, and is added "intrusively" to the queue with
-// no extra memory allocations.
-type Entry struct {
-	// Context stores any state the waiter may wish to store in the entry
-	// itself, which may be used at wake up time.
-	Context interface{}
-
+// EntryCallback provides a notify callback.
+type EntryCallback interface {
 	// Callback is the function to be called when the waiter entry is
 	// notified. It is responsible for doing whatever is needed to wake up
 	// the waiter.
@@ -103,11 +97,36 @@ type Entry struct {
 	// The callback is supposed to perform minimal work, and cannot call
 	// any method on the queue itself because it will be locked while the
 	// callback is running.
-	Callback func(e *Entry)
+	Callback(e *Entry)
+}
+
+// Entry represents a waiter that can be add to the a wait queue. It can
+// only be in one queue at a time, and is added "intrusively" to the queue with
+// no extra memory allocations.
+type Entry struct {
+	// Context stores any state the waiter may wish to store in the entry
+	// itself, which may be used at wake up time.
+	//
+	// Note that use of this field is optional and state may alternatively be
+	// stored in the callback itself.
+	Context interface{}
+
+	Callback EntryCallback
 
 	// The following fields are protected by the queue lock.
 	mask EventMask
 	ilist.Entry
+}
+
+type channelCallback struct{}
+
+// Callback implements EntryCallback.Callback.
+func (*channelCallback) Callback(e *Entry) {
+	ch := e.Context.(chan struct{})
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
 }
 
 // NewChannelEntry initializes a new Entry that does a non-blocking write to a
@@ -122,16 +141,7 @@ func NewChannelEntry(c chan struct{}) (Entry, chan struct{}) {
 		c = make(chan struct{}, 1)
 	}
 
-	return Entry{
-		Context: c,
-		Callback: func(e *Entry) {
-			ch := e.Context.(chan struct{})
-			select {
-			case ch <- struct{}{}:
-			default:
-			}
-		},
-	}, c
+	return Entry{Context: c, Callback: &channelCallback{}}, c
 }
 
 // Queue represents the wait queue where waiters can be added and
@@ -166,7 +176,7 @@ func (q *Queue) Notify(mask EventMask) {
 	for it := q.list.Front(); it != nil; it = it.Next() {
 		e := it.(*Entry)
 		if (mask & e.mask) != 0 {
-			e.Callback(e)
+			e.Callback.Callback(e)
 		}
 	}
 	q.mu.RUnlock()
