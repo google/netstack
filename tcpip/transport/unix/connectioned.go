@@ -376,9 +376,6 @@ func (e *connectionedEndpoint) Accept() (Endpoint, *tcpip.Error) {
 func (e *connectionedEndpoint) Bind(addr tcpip.FullAddress, commit func() *tcpip.Error) *tcpip.Error {
 	e.Lock()
 	defer e.Unlock()
-	if e.Connected() {
-		return tcpip.ErrAlreadyConnected
-	}
 	if e.isBound() || e.Listening() {
 		return tcpip.ErrAlreadyBound
 	}

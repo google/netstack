@@ -321,6 +321,20 @@ type streamQueueReceiver struct {
 	addr    tcpip.FullAddress
 }
 
+func vecCopy(data [][]byte, buf []byte) (uintptr, [][]byte, []byte) {
+	var copied uintptr
+	for len(data) > 0 && len(buf) > 0 {
+		n := copy(data[0], buf)
+		copied += uintptr(n)
+		buf = buf[n:]
+		data[0] = data[0][n:]
+		if len(data[0]) == 0 {
+			data = data[1:]
+		}
+	}
+	return copied, data, buf
+}
+
 // Recv implements Receiver.Recv.
 func (q *streamQueueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, bool, *tcpip.Error) {
 	q.mu.Lock()
@@ -342,26 +356,57 @@ func (q *streamQueueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) 
 		q.control = msg.Control
 		q.addr = msg.Address
 	}
-	buf := q.buffer
+
 	var copied uintptr
-	for _, d := range data {
-		if len(buf) == 0 {
+	if peek {
+		var c ControlMessages
+		if q.control != nil {
+			// Don't consume control message if we are peeking.
+			c = q.control.Clone()
+		}
+
+		// Don't consume data since we are peeking.
+		copied, data, _ = vecCopy(data, q.buffer)
+
+		return copied, c, q.addr, notify, nil
+	}
+
+	// Consume data and control message since we are not peeking.
+	copied, data, q.buffer = vecCopy(data, q.buffer)
+	c := q.control
+	if c != nil {
+		q.control = c.CloneCreds()
+	}
+
+	if c != nil {
+		// FIXME: We don't support coalescing messages
+		// containing control messages.
+		return copied, c, q.addr, notify, nil
+	}
+
+	for len(data) > 0 {
+		m, n, err := q.readQueue.Dequeue()
+		if err != nil {
+			// We already got some data, so ignore this error. This will
+			// manifest as a short read to the user, which is what Linux
+			// does.
 			break
 		}
-		n := copy(d, buf)
-		copied += uintptr(n)
-		buf = buf[n:]
-	}
-	c := q.control
-	if !peek {
-		// Consume data and control message if we are not peeking.
-		if c != nil {
-			q.control = c.CloneCreds()
+		notify = notify || n
+		msg := m.(*message)
+		q.buffer = []byte(msg.Data)
+		q.control = msg.Control
+		q.addr = msg.Address
+
+		if q.control != nil {
+			// FIXME: We don't support coalescing messages
+			// containing control messages.
+			break
 		}
-		q.buffer = buf
-	} else if q.control != nil {
-		// Don't consume control message if we are peeking.
-		c = c.Clone()
+
+		var cpd uintptr
+		cpd, data, q.buffer = vecCopy(data, q.buffer)
+		copied += cpd
 	}
 	return copied, c, q.addr, notify, nil
 }
