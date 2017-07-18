@@ -12,6 +12,7 @@ package sniffer
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
@@ -19,6 +20,10 @@ import (
 	"github.com/google/netstack/tcpip/stack"
 	"log"
 )
+
+// LogPackets is a flag used to enable or disable packet valid values
+// are 0 or 1.
+var LogPackets uint32 = 1
 
 type endpoint struct {
 	dispatcher stack.NetworkDispatcher
@@ -37,7 +42,9 @@ func New(lower tcpip.LinkEndpointID) tcpip.LinkEndpointID {
 // called by the link-layer endpoint being wrapped when a packet arrives, and
 // logs the packet before forwarding to the actual dispatcher.
 func (e *endpoint) DeliverNetworkPacket(linkEP stack.LinkEndpoint, remoteLinkAddr tcpip.LinkAddress, protocol tcpip.NetworkProtocolNumber, vv *buffer.VectorisedView) {
-	LogPacket("recv", protocol, vv.First(), nil)
+	if atomic.LoadUint32(&LogPackets) == 1 {
+		LogPacket("recv", protocol, vv.First(), nil)
+	}
 	e.dispatcher.DeliverNetworkPacket(e, remoteLinkAddr, protocol, vv)
 }
 
@@ -69,7 +76,9 @@ func (e *endpoint) LinkAddress() tcpip.LinkAddress {
 // higher-level protocols to write packets; it just logs the packet and forwards
 // the request to the lower endpoint.
 func (e *endpoint) WritePacket(r *stack.Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.NetworkProtocolNumber) *tcpip.Error {
-	LogPacket("send", protocol, hdr.UsedBytes(), payload)
+	if atomic.LoadUint32(&LogPackets) == 1 {
+		LogPacket("send", protocol, hdr.UsedBytes(), payload)
+	}
 	return e.lower.WritePacket(r, hdr, payload, protocol)
 }
 
