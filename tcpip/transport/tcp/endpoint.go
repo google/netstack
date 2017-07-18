@@ -348,9 +348,8 @@ func (e *endpoint) readLocked() (buffer.View, *tcpip.Error) {
 
 // Write writes data to the endpoint's peer.
 func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, *tcpip.Error) {
-	if to != nil {
-		return 0, tcpip.ErrAlreadyConnected
-	}
+	// Linux completely ignores any address passed to sendto(2) for TCP sockets
+	// (without the MSG_FASTOPEN flag).
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -361,7 +360,7 @@ func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, *tcpip.
 		case stateError:
 			return 0, e.hardError
 		default:
-			return 0, tcpip.ErrInvalidEndpointState
+			return 0, tcpip.ErrClosedForSend
 		}
 	}
 
