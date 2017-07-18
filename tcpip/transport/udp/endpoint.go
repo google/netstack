@@ -79,7 +79,6 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 		stack:         stack,
 		netProto:      netProto,
 		waiterQueue:   waiterQueue,
-		v6only:        true,
 		rcvBufSizeMax: 32 * 1024,
 		sndBufSize:    32 * 1024,
 	}
