@@ -302,7 +302,7 @@ func (e *endpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 	case *tcpip.V6OnlyOption:
 		// We only recognize this option on v6 endpoints.
 		if e.netProto != header.IPv6ProtocolNumber {
-			return tcpip.ErrInvalidEndpointState
+			return tcpip.ErrUnknownProtocolOption
 		}
 
 		e.mu.Lock()
@@ -327,7 +327,7 @@ func (e *endpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 		return nil
 	}
 
-	return tcpip.ErrInvalidEndpointState
+	return tcpip.ErrUnknownProtocolOption
 }
 
 // sendUDP sends a UDP segment via the provided network endpoint and under the

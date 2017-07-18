@@ -617,7 +617,7 @@ func (e *endpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 	case *tcpip.V6OnlyOption:
 		// We only recognize this option on v6 endpoints.
 		if e.netProto != header.IPv6ProtocolNumber {
-			return tcpip.ErrInvalidEndpointState
+			return tcpip.ErrUnknownProtocolOption
 		}
 
 		e.mu.Lock()
@@ -631,7 +631,7 @@ func (e *endpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 		return nil
 	}
 
-	return tcpip.ErrInvalidEndpointState
+	return tcpip.ErrUnknownProtocolOption
 }
 
 func (e *endpoint) checkV4Mapped(addr *tcpip.FullAddress) (tcpip.NetworkProtocolNumber, *tcpip.Error) {

@@ -41,6 +41,7 @@ func (e *Error) String() string {
 var (
 	ErrUnknownProtocol       = &Error{"unknown protocol"}
 	ErrUnknownNICID          = &Error{"unknown nic id"}
+	ErrUnknownProtocolOption = &Error{"unknown option for protocol"}
 	ErrDuplicateNICID        = &Error{"duplicate nic id"}
 	ErrDuplicateAddress      = &Error{"duplicate address"}
 	ErrNoRoute               = &Error{"no route"}

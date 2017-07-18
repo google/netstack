@@ -746,7 +746,7 @@ func (e *baseEndpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 		*o = qs
 		return nil
 	}
-	return tcpip.ErrInvalidEndpointState
+	return tcpip.ErrUnknownProtocolOption
 }
 
 // Shutdown closes the read and/or write end of the endpoint connection to its
