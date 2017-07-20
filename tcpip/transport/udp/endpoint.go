@@ -519,7 +519,7 @@ func (e *endpoint) registerWithStack(nicid tcpip.NICID, netProtos []tcpip.Networ
 		switch err {
 		case nil:
 			return true, nil
-		case tcpip.ErrDuplicateAddress:
+		case tcpip.ErrPortInUse:
 			return false, nil
 		default:
 			return false, err

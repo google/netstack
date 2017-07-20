@@ -116,7 +116,7 @@ func (p *Pinger) Ping(ctx context.Context, ch chan<- PingReply) *tcpip.Error {
 		switch err {
 		case nil:
 			return true, nil
-		case tcpip.ErrDuplicateAddress:
+		case tcpip.ErrPortInUse:
 			return false, nil
 		default:
 			return false, err

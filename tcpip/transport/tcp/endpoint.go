@@ -727,7 +727,7 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) *tcpip.Error {
 			switch err {
 			case nil:
 				return true, nil
-			case tcpip.ErrDuplicateAddress:
+			case tcpip.ErrPortInUse:
 				return false, nil
 			default:
 				return false, err

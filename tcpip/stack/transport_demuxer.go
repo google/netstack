@@ -67,7 +67,7 @@ func (d *transportDemuxer) singleRegisterEndpoint(netProto tcpip.NetworkProtocol
 	defer eps.mu.Unlock()
 
 	if _, ok := eps.endpoints[id]; ok {
-		return tcpip.ErrDuplicateAddress
+		return tcpip.ErrPortInUse
 	}
 
 	eps.endpoints[id] = ep
