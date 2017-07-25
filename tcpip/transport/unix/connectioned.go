@@ -20,7 +20,7 @@ type UniqueIDProvider interface {
 }
 
 // A ConnectingEndpoint is a connectioned unix endpoint that is attempting to
-// connect to a ConnectionedEndpoint.
+// establish a bidirectional connection with a BoundEndpoint.
 type ConnectingEndpoint interface {
 	// ID returns the endpoint's globally unique identifier. This identifier
 	// must be used to determine locking order if more than one endpoint is
