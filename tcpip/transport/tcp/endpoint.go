@@ -296,17 +296,14 @@ func (e *endpoint) cleanup() {
 func (e *endpoint) Read(*tcpip.FullAddress) (buffer.View, *tcpip.Error) {
 	e.mu.RLock()
 
-	// The endpoint cannot be read from if it's not connected.
-	if s := e.state; s != stateConnected {
+	// The endpoint can be read if it's connected, or if it's already closed
+	// but has some pending unread data.
+	if s := e.state; s != stateConnected && s != stateClosed {
 		e.mu.RUnlock()
-		switch s {
-		case stateClosed:
-			return buffer.View{}, tcpip.ErrClosedForReceive
-		case stateError:
+		if s == stateError {
 			return buffer.View{}, e.hardError
-		default:
-			return buffer.View{}, tcpip.ErrInvalidEndpointState
 		}
+		return buffer.View{}, tcpip.ErrInvalidEndpointState
 	}
 
 	e.rcvListMu.Lock()
@@ -320,7 +317,7 @@ func (e *endpoint) Read(*tcpip.FullAddress) (buffer.View, *tcpip.Error) {
 
 func (e *endpoint) readLocked() (buffer.View, *tcpip.Error) {
 	if e.rcvBufUsed == 0 {
-		if e.rcvClosed {
+		if e.rcvClosed || e.state != stateConnected {
 			return buffer.View{}, tcpip.ErrClosedForReceive
 		}
 		return buffer.View{}, tcpip.ErrWouldBlock
@@ -413,23 +410,20 @@ func (e *endpoint) Peek(vec [][]byte) (uintptr, *tcpip.Error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	// The endpoint cannot be read from if it's not connected.
-	if e.state != stateConnected {
-		switch e.state {
-		case stateClosed:
-			return 0, tcpip.ErrClosedForReceive
-		case stateError:
+	// The endpoint can be read if it's connected, or if it's already closed
+	// but has some pending unread data.
+	if s := e.state; s != stateConnected && s != stateClosed {
+		if s == stateError {
 			return 0, e.hardError
-		default:
-			return 0, tcpip.ErrInvalidEndpointState
 		}
+		return 0, tcpip.ErrInvalidEndpointState
 	}
 
 	e.rcvListMu.Lock()
 	defer e.rcvListMu.Unlock()
 
 	if e.rcvBufUsed == 0 {
-		if e.rcvClosed {
+		if e.rcvClosed || e.state != stateConnected {
 			return 0, tcpip.ErrClosedForReceive
 		}
 		return 0, tcpip.ErrWouldBlock

@@ -2383,3 +2383,100 @@ func TestReceivedSegmentQueuing(t *testing.T) {
 		}
 	}
 }
+
+func TestReadAfterClosedState(t *testing.T) {
+	// This test ensures that calling Read() or Peek() after the endpoint
+	// has transitioned to closedState still works if there is pending
+	// data. To transition to stateClosed without calling Close(), we must
+	// shutdown the send path and the peer must send its own FIN.
+	c := newTestContext(t, defaultMTU)
+	defer c.cleanup()
+
+	c.createConnected(789, 30000, nil)
+
+	we, ch := waiter.NewChannelEntry(nil)
+	c.wq.EventRegister(&we, waiter.EventIn)
+	defer c.wq.EventUnregister(&we)
+
+	if _, err := c.ep.Read(nil); err != tcpip.ErrWouldBlock {
+		t.Fatalf("Unexpected error from Read: %v", err)
+	}
+
+	// Shutdown immediately for write, check that we get a FIN.
+	if err := c.ep.Shutdown(tcpip.ShutdownWrite); err != nil {
+		t.Fatalf("Unexpected error from Shutdown: %v", err)
+	}
+
+	checker.IPv4(c.t, c.getPacket(),
+		checker.PayloadLen(header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(uint32(c.irs)+1),
+			checker.AckNum(790),
+			checker.TCPFlags(header.TCPFlagAck|header.TCPFlagFin),
+		),
+	)
+
+	// Send some data and acknowledge the FIN.
+	data := []byte{1, 2, 3}
+	c.sendPacket(data, &headers{
+		srcPort: testPort,
+		dstPort: c.port,
+		flags:   header.TCPFlagAck | header.TCPFlagFin,
+		seqNum:  790,
+		ackNum:  c.irs.Add(2),
+		rcvWnd:  30000,
+	})
+
+	// Check that ACK is received.
+	checker.IPv4(c.t, c.getPacket(),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(uint32(c.irs)+2),
+			checker.AckNum(uint32(791+len(data))),
+			checker.TCPFlags(header.TCPFlagAck),
+		),
+	)
+
+	// Give the stack the chance to transition to closed state.
+	time.Sleep(1 * time.Second)
+
+	// Wait for receive to be notified.
+	select {
+	case <-ch:
+	case <-time.After(1 * time.Second):
+		t.Fatalf("Timed out waiting for data to arrive")
+	}
+
+	// Check that peek works.
+	peekBuf := make([]byte, 10)
+	n, err := c.ep.Peek([][]byte{peekBuf})
+	if err != nil {
+		t.Fatalf("Unexpected error from Peek: %v", err)
+	}
+
+	peekBuf = peekBuf[:n]
+	if bytes.Compare(data, peekBuf) != 0 {
+		t.Fatalf("Data is different: expected %v, got %v", data, peekBuf)
+	}
+
+	// Receive data.
+	v, err := c.ep.Read(nil)
+	if err != nil {
+		t.Fatalf("Unexpected error from Read: %v", err)
+	}
+
+	if bytes.Compare(data, v) != 0 {
+		t.Fatalf("Data is different: expected %v, got %v", data, v)
+	}
+
+	// Now that we drained the queue, check that functions fail with the
+	// right error code.
+	if _, err := c.ep.Read(nil); err != tcpip.ErrClosedForReceive {
+		t.Fatalf("Unexpected return from Read: got %v, want %v", err, tcpip.ErrClosedForReceive)
+	}
+
+	if _, err := c.ep.Peek([][]byte{peekBuf}); err != tcpip.ErrClosedForReceive {
+		t.Fatalf("Unexpected return from Peek: got %v, want %v", err, tcpip.ErrClosedForReceive)
+	}
+}
