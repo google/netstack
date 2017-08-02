@@ -1774,6 +1774,89 @@ func TestFinWithNoPendingData(t *testing.T) {
 	)
 }
 
+func TestFinWithPendingDataCwndFull(t *testing.T) {
+	c := newTestContext(t, defaultMTU)
+	defer c.cleanup()
+
+	c.createConnected(789, 30000, nil)
+
+	// Write something out but don't ACK it yet.
+	view := buffer.NewView(10)
+	if _, err := c.ep.Write(view, nil); err != nil {
+		t.Fatalf("Unexpected error from Write: %v", err)
+	}
+
+	next := uint32(c.irs) + 1
+	checker.IPv4(c.t, c.getPacket(),
+		checker.PayloadLen(len(view)+header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(next),
+			checker.AckNum(790),
+			checker.TCPFlagsMatch(header.TCPFlagAck, ^uint8(header.TCPFlagPsh)),
+		),
+	)
+	next += uint32(len(view))
+
+	// Shutdown the connection, check that the FIN segment isn't sent
+	// because the congestion window doesn't allow it. Wait until a
+	// retransmit is received.
+	if err := c.ep.Shutdown(tcpip.ShutdownWrite); err != nil {
+		t.Fatalf("Unexpected error from Shutdown: %v", err)
+	}
+
+	checker.IPv4(c.t, c.getPacket(),
+		checker.PayloadLen(len(view)+header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(next-uint32(len(view))),
+			checker.AckNum(790),
+			checker.TCPFlagsMatch(header.TCPFlagAck, ^uint8(header.TCPFlagPsh)),
+		),
+	)
+
+	// Send the ACK that will allow the FIN to be sent as well.
+	c.sendPacket(nil, &headers{
+		srcPort: testPort,
+		dstPort: c.port,
+		flags:   header.TCPFlagAck,
+		seqNum:  790,
+		ackNum:  seqnum.Value(next),
+		rcvWnd:  30000,
+	})
+
+	checker.IPv4(c.t, c.getPacket(),
+		checker.PayloadLen(header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(next),
+			checker.AckNum(790),
+			checker.TCPFlags(header.TCPFlagAck|header.TCPFlagFin),
+		),
+	)
+	next++
+
+	// Send a FIN that acknowledges everything. Get an ACK back.
+	c.sendPacket(nil, &headers{
+		srcPort: testPort,
+		dstPort: c.port,
+		flags:   header.TCPFlagAck | header.TCPFlagFin,
+		seqNum:  790,
+		ackNum:  seqnum.Value(next),
+		rcvWnd:  30000,
+	})
+
+	checker.IPv4(c.t, c.getPacket(),
+		checker.PayloadLen(header.TCPMinimumSize),
+		checker.TCP(
+			checker.DstPort(testPort),
+			checker.SeqNum(next),
+			checker.AckNum(791),
+			checker.TCPFlags(header.TCPFlagAck),
+		),
+	)
+}
+
 func TestFinWithPendingData(t *testing.T) {
 	c := newTestContext(t, defaultMTU)
 	defer c.cleanup()

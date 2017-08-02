@@ -480,9 +480,12 @@ func (s *sender) handleRcvdSegment(seg *segment) {
 
 		ackLeft := acked
 		originalOutsanding := s.outstanding
-		for s.writeList.Front() != nil {
+		for ackLeft > 0 {
+			// We use logicalLen here because we can have FIN
+			// segments (which are always at the end of list) that
+			// have no data, but do consume a sequence number.
 			seg := s.writeList.Front()
-			datalen := seqnum.Size(seg.data.Size())
+			datalen := seg.logicalLen()
 
 			if datalen > ackLeft {
 				seg.data.TrimFront(int(ackLeft))
