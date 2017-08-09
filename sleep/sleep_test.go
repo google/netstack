@@ -1,6 +1,7 @@
 package sleep
 
 import (
+	"math/rand"
 	"runtime"
 	"testing"
 	"time"
@@ -252,6 +253,72 @@ func TestMultiple(t *testing.T) {
 
 	if v != want {
 		t.Fatalf("Unexpected waker id, got %v, want %v", v, want)
+	}
+}
+
+// TestDoneFunction tests if calling Done() on a sleeper works properly.
+func TestDoneFunction(t *testing.T) {
+	// Trivial case of no waker.
+	s := Sleeper{}
+	s.Done()
+
+	// Cases when the sleeper has n wakers, but none are asserted.
+	for n := 1; n < 20; n++ {
+		s := Sleeper{}
+		w := make([]Waker, n)
+		for j := 0; j < n; j++ {
+			s.AddWaker(&w[j], j)
+		}
+		s.Done()
+	}
+
+	// Cases when the sleeper has n wakers, and only the i-th one is
+	// asserted.
+	for n := 1; n < 20; n++ {
+		for i := 0; i < n; i++ {
+			s := Sleeper{}
+			w := make([]Waker, n)
+			for j := 0; j < n; j++ {
+				s.AddWaker(&w[j], j)
+			}
+			w[i].Assert()
+			s.Done()
+		}
+	}
+
+	// Cases when the sleeper has n wakers, and the i-th one is asserted
+	// and cleared.
+	for n := 1; n < 20; n++ {
+		for i := 0; i < n; i++ {
+			s := Sleeper{}
+			w := make([]Waker, n)
+			for j := 0; j < n; j++ {
+				s.AddWaker(&w[j], j)
+			}
+			w[i].Assert()
+			w[i].Clear()
+			s.Done()
+		}
+	}
+
+	// Cases when the sleeper has n wakers, with a random number of them
+	// asserted.
+	for n := 1; n < 20; n++ {
+		for iters := 0; iters < 1000; iters++ {
+			s := Sleeper{}
+			w := make([]Waker, n)
+			for j := 0; j < n; j++ {
+				s.AddWaker(&w[j], j)
+			}
+
+			// Pick the number of asserted elements, then assert
+			// random wakers.
+			asserted := rand.Int() % (n + 1)
+			for j := 0; j < asserted; j++ {
+				w[rand.Int()%n].Assert()
+			}
+			s.Done()
+		}
 	}
 }
 
