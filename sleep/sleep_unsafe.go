@@ -74,6 +74,12 @@ var (
 	assertedSleeper Sleeper
 )
 
+//go:linkname gopark runtime.gopark
+func gopark(unlockf func(uintptr, *uintptr) bool, wg *uintptr, reason string, traceEv byte, traceskip int)
+
+//go:linkname goready runtime.goready
+func goready(g uintptr, traceskip int)
+
 // Sleeper allows a goroutine to sleep and receive wake up notifications from
 // Wakers in an efficient way.
 //
@@ -377,9 +383,3 @@ func usleeper(s *Sleeper) unsafe.Pointer {
 func uwaker(w *Waker) unsafe.Pointer {
 	return unsafe.Pointer(w)
 }
-
-//go:linkname gopark runtime.gopark
-func gopark(unlockf func(uintptr, *uintptr) bool, wg *uintptr, reason string, traceEv byte, traceskip int)
-
-//go:linkname goready runtime.goready
-func goready(g uintptr, traceskip int)
