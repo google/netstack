@@ -257,6 +257,21 @@ func (e *endpoint) Close() {
 	if worker {
 		e.workerCleanup = true
 	}
+
+	// We always release ports inline so that they are immediately available
+	// for reuse after Close() is called. If also registered, it means this
+	// is a listening socket, so we must unregister as well otherwise the
+	// next user would fail in Listen() when trying to register.
+	if e.isPortReserved {
+		e.stack.ReleasePort(e.effectiveNetProtos, ProtocolNumber, e.id.LocalAddress, e.id.LocalPort)
+		e.isPortReserved = false
+
+		if e.isRegistered {
+			e.stack.UnregisterTransportEndpoint(e.boundNICID, e.effectiveNetProtos, ProtocolNumber, e.id)
+			e.isRegistered = false
+		}
+	}
+
 	e.mu.Unlock()
 
 	// Now that we don't hold the lock anymore, either perform the local
@@ -279,10 +294,6 @@ func (e *endpoint) cleanup() {
 			n.resetConnection(tcpip.ErrConnectionAborted)
 			n.Close()
 		}
-	}
-
-	if e.isPortReserved {
-		e.stack.ReleasePort(e.effectiveNetProtos, ProtocolNumber, e.id.LocalAddress, e.id.LocalPort)
 	}
 
 	if e.isRegistered {
@@ -701,6 +712,8 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) *tcpip.Error {
 	}
 	defer r.Release()
 
+	origID := e.id
+
 	netProtos := []tcpip.NetworkProtocolNumber{netProto}
 	e.id.LocalAddress = r.LocalAddress
 	e.id.RemoteAddress = addr.Addr
@@ -736,7 +749,7 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) *tcpip.Error {
 	// before Connect: in such a case we don't want to hold on to
 	// reservations anymore.
 	if e.isPortReserved {
-		e.stack.ReleasePort(e.effectiveNetProtos, ProtocolNumber, e.id.LocalAddress, e.id.LocalPort)
+		e.stack.ReleasePort(e.effectiveNetProtos, ProtocolNumber, origID.LocalAddress, origID.LocalPort)
 		e.isPortReserved = false
 	}
 

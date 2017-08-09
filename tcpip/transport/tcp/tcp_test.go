@@ -2563,3 +2563,79 @@ func TestReadAfterClosedState(t *testing.T) {
 		t.Fatalf("Unexpected return from Peek: got %v, want %v", err, tcpip.ErrClosedForReceive)
 	}
 }
+
+func TestReusePort(t *testing.T) {
+	// This test ensures that ports are immediately available for reuse
+	// after Close on the endpoints using them returns.
+	c := newTestContext(t, defaultMTU)
+	defer c.cleanup()
+
+	// First case, just an endpoint that was bound.
+	var err *tcpip.Error
+	c.ep, err = c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &waiter.Queue{})
+	if err != nil {
+		c.t.Fatalf("NewEndpoint failed; %v", err)
+	}
+	if err := c.ep.Bind(tcpip.FullAddress{Port: stackPort}, nil); err != nil {
+		c.t.Fatalf("Bind failed: %v", err)
+	}
+
+	c.ep.Close()
+	c.ep, err = c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &waiter.Queue{})
+	if err != nil {
+		c.t.Fatalf("NewEndpoint failed; %v", err)
+	}
+	if err := c.ep.Bind(tcpip.FullAddress{Port: stackPort}, nil); err != nil {
+		c.t.Fatalf("Bind failed: %v", err)
+	}
+	c.ep.Close()
+
+	// Second case, an endpoint that was bound and is connecting..
+	c.ep, err = c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &waiter.Queue{})
+	if err != nil {
+		c.t.Fatalf("NewEndpoint failed; %v", err)
+	}
+	if err := c.ep.Bind(tcpip.FullAddress{Port: stackPort}, nil); err != nil {
+		c.t.Fatalf("Bind failed: %v", err)
+	}
+	err = c.ep.Connect(tcpip.FullAddress{Addr: testAddr, Port: testPort})
+	if err != tcpip.ErrConnectStarted {
+		c.t.Fatalf("Unexpected return value from Connect: %v", err)
+	}
+	c.ep.Close()
+
+	c.ep, err = c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &waiter.Queue{})
+	if err != nil {
+		c.t.Fatalf("NewEndpoint failed; %v", err)
+	}
+	if err := c.ep.Bind(tcpip.FullAddress{Port: stackPort}, nil); err != nil {
+		c.t.Fatalf("Bind failed: %v", err)
+	}
+	c.ep.Close()
+
+	// Third case, an endpoint that was bound and is listening.
+	c.ep, err = c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &waiter.Queue{})
+	if err != nil {
+		c.t.Fatalf("NewEndpoint failed; %v", err)
+	}
+	if err := c.ep.Bind(tcpip.FullAddress{Port: stackPort}, nil); err != nil {
+		c.t.Fatalf("Bind failed: %v", err)
+	}
+	err = c.ep.Listen(10)
+	if err != nil {
+		c.t.Fatalf("Listen failed: %v", err)
+	}
+	c.ep.Close()
+
+	c.ep, err = c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &waiter.Queue{})
+	if err != nil {
+		c.t.Fatalf("NewEndpoint failed; %v", err)
+	}
+	if err := c.ep.Bind(tcpip.FullAddress{Port: stackPort}, nil); err != nil {
+		c.t.Fatalf("Bind failed: %v", err)
+	}
+	err = c.ep.Listen(10)
+	if err != nil {
+		c.t.Fatalf("Listen failed: %v", err)
+	}
+}
