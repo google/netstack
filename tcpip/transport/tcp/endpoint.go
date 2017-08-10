@@ -584,7 +584,7 @@ func (e *endpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 
 	case *tcpip.ReceiveBufferSizeOption:
 		e.rcvListMu.Lock()
-		*o = tcpip.ReceiveBufferSizeOption(e.rcvBufSize)
+		*o = tcpip.ReceiveBufferSizeOption(e.rcvBufSize * 2)
 		e.rcvListMu.Unlock()
 		return nil
 
