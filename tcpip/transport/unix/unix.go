@@ -32,17 +32,50 @@ const (
 	SockSeqpacket SockType = 5
 )
 
-// A ControlMessages represents a collection of socket control messages.
-type ControlMessages interface {
+// A ControlMessage represents a single socket control message.
+type ControlMessage interface {
+	// Clone returns a copy of the ControlMessage.
+	Clone() ControlMessage
+
 	// Release releases any resources owned by the control message.
 	Release()
+}
 
-	// CloneCreds returns a copy of any credentials (if any) contained in the
-	// ControlMessages.
-	CloneCreds() ControlMessages
+// A ControlMessages represents a collection of socket control messages.
+type ControlMessages struct {
+	// Rights is a control message containing FDs.
+	Rights ControlMessage
 
-	// Clone returns a copy of the ControlMessages.
-	Clone() ControlMessages
+	// Credentials is a control message containing Unix credentials.
+	Credentials ControlMessage
+}
+
+// Empty returns true iff the ControlMessages does not contain either
+// credentials or rights.
+func (c *ControlMessages) Empty() bool {
+	return c.Rights == nil && c.Credentials == nil
+}
+
+// Clone clones both the credentials and the rights.
+func (c *ControlMessages) Clone() ControlMessages {
+	cm := ControlMessages{}
+	if c.Rights != nil {
+		cm.Rights = c.Rights.Clone()
+	}
+	if c.Credentials != nil {
+		cm.Credentials = c.Credentials.Clone()
+	}
+	return cm
+}
+
+// Release releases both the credentials and the rights.
+func (c *ControlMessages) Release() {
+	if c.Rights != nil {
+		c.Rights.Release()
+	}
+	if c.Credentials != nil {
+		c.Credentials.Release()
+	}
 }
 
 // Endpoint is the interface implemented by Unix transport protocol
@@ -59,16 +92,25 @@ type Endpoint interface {
 	// RecvMsg reads data and a control message from the endpoint. This method
 	// does not block if there is no data pending.
 	//
+	// creds indicates if credential control messages are requested by the
+	// caller. This is useful for determining if control messages can be
+	// coalesced. creds is a hint and can be safely ignored by the
+	// implementation if no coalescing is possible. It is fine to return
+	// credential control messages when none were requested or to not return
+	// credential control messages when they were requested.
+	//
 	// numRights is the number of SCM_RIGHTS FDs requested by the caller. This
-	// is useful if one must allocate a buffer to receive a SCM_RIGHTS message.
-	// numRights is a hint and can be safely ignored if the number of available
-	// SCM_RIGHTS FDs is known. It is fine for the returned number of
-	// SCM_RIGHTS FDs to be either higher or lower than the requested number.
+	// is useful if one must allocate a buffer to receive a SCM_RIGHTS message
+	// or determine if control messages can be coalesced. numRights is a hint
+	// and can be safely ignored by the implementation if the number of
+	// available SCM_RIGHTS FDs is known and no coalescing is possible. It is
+	// fine for the returned number of SCM_RIGHTS FDs to be either higher or
+	// lower than the requested number.
 	//
 	// If peek is true, no data should be consumed from the Endpoint. Any and
 	// all data returned from a peek should be available in the next call to
 	// RecvMsg.
-	RecvMsg(data [][]byte, numRights uintptr, peek bool, addr *tcpip.FullAddress) (uintptr, ControlMessages, *tcpip.Error)
+	RecvMsg(data [][]byte, creds bool, numRights uintptr, peek bool, addr *tcpip.FullAddress) (uintptr, ControlMessages, *tcpip.Error)
 
 	// SendMsg writes data and a control message to the endpoint's peer.
 	// This method does not block if the data cannot be written.
@@ -150,10 +192,10 @@ type BoundEndpoint interface {
 	// on the BoundEndpoint and sends a representation of itself (the
 	// ConnectingEndpoint) and a callback (returnConnect) to receive the
 	// connection information (Receiver and ConnectedEndpoint) upon a
-	// sucessful connect. The callback should only be called on a sucessful
+	// successful connect. The callback should only be called on a successful
 	// connect.
 	//
-	// For a connection attempt to be sucessful, the ConnectingEndpoint must
+	// For a connection attempt to be successful, the ConnectingEndpoint must
 	// be unconnected and not listening and the BoundEndpoint whose
 	// BidirectionalConnect method is being called must be listening.
 	//
@@ -198,17 +240,11 @@ func (m *message) Length() int64 {
 
 // Release releases any resources held by the Message.
 func (m *message) Release() {
-	if m.Control != nil {
-		m.Control.Release()
-	}
+	m.Control.Release()
 }
 
 func (m *message) Peek() queue.Entry {
-	var c ControlMessages
-	if m.Control != nil {
-		c = m.Control.Clone()
-	}
-	return &message{Data: m.Data, Control: c, Address: m.Address}
+	return &message{Data: m.Data, Control: m.Control.Clone(), Address: m.Address}
 }
 
 // A Receiver can be used to receive Messages.
@@ -216,7 +252,7 @@ type Receiver interface {
 	// Recv receives a single message. This method does not block.
 	//
 	// notify indicates if RecvNotify should be called.
-	Recv(data [][]byte, numRights uintptr, peek bool) (n uintptr, cm ControlMessages, source tcpip.FullAddress, notify bool, err *tcpip.Error)
+	Recv(data [][]byte, creds bool, numRights uintptr, peek bool) (n uintptr, cm ControlMessages, source tcpip.FullAddress, notify bool, err *tcpip.Error)
 
 	// RecvNotify notifies the Receiver of a successful Recv. This must not be
 	// called while holding any endpoint locks.
@@ -254,7 +290,7 @@ type queueReceiver struct {
 }
 
 // Recv implements Receiver.Recv.
-func (q *queueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, bool, *tcpip.Error) {
+func (q *queueReceiver) Recv(data [][]byte, creds bool, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, bool, *tcpip.Error) {
 	var m queue.Entry
 	var notify bool
 	var err *tcpip.Error
@@ -264,7 +300,7 @@ func (q *queueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) (uintp
 		m, notify, err = q.readQueue.Dequeue()
 	}
 	if err != nil {
-		return 0, nil, tcpip.FullAddress{}, false, err
+		return 0, ControlMessages{}, tcpip.FullAddress{}, false, err
 	}
 	msg := m.(*message)
 	src := []byte(msg.Data)
@@ -336,19 +372,20 @@ func vecCopy(data [][]byte, buf []byte) (uintptr, [][]byte, []byte) {
 }
 
 // Recv implements Receiver.Recv.
-func (q *streamQueueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, bool, *tcpip.Error) {
+func (q *streamQueueReceiver) Recv(data [][]byte, creds bool, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, bool, *tcpip.Error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	var notify bool
 
+	// If we have no data in the endpoint, we need to get some.
 	if len(q.buffer) == 0 {
 		// Load the next message into a buffer, even if we are peeking. Peeking
 		// won't consume the message, so it will be still available to be read
 		// the next time Recv() is called.
 		m, n, err := q.readQueue.Dequeue()
 		if err != nil {
-			return 0, nil, tcpip.FullAddress{}, false, err
+			return 0, ControlMessages{}, tcpip.FullAddress{}, false, err
 		}
 		notify = n
 		msg := m.(*message)
@@ -359,11 +396,8 @@ func (q *streamQueueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) 
 
 	var copied uintptr
 	if peek {
-		var c ControlMessages
-		if q.control != nil {
-			// Don't consume control message if we are peeking.
-			c = q.control.Clone()
-		}
+		// Don't consume control message if we are peeking.
+		c := q.control.Clone()
 
 		// Don't consume data since we are peeking.
 		copied, data, _ = vecCopy(data, q.buffer)
@@ -373,18 +407,26 @@ func (q *streamQueueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) 
 
 	// Consume data and control message since we are not peeking.
 	copied, data, q.buffer = vecCopy(data, q.buffer)
+
+	// Save the original state of q.control.
 	c := q.control
-	if c != nil {
-		q.control = c.CloneCreds()
+
+	// Remove rights from q.control and leave behind just the creds.
+	q.control = ControlMessages{}
+	if c.Credentials != nil {
+		q.control.Credentials = c.Credentials.Clone()
 	}
 
-	if c != nil {
+	// If we have any control messages of any type.
+	if !c.Empty() {
 		// FIXME: We don't support coalescing messages
 		// containing control messages.
 		return copied, c, q.addr, notify, nil
 	}
 
+	// If we have more capacity for data.
 	for len(data) > 0 {
+		// Get a message from the readQueue.
 		m, n, err := q.readQueue.Dequeue()
 		if err != nil {
 			// We already got some data, so ignore this error. This will
@@ -398,7 +440,7 @@ func (q *streamQueueReceiver) Recv(data [][]byte, numRights uintptr, peek bool) 
 		q.control = msg.Control
 		q.addr = msg.Address
 
-		if q.control != nil {
+		if !q.control.Empty() {
 			// FIXME: We don't support coalescing messages
 			// containing control messages.
 			break
@@ -499,9 +541,7 @@ func (e *connectedEndpoint) Send(data [][]byte, controlMessages ControlMessages,
 	// receiver actually uses a zero-length receive as an indication that the
 	// stream was closed.
 	if l == 0 && e.endpoint.Type() == SockStream {
-		if controlMessages != nil {
-			controlMessages.Release()
-		}
+		controlMessages.Release()
 		return 0, false, nil
 	}
 	v := make([]byte, 0, l)
@@ -621,18 +661,18 @@ func (e *baseEndpoint) Connected() bool {
 }
 
 // RecvMsg reads data and a control message from the endpoint.
-func (e *baseEndpoint) RecvMsg(data [][]byte, numRights uintptr, peek bool, addr *tcpip.FullAddress) (uintptr, ControlMessages, *tcpip.Error) {
+func (e *baseEndpoint) RecvMsg(data [][]byte, creds bool, numRights uintptr, peek bool, addr *tcpip.FullAddress) (uintptr, ControlMessages, *tcpip.Error) {
 	e.Lock()
 
 	if e.receiver == nil {
 		e.Unlock()
-		return 0, nil, tcpip.ErrNotConnected
+		return 0, ControlMessages{}, tcpip.ErrNotConnected
 	}
 
-	n, cms, a, notify, err := e.receiver.Recv(data, numRights, peek)
+	n, cms, a, notify, err := e.receiver.Recv(data, creds, numRights, peek)
 	e.Unlock()
 	if err != nil {
-		return 0, nil, err
+		return 0, ControlMessages{}, err
 	}
 
 	if notify {
