@@ -30,6 +30,14 @@ func (t *Tx) Init(b []byte) {
 	t.p.write(t.tail, slotFree)
 }
 
+// Capacity determines how many records of the given size can be written to the
+// pipe before it fills up.
+func (t *Tx) Capacity(recordSize uint64) uint64 {
+	available := uint64(len(t.p.buffer)) - sizeOfSlotHeader
+	entryLen := payloadToSlotSize(recordSize)
+	return available / entryLen
+}
+
 // Push reserves "payloadSize" bytes for transmission in the pipe. The caller
 // populates the returned slice with the data to be transferred and enventually
 // calls Flush() to make the data visible to the reader, or Abort() to make the
@@ -135,4 +143,9 @@ func (t *Tx) Flush() {
 
 	t.p.writeAtomic(t.tail, t.tailHeader)
 	t.tail = t.next
+}
+
+// Bytes returns the byte slice on which the pipe operates.
+func (t *Tx) Bytes() []byte {
+	return t.p.buffer
 }

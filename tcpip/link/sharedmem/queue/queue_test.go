@@ -103,8 +103,8 @@ func TestBasicRxQueue(t *testing.T) {
 
 	// Post two buffers.
 	b := []RxBuffer{
-		{100, 60, 1077},
-		{200, 40, 2123},
+		{100, 60, 1077, 0},
+		{200, 40, 2123, 0},
 	}
 
 	if !q.PostBuffers(b) {
@@ -349,7 +349,7 @@ func TestFillRxPipe(t *testing.T) {
 
 	// Post a buffer twice, it should fill the tx pipe.
 	b := []RxBuffer{
-		{100, 60, 1077},
+		{100, 60, 1077, 0},
 	}
 
 	for i := 0; i < 2; i++ {
@@ -428,8 +428,8 @@ func TestLotsOfReceptions(t *testing.T) {
 
 	// Prepare for posting two buffers.
 	b := []RxBuffer{
-		{100, 60, 1077},
-		{200, 40, 2123},
+		{100, 60, 1077, 0},
+		{200, 40, 2123, 0},
 	}
 
 	// Post 100000 buffers and completions.

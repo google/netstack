@@ -46,9 +46,10 @@ const (
 
 // RxBuffer is the descriptor of a receive buffer.
 type RxBuffer struct {
-	Offset uint64
-	Size   uint32
-	ID     uint64
+	Offset   uint64
+	Size     uint32
+	ID       uint64
+	UserData uint64
 }
 
 // Rx is a receive queue. It is implemented with one tx and one rx pipe: the tx
@@ -82,6 +83,12 @@ func (r *Rx) DisableNotification() {
 	atomic.StoreUint32(r.sharedEventFDState, eventFDDisabled)
 }
 
+// PostedBuffersLimit returns the maximum number of buffers that can be posted
+// before the tx queue fills up.
+func (r *Rx) PostedBuffersLimit() uint64 {
+	return r.tx.Capacity(sizeOfPostedBuffer)
+}
+
 // PostBuffers makes the given buffers available for receiving data from the
 // peer. Once they are posted, the peer is free to write to them and will
 // eventually post them back for consumption.
@@ -97,7 +104,7 @@ func (r *Rx) PostBuffers(buffers []RxBuffer) bool {
 		binary.LittleEndian.PutUint64(b[postedOffset:], pb.Offset)
 		binary.LittleEndian.PutUint32(b[postedSize:], pb.Size)
 		binary.LittleEndian.PutUint32(b[postedRemainingInGroup:], 0)
-		binary.LittleEndian.PutUint64(b[postedUserData:], 0)
+		binary.LittleEndian.PutUint64(b[postedUserData:], pb.UserData)
 		binary.LittleEndian.PutUint64(b[postedID:], pb.ID)
 	}
 
@@ -165,4 +172,40 @@ func (r *Rx) Dequeue(bufs []RxBuffer) ([]RxBuffer, uint32) {
 
 		return outBufs, totalDataSize
 	}
+}
+
+// Bytes returns the byte slices on which the queue operates.
+func (r *Rx) Bytes() (tx, rx []byte) {
+	return r.tx.Bytes(), r.rx.Bytes()
+}
+
+// DecodeRxBufferHeader decodes the header of a buffer posted on an rx queue.
+func DecodeRxBufferHeader(b []byte) RxBuffer {
+	return RxBuffer{
+		Offset:   binary.LittleEndian.Uint64(b[postedOffset:]),
+		Size:     binary.LittleEndian.Uint32(b[postedSize:]),
+		ID:       binary.LittleEndian.Uint64(b[postedID:]),
+		UserData: binary.LittleEndian.Uint64(b[postedUserData:]),
+	}
+}
+
+// RxCompletionSize returns the number of bytes needed to encode an rx
+// completion containing "count" buffers.
+func RxCompletionSize(count int) uint64 {
+	return sizeOfConsumedPacketHeader + uint64(count)*sizeOfConsumedBuffer
+}
+
+// EncodeRxCompletion encodes an rx completion header.
+func EncodeRxCompletion(b []byte, size, reserved uint32) {
+	binary.LittleEndian.PutUint32(b[consumedPacketSize:], size)
+	binary.LittleEndian.PutUint32(b[consumedPacketReserved:], reserved)
+}
+
+// EncodeRxCompletionBuffer encodes the i-th rx completion buffer header.
+func EncodeRxCompletionBuffer(b []byte, i int, rxb RxBuffer) {
+	b = b[RxCompletionSize(i):]
+	binary.LittleEndian.PutUint64(b[consumedOffset:], rxb.Offset)
+	binary.LittleEndian.PutUint32(b[consumedSize:], rxb.Size)
+	binary.LittleEndian.PutUint64(b[consumedUserData:], rxb.UserData)
+	binary.LittleEndian.PutUint64(b[consumedID:], rxb.ID)
 }

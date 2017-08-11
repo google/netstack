@@ -76,3 +76,8 @@ func (r *Rx) Flush() {
 	r.p.writeAtomic(r.tail, slotFree|slotToPayloadSize(r.head-r.tail))
 	r.tail = r.head
 }
+
+// Bytes returns the byte slice on which the pipe operates.
+func (r *Rx) Bytes() []byte {
+	return r.p.buffer
+}

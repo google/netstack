@@ -101,3 +101,41 @@ func (t *Tx) CompletedPacket() (id uint64, ok bool) {
 		return v, true
 	}
 }
+
+// Bytes returns the byte slices on which the queue operates.
+func (t *Tx) Bytes() (tx, rx []byte) {
+	return t.tx.Bytes(), t.rx.Bytes()
+}
+
+// TxPacketInfo holds information about a packet sent on a tx queue.
+type TxPacketInfo struct {
+	ID          uint64
+	Size        uint32
+	Reserved    uint32
+	BufferCount int
+}
+
+// DecodeTxPacketHeader decodes the header of a packet sent over a tx queue.
+func DecodeTxPacketHeader(b []byte) TxPacketInfo {
+	return TxPacketInfo{
+		ID:          binary.LittleEndian.Uint64(b[packetID:]),
+		Size:        binary.LittleEndian.Uint32(b[packetSize:]),
+		Reserved:    binary.LittleEndian.Uint32(b[packetReserved:]),
+		BufferCount: (len(b) - sizeOfPacketHeader) / sizeOfBufferDescriptor,
+	}
+}
+
+// DecodeTxBufferHeader decodes the header of the i-th buffer of a packet sent
+// over a tx queue.
+func DecodeTxBufferHeader(b []byte, i int) TxBuffer {
+	b = b[sizeOfPacketHeader+i*sizeOfBufferDescriptor:]
+	return TxBuffer{
+		Offset: binary.LittleEndian.Uint64(b[bufferOffset:]),
+		Size:   binary.LittleEndian.Uint32(b[bufferSize:]),
+	}
+}
+
+// EncodeTxCompletion encodes a tx completion header.
+func EncodeTxCompletion(b []byte, id uint64) {
+	binary.LittleEndian.PutUint64(b, id)
+}
