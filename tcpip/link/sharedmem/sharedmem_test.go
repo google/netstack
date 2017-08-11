@@ -7,6 +7,7 @@ package sharedmem
 import (
 	"io/ioutil"
 	"math/rand"
+	"os"
 	"reflect"
 	"sync"
 	"syscall"
@@ -172,7 +173,11 @@ func shuffle(b []int) {
 }
 
 func createFile(t *testing.T, size int64, initQueue bool) int {
-	f, err := ioutil.TempFile("", "sharedmem_test")
+	tmpDir := os.Getenv("TEST_TMPDIR")
+	if tmpDir == "" {
+		tmpDir = os.Getenv("TMPDIR")
+	}
+	f, err := ioutil.TempFile(tmpDir, "sharedmem_test")
 	if err != nil {
 		t.Fatalf("TempFile failed: %v", err)
 	}
