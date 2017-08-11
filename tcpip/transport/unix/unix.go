@@ -32,22 +32,28 @@ const (
 	SockSeqpacket SockType = 5
 )
 
-// A ControlMessage represents a single socket control message.
-type ControlMessage interface {
-	// Clone returns a copy of the ControlMessage.
-	Clone() ControlMessage
+// A RightsControlMessage is a control message containing FDs.
+type RightsControlMessage interface {
+	// Clone returns a copy of the RightsControlMessage.
+	Clone() RightsControlMessage
 
-	// Release releases any resources owned by the control message.
+	// Release releases any resources owned by the RightsControlMessage.
 	Release()
+}
+
+// A CredentialsControlMessage is a control message containing Unix credentials.
+type CredentialsControlMessage interface {
+	// Equals returns true iff the two messages are equal.
+	Equals(CredentialsControlMessage) bool
 }
 
 // A ControlMessages represents a collection of socket control messages.
 type ControlMessages struct {
 	// Rights is a control message containing FDs.
-	Rights ControlMessage
+	Rights RightsControlMessage
 
 	// Credentials is a control message containing Unix credentials.
-	Credentials ControlMessage
+	Credentials CredentialsControlMessage
 }
 
 // Empty returns true iff the ControlMessages does not contain either
@@ -62,9 +68,7 @@ func (c *ControlMessages) Clone() ControlMessages {
 	if c.Rights != nil {
 		cm.Rights = c.Rights.Clone()
 	}
-	if c.Credentials != nil {
-		cm.Credentials = c.Credentials.Clone()
-	}
+	cm.Credentials = c.Credentials
 	return cm
 }
 
@@ -73,9 +77,7 @@ func (c *ControlMessages) Release() {
 	if c.Rights != nil {
 		c.Rights.Release()
 	}
-	if c.Credentials != nil {
-		c.Credentials.Release()
-	}
+	*c = ControlMessages{}
 }
 
 // Endpoint is the interface implemented by Unix transport protocol
@@ -251,6 +253,8 @@ func (m *message) Peek() queue.Entry {
 type Receiver interface {
 	// Recv receives a single message. This method does not block.
 	//
+	// See Endpoint.RecvMsg for documentation on shared arguments.
+	//
 	// notify indicates if RecvNotify should be called.
 	Recv(data [][]byte, creds bool, numRights uintptr, peek bool) (n uintptr, cm ControlMessages, source tcpip.FullAddress, notify bool, err *tcpip.Error)
 
@@ -372,7 +376,7 @@ func vecCopy(data [][]byte, buf []byte) (uintptr, [][]byte, []byte) {
 }
 
 // Recv implements Receiver.Recv.
-func (q *streamQueueReceiver) Recv(data [][]byte, creds bool, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, bool, *tcpip.Error) {
+func (q *streamQueueReceiver) Recv(data [][]byte, wantCreds bool, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, bool, *tcpip.Error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -412,20 +416,23 @@ func (q *streamQueueReceiver) Recv(data [][]byte, creds bool, numRights uintptr,
 	c := q.control
 
 	// Remove rights from q.control and leave behind just the creds.
-	q.control = ControlMessages{}
-	if c.Credentials != nil {
-		q.control.Credentials = c.Credentials.Clone()
+	q.control.Rights = nil
+	if !wantCreds {
+		c.Credentials = nil
 	}
 
-	// If we have any control messages of any type.
-	if !c.Empty() {
-		// FIXME: We don't support coalescing messages
-		// containing control messages.
-		return copied, c, q.addr, notify, nil
+	if c.Rights != nil && numRights == 0 {
+		c.Rights.Release()
+		c.Rights = nil
 	}
 
-	// If we have more capacity for data.
-	for len(data) > 0 {
+	haveRights := c.Rights != nil
+
+	// If we have more capacity for data and haven't received any usable
+	// rights.
+	//
+	// Linux never coalesces rights control messages.
+	for !haveRights && len(data) > 0 {
 		// Get a message from the readQueue.
 		m, n, err := q.readQueue.Dequeue()
 		if err != nil {
@@ -440,15 +447,42 @@ func (q *streamQueueReceiver) Recv(data [][]byte, creds bool, numRights uintptr,
 		q.control = msg.Control
 		q.addr = msg.Address
 
-		if !q.control.Empty() {
-			// FIXME: We don't support coalescing messages
-			// containing control messages.
+		if wantCreds {
+			if (q.control.Credentials == nil) != (c.Credentials == nil) {
+				// One message has credentials, the other does not.
+				break
+			}
+
+			if q.control.Credentials != nil && c.Credentials != nil && !q.control.Credentials.Equals(c.Credentials) {
+				// Both messages have credentials, but they don't match.
+				break
+			}
+		}
+
+		if numRights != 0 && c.Rights != nil && q.control.Rights != nil {
+			// Both messages have rights.
 			break
 		}
 
 		var cpd uintptr
 		cpd, data, q.buffer = vecCopy(data, q.buffer)
 		copied += cpd
+
+		if cpd == 0 {
+			// data was actually full.
+			break
+		}
+
+		if q.control.Rights != nil {
+			// Consume rights.
+			if numRights == 0 {
+				q.control.Rights.Release()
+			} else {
+				c.Rights = q.control.Rights
+				haveRights = true
+			}
+			q.control.Rights = nil
+		}
 	}
 	return copied, c, q.addr, notify, nil
 }
