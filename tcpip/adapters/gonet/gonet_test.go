@@ -6,6 +6,7 @@ package gonet
 
 import (
 	"net"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -269,4 +270,56 @@ func TestDeadlineChange(t *testing.T) {
 		t.Errorf("c.Read() didn't unblock")
 	}
 	sender.close()
+}
+
+func TestPacketConnTransfer(t *testing.T) {
+	s, e := newLoopbackStack()
+	if e != nil {
+		t.Fatalf("newLoopbackStack() = %v", e)
+	}
+
+	ip1 := tcpip.Address(net.IPv4(169, 254, 10, 1).To4())
+	addr1 := tcpip.FullAddress{NICID, ip1, 11211}
+	s.AddAddress(NICID, ipv4.ProtocolNumber, ip1)
+	ip2 := tcpip.Address(net.IPv4(169, 254, 10, 2).To4())
+	addr2 := tcpip.FullAddress{NICID, ip2, 11311}
+	s.AddAddress(NICID, ipv4.ProtocolNumber, ip2)
+
+	c1, err := NewPacketConn(s, addr1, ipv4.ProtocolNumber)
+	if err != nil {
+		t.Fatal("NewPacketConn(port 4):", err)
+	}
+	c2, err := NewPacketConn(s, addr2, ipv4.ProtocolNumber)
+	if err != nil {
+		t.Fatal("NewPacketConn(port 5):", err)
+	}
+
+	c1.SetDeadline(time.Now().Add(time.Second))
+	c2.SetDeadline(time.Now().Add(time.Second))
+
+	sent := "abc123"
+	sendAddr := fullToUDPAddr(addr2)
+	if n, err := c1.WriteTo([]byte(sent), sendAddr); err != nil || n != len(sent) {
+		t.Errorf("got c1.WriteTo(%q, %v) = %d, %v, want = %d, %v", sent, sendAddr, n, err, len(sent), nil)
+	}
+	recv := make([]byte, len(sent))
+	n, recvAddr, err := c2.ReadFrom(recv)
+	if err != nil || n != len(recv) {
+		t.Errorf("got c2.ReadFrom() = %d, %v, want = %d, %v", n, err, len(recv), nil)
+	}
+
+	if recv := string(recv); recv != sent {
+		t.Errorf("got recv = %q, want = %q", recv, sent)
+	}
+
+	if want := fullToUDPAddr(addr1); !reflect.DeepEqual(recvAddr, want) {
+		t.Errorf("got recvAddr = %v, want = %v", recvAddr, want)
+	}
+
+	if err := c1.Close(); err != nil {
+		t.Error("c1.Close():", err)
+	}
+	if err := c2.Close(); err != nil {
+		t.Error("c2.Close():", err)
+	}
 }
