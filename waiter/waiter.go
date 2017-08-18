@@ -137,7 +137,6 @@ func (*channelCallback) Callback(e *Entry) {
 // allocates a new channel.
 func NewChannelEntry(c chan struct{}) (Entry, chan struct{}) {
 	if c == nil {
-		// TODO: Consider a pool.
 		c = make(chan struct{}, 1)
 	}
 
