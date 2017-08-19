@@ -17,6 +17,14 @@ func (v Value) LessThan(w Value) bool {
 	return int32(v-w) < 0
 }
 
+// LessThanEq returns true if v==w or v is before i.e., v < w.
+func (v Value) LessThanEq(w Value) bool {
+	if v == w {
+		return true
+	}
+	return v.LessThan(w)
+}
+
 // InRange checks if v is in the range [a,b), i.e., a <= v < b.
 func (v Value) InRange(a, b Value) bool {
 	return v-a < b-a

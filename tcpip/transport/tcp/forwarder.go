@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
+	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/seqnum"
 	"github.com/google/netstack/tcpip/stack"
 	"github.com/google/netstack/waiter"
@@ -61,10 +62,7 @@ func (f *Forwarder) HandlePacket(r *stack.Route, id stack.TransportEndpointID, v
 		return false
 	}
 
-	mss, sws, ok := parseSynOptions(s)
-	if !ok {
-		return false
-	}
+	opts := parseSynSegmentOptions(s)
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -83,10 +81,9 @@ func (f *Forwarder) HandlePacket(r *stack.Route, id stack.TransportEndpointID, v
 	f.inFlight[id] = struct{}{}
 	s.incRef()
 	go f.handler(&ForwarderRequest{
-		forwarder:   f,
-		segment:     s,
-		mss:         mss,
-		sndWndScale: sws,
+		forwarder:  f,
+		segment:    s,
+		synOptions: opts,
 	})
 
 	return true
@@ -96,11 +93,10 @@ func (f *Forwarder) HandlePacket(r *stack.Route, id stack.TransportEndpointID, v
 // and passed to the client. Clients must eventually call Complete() on it, and
 // may optionally create an endpoint to represent it via CreateEndpoint.
 type ForwarderRequest struct {
-	mu          sync.Mutex
-	forwarder   *Forwarder
-	segment     *segment
-	mss         uint16
-	sndWndScale int
+	mu         sync.Mutex
+	forwarder  *Forwarder
+	segment    *segment
+	synOptions header.TCPSynOptions
 }
 
 // ID returns the 4-tuple (src address, src port, dst address, dst port) that
@@ -146,7 +142,13 @@ func (r *ForwarderRequest) CreateEndpoint(queue *waiter.Queue) (tcpip.Endpoint, 
 	}
 
 	f := r.forwarder
-	ep, err := f.listen.createEndpointAndPerformHandshake(r.segment, r.mss, r.sndWndScale)
+	ep, err := f.listen.createEndpointAndPerformHandshake(r.segment, &header.TCPSynOptions{
+		MSS:   r.synOptions.MSS,
+		WS:    r.synOptions.WS,
+		TS:    r.synOptions.TS,
+		TSVal: r.synOptions.TSVal,
+		TSEcr: r.synOptions.TSEcr,
+	})
 	if err != nil {
 		return nil, err
 	}

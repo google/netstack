@@ -42,7 +42,10 @@ type segment struct {
 	ackNumber      seqnum.Value
 	flags          uint8
 	window         seqnum.Size
-	options        []byte
+
+	// parsedOptions stores the parsed values from the options in the segment.
+	parsedOptions header.TCPOptions
+	options       []byte
 }
 
 func newSegment(r *stack.Route, id stack.TransportEndpointID, vv *buffer.VectorisedView) *segment {
@@ -130,6 +133,7 @@ func (s *segment) parse() bool {
 	}
 
 	s.options = []byte(h[header.TCPMinimumSize:offset])
+	s.parsedOptions = header.ParseTCPOptions(s.options)
 	s.data.TrimFront(offset)
 
 	s.sequenceNumber = seqnum.Value(h.SequenceNumber())

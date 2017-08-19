@@ -158,6 +158,10 @@ func newSender(ep *endpoint, iss, irs seqnum.Value, sndWnd seqnum.Size, mss uint
 	}
 
 	m := int(ep.route.MTU()) - header.TCPMinimumSize
+	// Adjust the maxPayloadsize to account for the timestamp option.
+	if ep.sendTSOk {
+		m -= header.TCPTimeStampOptionSize
+	}
 	if m < s.maxPayloadSize {
 		s.maxPayloadSize = m
 	}
@@ -460,6 +464,9 @@ func (s *sender) handleRcvdSegment(seg *segment) {
 		s.updateRTO(time.Now().Sub(s.rttMeasureTime))
 		s.rttMeasureSeqNum = s.sndNxt
 	}
+
+	// Update Timestamp if required. See RFC7323, section-4.3.
+	s.ep.updateRecentTimestamp(seg.parsedOptions.TSVal, s.maxSentAck, seg.sequenceNumber)
 
 	// Count the duplicates and do the fast retransmit if needed.
 	rtx := s.checkDuplicateAck(seg)

@@ -193,7 +193,6 @@ func (r *receiver) handleRcvdSegment(s *segment) {
 			!r.consumeSegment(s, segSeq, segLen) {
 			break
 		}
-
 		heap.Pop(&r.pendingRcvdSegments)
 		r.pendingBufUsed -= s.logicalLen()
 		s.decRef()

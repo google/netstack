@@ -48,6 +48,10 @@ type testContext struct {
 	port uint16
 	ep   tcpip.Endpoint
 	wq   waiter.Queue
+
+	// timeStampEnabled is true if ep is connected with the Timestamp option
+	// enabled.
+	timeStampEnabled bool
 }
 
 const (
@@ -55,6 +59,10 @@ const (
 	// where another value is explicitly used. It is chosen to match the MTU
 	// of loopback interfaces on linux systems.
 	defaultMTU = 65535
+
+	// defaultIPv4MSS is the MSS sent by the network stack in syn/syn-ack for an
+	// IPv4 endpoint when the MTU is set to defaultMTU in the test.
+	defaultIPv4MSS = defaultMTU - header.IPv4MinimumSize - header.TCPMinimumSize
 )
 
 // newTestContext allocates and initializes a test context containing a new
@@ -959,7 +967,7 @@ func TestScaledWindowAccept(t *testing.T) {
 	}
 
 	// Do 3-way handshake.
-	passiveConnectWithOptions(c, 100, 2, defaultMTU, 0)
+	passiveConnectWithOptions(c, 100, 2, header.TCPSynOptions{MSS: defaultIPv4MSS})
 
 	// Try to accept the connection.
 	we, ch := waiter.NewChannelEntry(nil)
@@ -1032,7 +1040,7 @@ func TestNonScaledWindowAccept(t *testing.T) {
 	}
 
 	// Do 3-way handshake.
-	passiveConnect(c, 100, 2, defaultMTU)
+	passiveConnect(c, 100, 2, header.TCPSynOptions{MSS: defaultIPv4MSS})
 
 	// Try to accept the connection.
 	we, ch := waiter.NewChannelEntry(nil)
@@ -1163,8 +1171,9 @@ func TestZeroScaledWindowReceive(t *testing.T) {
 }
 
 func testBrokenUpWrite(c *testContext, maxPayload int) {
-	packetCount := 3
-	data := make([]byte, packetCount*maxPayload)
+	payloadMultiplier := 10
+	dataLen := payloadMultiplier * maxPayload
+	data := make([]byte, dataLen)
 	for i := range data {
 		data[i] = byte(i)
 	}
@@ -1177,32 +1186,50 @@ func testBrokenUpWrite(c *testContext, maxPayload int) {
 	}
 
 	// Check that data is received in chunks.
-	for i := 0; i < packetCount; i++ {
+	bytesReceived := 0
+	numPackets := 0
+	for bytesReceived != dataLen {
 		b := c.getPacket()
+		numPackets++
+		tcp := header.TCP(header.IPv4(b).Payload())
+		payloadLen := len(tcp.Payload())
+		c.t.Logf("bytesReceived: %d, payloadLen: %d\n", bytesReceived, payloadLen)
 		checker.IPv4(c.t, b,
-			checker.PayloadLen(maxPayload+header.TCPMinimumSize),
 			checker.TCP(
 				checker.DstPort(testPort),
-				checker.SeqNum(uint32(c.irs)+1+uint32(i*maxPayload)),
+				checker.SeqNum(uint32(c.irs)+1+uint32(bytesReceived)),
 				checker.AckNum(790),
 				checker.TCPFlagsMatch(header.TCPFlagAck, ^uint8(header.TCPFlagPsh)),
 			),
 		)
 
-		pdata := data[i*maxPayload:][:maxPayload]
-		if p := b[header.IPv4MinimumSize+header.TCPMinimumSize:]; bytes.Compare(pdata, p) != 0 {
+		pdata := data[bytesReceived : bytesReceived+payloadLen]
+		if p := tcp.Payload(); bytes.Compare(pdata, p) != 0 {
 			c.t.Fatalf("Data is different: expected %v, got %v", pdata, p)
 		}
-
+		bytesReceived += payloadLen
+		var options []byte
+		if c.timeStampEnabled {
+			// If timestamp option is enabled then echo back the timestamp and increment
+			// the TSEcr value included in the packet and send that back as the TSVal.
+			parsedOpts := tcp.ParsedOptions()
+			tsOpt := [12]byte{}
+			header.EncodeTSOption(tsOpt[:], parsedOpts.TSEcr+1, parsedOpts.TSVal)
+			options = append(options, tsOpt[:]...)
+		}
 		// Acknowledge the data.
 		c.sendPacket(nil, &headers{
 			srcPort: testPort,
 			dstPort: c.port,
 			flags:   header.TCPFlagAck,
 			seqNum:  790,
-			ackNum:  c.irs.Add(1 + seqnum.Size((i+1)*maxPayload)),
+			ackNum:  c.irs.Add(1 + seqnum.Size(bytesReceived)),
 			rcvWnd:  30000,
+			tcpOpts: options,
 		})
+	}
+	if numPackets == 1 {
+		c.t.Fatalf("expected write to be broken up into multiple packets, but got 1 packet")
 	}
 }
 
@@ -1226,20 +1253,35 @@ func TestActiveSendMSSLessThanMTU(t *testing.T) {
 	testBrokenUpWrite(c, maxPayload)
 }
 
-func passiveConnect(c *testContext, maxPayload, wndScale int, mtu uint16) {
-	passiveConnectWithOptions(c, maxPayload, wndScale, mtu, -1)
+// passiveConnect just disables WindowScaling and delegates the call to
+// passiveConnectWithOptions.
+func passiveConnect(c *testContext, maxPayload, wndScale int, synOptions header.TCPSynOptions) {
+	synOptions.WS = -1
+	passiveConnectWithOptions(c, maxPayload, wndScale, synOptions)
 }
 
-func passiveConnectWithOptions(c *testContext, maxPayload, wndScale int, mtu uint16, sndWndScale int) {
+// NOTE: MSS is not a negotiated option and it can be asymmetric in each
+// direction. This function uses the maxPayload to set the MSS to be sent to the
+// peer on a connect and validates that the MSS in the synACK response is equal
+// to the MTU- (tcphdr len + iphdr len).
+//
+// wndScale is the expected window scale in the synack and sndWndScale is the
+// value of the window scaling option to be sent in the syn. If sndWndScale > 0
+// then we send the WindowScale option.
+func passiveConnectWithOptions(c *testContext, maxPayload, wndScale int, synOptions header.TCPSynOptions) {
 	opts := []byte{
 		header.TCPOptionMSS, 4, byte(maxPayload / 256), byte(maxPayload % 256),
 	}
-	if sndWndScale < 0 {
-		sndWndScale = 0
-	} else {
+
+	if synOptions.WS >= 0 {
 		opts = append(opts, []byte{
-			header.TCPOptionWS, 3, byte(sndWndScale), header.TCPOptionNOP,
+			header.TCPOptionWS, 3, byte(synOptions.WS), header.TCPOptionNOP,
 		}...)
+	}
+	if synOptions.TS {
+		tsOpt := [12]byte{}
+		header.EncodeTSOption(tsOpt[:], synOptions.TSVal, synOptions.TSEcr)
+		opts = append(opts, tsOpt[:]...)
 	}
 
 	// Send a SYN request.
@@ -1257,25 +1299,51 @@ func passiveConnectWithOptions(c *testContext, maxPayload, wndScale int, mtu uin
 	b := c.getPacket()
 	tcp := header.TCP(header.IPv4(b).Payload())
 	c.irs = seqnum.Value(tcp.SequenceNumber())
-	checker.IPv4(c.t, b,
-		checker.TCP(
-			checker.SrcPort(stackPort),
-			checker.DstPort(testPort),
-			checker.TCPFlags(header.TCPFlagAck|header.TCPFlagSyn),
-			checker.AckNum(uint32(iss)+1),
-			checker.TCPSynOptions(mtu-header.IPv4MinimumSize-header.TCPMinimumSize, wndScale),
-		),
-	)
 
-	// Send ACK.
-	c.sendPacket(nil, &headers{
+	tcpCheckers := []checker.TransportChecker{
+		checker.SrcPort(stackPort),
+		checker.DstPort(testPort),
+		checker.TCPFlags(header.TCPFlagAck | header.TCPFlagSyn),
+		checker.AckNum(uint32(iss) + 1),
+		checker.TCPSynOptions(header.TCPSynOptions{MSS: synOptions.MSS, WS: wndScale}),
+	}
+
+	// If TS option was enabled in the original syn then add a checker to
+	// validate the Timestamp option in the syn-ack.
+	if synOptions.TS {
+		tcpCheckers = append(tcpCheckers, checker.TCPTimestampChecker(synOptions.TS, 0, synOptions.TSVal))
+	}
+
+	checker.IPv4(c.t, b, checker.TCP(tcpCheckers...))
+	rcvWnd := seqnum.Size(30000)
+	ackHeaders := &headers{
 		srcPort: testPort,
 		dstPort: stackPort,
 		flags:   header.TCPFlagAck,
 		seqNum:  iss + 1,
 		ackNum:  c.irs + 1,
-		rcvWnd:  30000 >> byte(sndWndScale),
-	})
+		rcvWnd:  rcvWnd,
+	}
+
+	// If WS was expected to be in effect then scale the advertised window
+	// correspondingly.
+	if synOptions.WS > 0 {
+		ackHeaders.rcvWnd = rcvWnd >> byte(synOptions.WS)
+	}
+
+	if synOptions.TS {
+		// Echo the tsVal back to the peer in the tsEcr field of the
+		// timestamp option.
+		opts := tcp.ParsedOptions()
+		tsOpt := [12]byte{}
+		// Increment TSVal by 1 from the value sent in the syn and echo
+		// the TSVal in the syn-ack in the TSEcr field.
+		header.EncodeTSOption(tsOpt[:], synOptions.TSVal+1, opts.TSVal)
+		ackHeaders.tcpOpts = tsOpt[:]
+	}
+
+	// Send ACK.
+	c.sendPacket(nil, ackHeaders)
 
 	c.port = stackPort
 }
@@ -1311,7 +1379,7 @@ func TestPassiveSendMSSLessThanMTU(t *testing.T) {
 	}
 
 	// Do 3-way handshake.
-	passiveConnect(c, maxPayload, wndScale, mtu)
+	passiveConnect(c, maxPayload, wndScale, header.TCPSynOptions{MSS: mtu - header.IPv4MinimumSize - header.TCPMinimumSize})
 
 	// Try to accept the connection.
 	we, ch := waiter.NewChannelEntry(nil)
@@ -1368,7 +1436,7 @@ func TestSynCookiePassiveSendMSSLessThanMTU(t *testing.T) {
 	}
 
 	// Do 3-way handshake.
-	passiveConnect(c, maxPayload, -1, mtu)
+	passiveConnect(c, maxPayload, -1, header.TCPSynOptions{MSS: mtu - header.IPv4MinimumSize - header.TCPMinimumSize})
 
 	// Try to accept the connection.
 	we, ch := waiter.NewChannelEntry(nil)
@@ -1410,7 +1478,7 @@ func TestForwarderSendMSSLessThanMTU(t *testing.T) {
 	s.SetTransportProtocolHandler(tcp.ProtocolNumber, f.HandlePacket)
 
 	// Do 3-way handshake.
-	passiveConnect(c, maxPayload, 1, mtu)
+	passiveConnect(c, maxPayload, 1, header.TCPSynOptions{MSS: mtu - header.IPv4MinimumSize - header.TCPMinimumSize})
 
 	// Wait for connection to be available.
 	select {
@@ -1458,11 +1526,12 @@ func TestSynOptionsOnActiveConnect(t *testing.T) {
 
 	// Receive SYN packet.
 	b := c.getPacket()
+
 	checker.IPv4(c.t, b,
 		checker.TCP(
 			checker.DstPort(testPort),
 			checker.TCPFlags(header.TCPFlagSyn),
-			checker.TCPSynOptions(mtu-header.IPv4MinimumSize-header.TCPMinimumSize, wndScale),
+			checker.TCPSynOptions(header.TCPSynOptions{MSS: mtu - header.IPv4MinimumSize - header.TCPMinimumSize, WS: wndScale}),
 		),
 	)
 
@@ -1477,7 +1546,7 @@ func TestSynOptionsOnActiveConnect(t *testing.T) {
 			checker.TCPFlags(header.TCPFlagSyn),
 			checker.SrcPort(tcp.SourcePort()),
 			checker.SeqNum(tcp.SequenceNumber()),
-			checker.TCPSynOptions(mtu-header.IPv4MinimumSize-header.TCPMinimumSize, wndScale),
+			checker.TCPSynOptions(header.TCPSynOptions{MSS: mtu - header.IPv4MinimumSize - header.TCPMinimumSize, WS: wndScale}),
 		),
 	)
 

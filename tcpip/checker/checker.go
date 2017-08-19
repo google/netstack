@@ -7,6 +7,7 @@
 package checker
 
 import (
+	"encoding/binary"
 	"reflect"
 	"testing"
 
@@ -291,18 +292,19 @@ func TCPFlagsMatch(flags, mask uint8) TransportChecker {
 // SYN segments.
 //
 // If wndscale is negative, the window scale option must not be present.
-func TCPSynOptions(mss uint16, wndscale int) TransportChecker {
+func TCPSynOptions(wantOpts header.TCPSynOptions) TransportChecker {
 	return func(t *testing.T, h header.Transport) {
 		tcp, ok := h.(header.TCP)
 		if !ok {
 			return
 		}
-
-		offset := int(tcp.DataOffset())
-		opts := []byte(tcp[header.TCPMinimumSize:offset])
+		opts := tcp.Options()
 		limit := len(opts)
 		foundMSS := false
 		foundWS := false
+		foundTS := false
+		tsVal := uint32(0)
+		tsEcr := uint32(0)
 		for i := 0; i < limit; {
 			switch opts[i] {
 			case header.TCPOptionEOL:
@@ -311,21 +313,33 @@ func TCPSynOptions(mss uint16, wndscale int) TransportChecker {
 				i++
 			case header.TCPOptionMSS:
 				v := uint16(opts[i+2])<<8 | uint16(opts[i+3])
-				if mss != v {
-					t.Fatalf("Bad MSS: got %v, want %v", v, mss)
+				if wantOpts.MSS != v {
+					t.Fatalf("Bad MSS: got %v, want %v", v, wantOpts.MSS)
 				}
 				foundMSS = true
 				i += 4
 			case header.TCPOptionWS:
-				if wndscale < 0 {
+				if wantOpts.WS < 0 {
 					t.Fatalf("WS present when it shouldn't be")
 				}
 				v := int(opts[i+2])
-				if v != wndscale {
-					t.Fatalf("Bad WS: got %v, want %v", v, wndscale)
+				if v != wantOpts.WS {
+					t.Fatalf("Bad WS: got %v, want %v", v, wantOpts.WS)
 				}
 				foundWS = true
 				i += 3
+			case header.TCPOptionTS:
+				if i+10 > limit || opts[i+1] != 10 {
+					t.Fatalf("bad length %d for TS option, limit: %d", opts[i+1], limit)
+				}
+				tsVal = binary.BigEndian.Uint32(opts[i+2:])
+				tsEcr = uint32(0)
+				if tcp.Flags()&header.TCPFlagAck != 0 {
+					// if the syn is an syn-ack then read the tsEcr value as well.
+					tsEcr = binary.BigEndian.Uint32(opts[i+6:])
+				}
+				foundTS = true
+				i += 10
 			default:
 				i += int(opts[i+1])
 			}
@@ -335,8 +349,76 @@ func TCPSynOptions(mss uint16, wndscale int) TransportChecker {
 			t.Fatalf("MSS option not found. Options: %x", opts)
 		}
 
-		if !foundWS && wndscale >= 0 {
+		if !foundWS && wantOpts.WS >= 0 {
 			t.Fatalf("WS option not found. Options: %x", opts)
+		}
+		if wantOpts.TS && !foundTS {
+			t.Fatalf("TS option not found. Options: %x", opts)
+		}
+		if foundTS && tsVal == 0 {
+			t.Fatalf("TS option specified but the timestamp value is zero")
+		}
+		if foundTS && tsEcr == 0 && wantOpts.TSEcr != 0 {
+			t.Fatalf("TS option specified but TSEcr is incorrect: got %d, want: %d", tsEcr, wantOpts.TSEcr)
+		}
+	}
+}
+
+// TCPTimestampChecker creates a checker that validates that a TCP segment has a
+// TCP Timestamp option if wantTS is true, it also compares the wantTSVal and
+// wantTSEcr values with those in the TCP segment (if present).
+//
+// If wantTSVal or wantTSEcr is zero then the corresponding comparison is
+// skipped.
+func TCPTimestampChecker(wantTS bool, wantTSVal uint32, wantTSEcr uint32) TransportChecker {
+	return func(t *testing.T, h header.Transport) {
+		tcp, ok := h.(header.TCP)
+		if !ok {
+			return
+		}
+		opts := []byte(tcp.Options())
+		limit := len(opts)
+		foundTS := false
+		tsVal := uint32(0)
+		tsEcr := uint32(0)
+		for i := 0; i < limit; {
+			switch opts[i] {
+			case header.TCPOptionEOL:
+				i = limit
+			case header.TCPOptionNOP:
+				i++
+			case header.TCPOptionTS:
+				if i+10 > limit {
+					t.Fatalf("TS option found, but option truncated, option length: %d, want 10 bytes", limit-i)
+				}
+				if opts[i+1] != 10 {
+					t.Fatalf("TS option found, but bad length specified: %d, want: 10", opts[i+1])
+				}
+				tsVal = binary.BigEndian.Uint32(opts[i+2:])
+				tsEcr = binary.BigEndian.Uint32(opts[i+6:])
+				foundTS = true
+				i += 10
+			default:
+				// We don't recognize this option, just skip over it.
+				if i+2 > limit {
+					return
+				}
+				l := int(opts[i+1])
+				if i < 2 || i+l > limit {
+					return
+				}
+				i += l
+			}
+		}
+
+		if wantTS != foundTS {
+			t.Fatalf("TS Option mismatch: got TS= %v, want TS= %v", foundTS, wantTS)
+		}
+		if wantTS && wantTSVal != 0 && wantTSVal != tsVal {
+			t.Fatalf("Timestamp value is incorrect: got: %d, want: %d", tsVal, wantTSVal)
+		}
+		if wantTS && wantTSEcr != 0 && tsEcr != wantTSEcr {
+			t.Fatalf("Timestamp Echo Reply is incorrect: got: %d, want: %d", tsEcr, wantTSEcr)
 		}
 	}
 }

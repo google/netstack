@@ -41,12 +41,6 @@ const (
 	wakerForResend
 )
 
-const (
-	// maxWndScale is maximum allowed window scaling, as described in
-	// RFC 1323, section 2.3, page 11.
-	maxWndScale = 14
-)
-
 // handshake holds the state used during a TCP 3-way handshake.
 type handshake struct {
 	ep     *endpoint
@@ -98,7 +92,7 @@ func findWndScale(wnd seqnum.Size) int {
 
 	max := seqnum.Size(0xffff)
 	s := 0
-	for wnd > max && s < maxWndScale {
+	for wnd > max && s < header.MaxWndScale {
 		s++
 		max <<= 1
 	}
@@ -135,14 +129,14 @@ func (h *handshake) effectiveRcvWndScale() uint8 {
 
 // resetToSynRcvd resets the state of the handshake object to the SYN-RCVD
 // state.
-func (h *handshake) resetToSynRcvd(iss seqnum.Value, irs seqnum.Value, mss uint16, sndWndScale int) {
+func (h *handshake) resetToSynRcvd(iss seqnum.Value, irs seqnum.Value, opts *header.TCPSynOptions) {
 	h.active = false
 	h.state = handshakeSynRcvd
 	h.flags = flagSyn | flagAck
 	h.iss = iss
 	h.ackNum = irs + 1
-	h.mss = mss
-	h.sndWndScale = sndWndScale
+	h.mss = opts.MSS
+	h.sndWndScale = opts.WS
 }
 
 // checkAck checks if the ACK number, if present, of a segment received during
@@ -184,17 +178,17 @@ func (h *handshake) synSentState(s *segment) *tcpip.Error {
 		return nil
 	}
 
-	// Parse the SYN options. Ignore the segment if it's invalid.
-	mss, sws, ok := parseSynOptions(s)
-	if !ok {
-		return nil
-	}
+	// Parse the SYN options.
+	rcvSynOpts := parseSynSegmentOptions(s)
+
+	// Remember if the Timetstamp option was negotiated.
+	h.ep.maybeEnableTimestamp(&rcvSynOpts)
 
 	// Remember the sequence we'll ack from now on.
 	h.ackNum = s.sequenceNumber + 1
 	h.flags |= flagAck
-	h.mss = mss
-	h.sndWndScale = sws
+	h.mss = rcvSynOpts.MSS
+	h.sndWndScale = rcvSynOpts.WS
 
 	// If this is a SYN ACK response, we only need to acknowledge the SYN
 	// and the handshake is completed.
@@ -208,7 +202,13 @@ func (h *handshake) synSentState(s *segment) *tcpip.Error {
 	// but resend our own SYN and wait for it to be acknowledged in the
 	// SYN-RCVD state.
 	h.state = handshakeSynRcvd
-	sendSynTCP(&s.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, h.rcvWndScale)
+	synOpts := header.TCPSynOptions{
+		WS:    h.rcvWndScale,
+		TS:    rcvSynOpts.TS,
+		TSVal: h.ep.timestamp(),
+		TSEcr: h.ep.recentTS,
+	}
+	sendSynTCP(&s.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, synOpts)
 
 	return nil
 }
@@ -247,14 +247,22 @@ func (h *handshake) synRcvdState(s *segment) *tcpip.Error {
 		if err := h.resetState(); err != nil {
 			return err
 		}
-
-		sendSynTCP(&s.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, h.rcvWndScale)
+		synOpts := header.TCPSynOptions{
+			WS:    h.rcvWndScale,
+			TS:    h.ep.sendTSOk,
+			TSVal: h.ep.timestamp(),
+			TSEcr: h.ep.recentTS,
+		}
+		sendSynTCP(&s.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, synOpts)
 		return nil
 	}
 
 	// We have previously received (and acknowledged) the peer's SYN. If the
 	// peer acknowledges our SYN, the handshake is completed.
 	if s.flagIsSet(flagAck) {
+		// Update Timestamp if required. See RFC7323, section-4.3.
+		h.ep.updateRecentTimestamp(s.parsedOptions.TSVal, h.ackNum, s.sequenceNumber)
+
 		h.state = handshakeCompleted
 		return nil
 	}
@@ -324,7 +332,19 @@ func (h *handshake) execute() *tcpip.Error {
 
 	// Send the initial SYN segment and loop until the handshake is
 	// completed.
-	sendSynTCP(&h.ep.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, h.rcvWndScale)
+	synOpts := header.TCPSynOptions{
+		WS:    h.rcvWndScale,
+		TS:    true,
+		TSVal: h.ep.timestamp(),
+		TSEcr: h.ep.recentTS,
+	}
+
+	// Execute is also called in a listen context so we want to make sure we
+	// only send the TS option when we received the TS in the initial syn.
+	if h.state == handshakeSynRcvd {
+		synOpts.TS = h.ep.sendTSOk
+	}
+	sendSynTCP(&h.ep.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, synOpts)
 	for h.state != handshakeCompleted {
 		switch index, _ := s.Fetch(true); index {
 		case wakerForResend:
@@ -333,7 +353,7 @@ func (h *handshake) execute() *tcpip.Error {
 				return tcpip.ErrTimeout
 			}
 			rt.Reset(timeOut)
-			sendSynTCP(&h.ep.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, h.rcvWndScale)
+			sendSynTCP(&h.ep.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, synOpts)
 
 		case wakerForNotification:
 			n := h.ep.fetchNotifications()
@@ -351,73 +371,37 @@ func (h *handshake) execute() *tcpip.Error {
 	return nil
 }
 
-// parseSynOptions parses the options received in a syn segment and returns the
-// relevant ones. If no window scale option is specified, ws is returned as -1;
-// this is because the absence of the option indicates that the we cannot use
-// window scaling on the receive end either.
-func parseSynOptions(s *segment) (mss uint16, ws int, ok bool) {
-	// Per RFC 1122, page 85: "If an MSS option is not received at
-	// connection setup, TCP MUST assume a default send MSS of 536."
-	mss = 536
-	ws = -1
-	opts := s.options
-	limit := len(opts)
-	for i := 0; i < limit; {
-		switch opts[i] {
-		case header.TCPOptionEOL:
-			i = limit
-		case header.TCPOptionNOP:
-			i++
-		case header.TCPOptionMSS:
-			if i+4 > limit || opts[i+1] != 4 {
-				return 0, -1, false
-			}
-			mss = uint16(opts[i+2])<<8 | uint16(opts[i+3])
-			if mss == 0 {
-				return 0, -1, false
-			}
-			i += 4
-
-		case header.TCPOptionWS:
-			if i+3 > limit || opts[i+1] != 3 {
-				return 0, -1, false
-			}
-			ws = int(opts[i+2])
-			if ws > maxWndScale {
-				ws = maxWndScale
-			}
-			i += 3
-
-		default:
-			// We don't recognize this option, just skip over it.
-			if i+2 > limit {
-				return 0, -1, false
-			}
-			l := int(opts[i+1])
-			if i < 2 || i+l > limit {
-				return 0, -1, false
-			}
-			i += l
-		}
+func parseSynSegmentOptions(s *segment) header.TCPSynOptions {
+	synOpts := header.ParseSynOptions(s.options, s.flagIsSet(flagAck))
+	if synOpts.TS {
+		s.parsedOptions.TSVal = synOpts.TSVal
+		s.parsedOptions.TSEcr = synOpts.TSEcr
 	}
-
-	return mss, ws, true
+	return synOpts
 }
 
-func sendSynTCP(r *stack.Route, id stack.TransportEndpointID, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size, rcvWndScale int) *tcpip.Error {
-	// Initialize the options.
+func sendSynTCP(r *stack.Route, id stack.TransportEndpointID, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size, opts header.TCPSynOptions) *tcpip.Error {
+	// The MSS in opts is ignored as this function is called from many
+	// places and we don't want every call point being embedded with the MSS
+	// calculation. So we just do it here and ignore the MSS value passed in
+	// the opts.
 	mss := r.MTU() - header.TCPMinimumSize
 	options := []byte{
 		// Initialize the MSS option.
 		header.TCPOptionMSS, 4, byte(mss >> 8), byte(mss),
-
-		// Initialize the WS option. It must be the last one so that it
-		// can be removed if rcvWndScale is negative (disabled).
-		header.TCPOptionWS, 3, uint8(rcvWndScale), header.TCPOptionNOP,
 	}
 
-	if rcvWndScale < 0 {
-		options = options[:len(options)-4]
+	if opts.TS {
+		tsOpt := [12]byte{}
+		header.EncodeTSOption(tsOpt[:], opts.TSVal, opts.TSEcr)
+		options = append(options, tsOpt[:]...)
+	}
+
+	// NOTE: a WS of zero is valid it indicates a scale of 1.
+	if opts.WS >= 0 {
+		// Initialize the WS option.
+		options = append(options,
+			header.TCPOptionWS, 3, uint8(opts.WS), header.TCPOptionNOP)
 	}
 
 	return sendTCPWithOptions(r, id, nil, flags, seq, ack, rcvWnd, options)
@@ -426,21 +410,22 @@ func sendSynTCP(r *stack.Route, id stack.TransportEndpointID, flags byte, seq, a
 // sendTCPWithOptions sends a TCP segment with the provided options via the
 // provided network endpoint and under the provided identity.
 func sendTCPWithOptions(r *stack.Route, id stack.TransportEndpointID, data buffer.View, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size, opts []byte) *tcpip.Error {
+	optLen := len(opts)
 	// Allocate a buffer for the TCP header.
-	hdr := buffer.NewPrependable(header.TCPMinimumSize + int(r.MaxHeaderLength()) + len(opts))
+	hdr := buffer.NewPrependable(header.TCPMinimumSize + int(r.MaxHeaderLength()) + optLen)
 
 	if rcvWnd > 0xffff {
 		rcvWnd = 0xffff
 	}
 
 	// Initialize the header.
-	tcp := header.TCP(hdr.Prepend(header.TCPMinimumSize + len(opts)))
+	tcp := header.TCP(hdr.Prepend(header.TCPMinimumSize + optLen))
 	tcp.Encode(&header.TCPFields{
 		SrcPort:    id.LocalPort,
 		DstPort:    id.RemotePort,
 		SeqNum:     uint32(seq),
 		AckNum:     uint32(ack),
-		DataOffset: uint8(header.TCPMinimumSize + len(opts)),
+		DataOffset: uint8(header.TCPMinimumSize + optLen),
 		Flags:      flags,
 		WindowSize: uint16(rcvWnd),
 	})
@@ -494,6 +479,20 @@ func sendTCP(r *stack.Route, id stack.TransportEndpointID, data buffer.View, fla
 
 // sendRaw sends a TCP segment to the endpoint's peer.
 func (e *endpoint) sendRaw(data buffer.View, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size) *tcpip.Error {
+	if e.sendTSOk {
+		// Embed the timestamp if timestamp has been enabled.
+		options := [12]byte{}
+		// We only use the lower 32 bits of the unix time in
+		// milliseconds. This is similar to what Linux does where it
+		// uses the lower 32 bits of the jiffies value in the tsVal
+		// field of the timestamp option. Further, RFC7323 section-5.4
+		// recommends millisecond resolution as the lowest recommended
+		// resolution for the timestamp clock.
+		//
+		// Ref: https://tools.ietf.org/html/rfc7323#section-5.4.
+		header.EncodeTSOption(options[:], e.timestamp(), uint32(e.recentTS))
+		return sendTCPWithOptions(&e.route, e.id, data, flags, seq, ack, rcvWnd, options[:])
+	}
 	return sendTCP(&e.route, e.id, data, flags, seq, ack, rcvWnd)
 }
 

@@ -5,9 +5,11 @@
 package tcp
 
 import (
+	"crypto/rand"
 	"math"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/netstack/sleep"
 	"github.com/google/netstack/tcpip"
@@ -107,6 +109,20 @@ type endpoint struct {
 	// also true, and they're both protected by the mutex.
 	workerCleanup bool
 
+	// sendTSOk is used to indicate when the TS Option has been negotiated.
+	// When sendTSOk is true every non RST segment should carry a TS as per
+	// RFC7323#section-1.1
+	sendTSOk bool
+
+	// recentTS is the timestamp that should be sent in the TSEcr field of
+	// the timestamp for future segments sent by the endpoint. This field is
+	// updated if required when a new segment is received by this endpoint.
+	recentTS uint32
+
+	// tsOffset is a randomized timestamp offset added to the tsVal field of
+	// the timestamp option. It's recommended for PAWS implementation.
+	tsOffset uint32
+
 	// The options below aren't implemented, but we remember the user
 	// settings because applications expect to be able to set/query these
 	// options.
@@ -168,6 +184,7 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 	e.segmentQueue.setLimit(2 * e.rcvBufSize)
 	e.workMu.Init()
 	e.workMu.Lock()
+	e.tsOffset = timeStampOffset()
 	return e
 }
 
@@ -1072,4 +1089,52 @@ func (e *endpoint) receiveBufferSize() int {
 	e.rcvListMu.Unlock()
 
 	return size
+}
+
+// updateRecentTimestamp stores recent timestamp if required using the algorithm
+// described in https://tools.ietf.org/html/rfc7323#section-4.3
+func (e *endpoint) updateRecentTimestamp(tsVal uint32, maxSentAck seqnum.Value, segSeq seqnum.Value) {
+	if e.sendTSOk && seqnum.Value(e.recentTS).LessThan(seqnum.Value(tsVal)) && segSeq.LessThanEq(maxSentAck) {
+		e.recentTS = tsVal
+	}
+}
+
+// maybeEnableTimestamp marks the timestamp option enabled for this endpoint if
+// the syn options indicate that timestamp option was negotiated. It also
+// initializes the recentTS with the value provided in synOpts.TSval.
+func (e *endpoint) maybeEnableTimestamp(synOpts *header.TCPSynOptions) {
+	if synOpts.TS {
+		e.sendTSOk = true
+		e.recentTS = synOpts.TSVal
+	}
+}
+
+// timestamp returns the timestamp value to be used in the TSVal field of the
+// timestamp option for outgoing TCP segments for a given endpoint.
+func (e *endpoint) timestamp() uint32 {
+	return tcpTimeStamp(e.tsOffset)
+}
+
+// tcpTimeStamp returns a timestamp offset by the provided offset. This is
+// not inlined above as it's used when syn cookies are in use and endpoint
+// is not created at the time when the syn cookie is sent.
+func tcpTimeStamp(offset uint32) uint32 {
+	now := time.Now()
+	return uint32(now.Unix()*1000+int64(now.Nanosecond()/1e6)) + offset
+}
+
+// timeStampOffset returns a randomized timestamp offset to be used when sending
+// timestamp values in a timestamp option for a tcp segment.
+func timeStampOffset() uint32 {
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	// Initialize a random tsOffset that will be added to the recentTS
+	// everytime the timestamp is sent when Timestamp option is enabled.
+	// See https://tools.ietf.org/html/rfc7323#section-5.4 for details on why
+	// this is required. NOTE: This is not completely to spec as normally this
+	// should be initialized in a manner analogous to how sequence numbers
+	// are randomized per connection basis. But for now this is sufficient.
+	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
 }
