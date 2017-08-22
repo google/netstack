@@ -622,7 +622,7 @@ func (e *endpoint) protocolMainLoop(passive bool) *tcpip.Error {
 		e.completeWorker()
 
 		if e.snd != nil {
-			e.snd.resendTimer.Stop()
+			e.snd.resendTimer.cleanup()
 		}
 
 		if closeTimer != nil {

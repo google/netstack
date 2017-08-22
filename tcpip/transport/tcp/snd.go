@@ -74,12 +74,11 @@ type sender struct {
 	// rttMeasureTime is the time when the rttMeasureSeqNum was sent.
 	rttMeasureTime time.Time
 
-	closed        bool
-	writeNext     *segment
-	writeList     segmentList
-	resendTimer   *time.Timer
-	resendTimerEn bool
-	resendWaker   sleep.Waker
+	closed      bool
+	writeNext   *segment
+	writeList   segmentList
+	resendTimer timer
+	resendWaker sleep.Waker
 
 	// srtt, rttvar & rto are the "smoothed round-trip time", "round-trip
 	// time variation" and "retransmit timeout", as defined in section 2 of
@@ -119,22 +118,6 @@ type fastRecovery struct {
 	maxCwnd int
 }
 
-// stopAndDrainTimer stops the given timer, and drains its channel if the timer
-// is enabled.
-func stopAndDrainTimer(t *time.Timer, enabled *bool) {
-	if !*enabled {
-		return
-	}
-
-	*enabled = false
-	t.Stop()
-
-	select {
-	case <-t.C:
-	default:
-	}
-}
-
 func newSender(ep *endpoint, iss, irs seqnum.Value, sndWnd seqnum.Size, mss uint16, sndWndScale int) *sender {
 	s := &sender{
 		ep:               ep,
@@ -166,10 +149,7 @@ func newSender(ep *endpoint, iss, irs seqnum.Value, sndWnd seqnum.Size, mss uint
 		s.maxPayloadSize = m
 	}
 
-	s.resendTimer = time.AfterFunc(time.Hour, func() {
-		s.resendWaker.Assert()
-	})
-	s.resendTimer.Stop()
+	s.resendTimer.init(&s.resendWaker)
 
 	return s
 }
@@ -201,16 +181,6 @@ func (s *sender) updateRTO(rtt time.Duration) {
 	}
 }
 
-// enableResendTimer enables the timer used to retransmit segment if it isn't
-// currently enabled and if it needed, that is, if we have unacknowledged
-// segments.
-func (s *sender) enableResendTimer() {
-	if !s.resendTimerEn && s.sndUna != s.sndNxt {
-		s.resendTimerEn = true
-		s.resendTimer.Reset(s.rto)
-	}
-}
-
 // resendSegment resends the first unacknowledged segment.
 func (s *sender) resendSegment() {
 	// Don't use any segments we already sent to measure RTT as they may
@@ -237,6 +207,12 @@ func (s *sender) reduceSlowStartThreshold() {
 // Returns true if the connection is still usable, or false if the connection
 // is deemed lost.
 func (s *sender) retransmitTimerExpired() bool {
+	// Check if the timer actually expired or if it's a spurious wake due
+	// to a previously orphaned runtime timer.
+	if !s.resendTimer.checkExpiration() {
+		return true
+	}
+
 	// Give up if we've waited more than a minute since the last resend.
 	if s.rto >= 60*time.Second {
 		return false
@@ -245,7 +221,6 @@ func (s *sender) retransmitTimerExpired() bool {
 	// Set new timeout. The timer will be restarted by the call to sendData
 	// below.
 	s.rto *= 2
-	s.resendTimerEn = false
 
 	if s.fr.active {
 		// We were attempting fast recovery but were not successfull.
@@ -342,7 +317,10 @@ func (s *sender) sendData() {
 	// Remember the next segment we'll write.
 	s.writeNext = seg
 
-	s.enableResendTimer()
+	// Enable the timer if we have pending data and it's not enabled yet.
+	if !s.resendTimer.enabled() && s.sndUna != s.sndNxt {
+		s.resendTimer.enable(s.rto)
+	}
 }
 
 func (s *sender) enterFastRecovery() {
@@ -479,7 +457,7 @@ func (s *sender) handleRcvdSegment(seg *segment) {
 	if (ack - 1).InRange(s.sndUna, s.sndNxt) {
 		// When an ack is received we must reset the timer. We stop it
 		// here and it will be restarted later if needed.
-		stopAndDrainTimer(s.resendTimer, &s.resendTimerEn)
+		s.resendTimer.disable()
 
 		// Remove all acknowledged data from the write list.
 		acked := s.sndUna.Size(ack)
