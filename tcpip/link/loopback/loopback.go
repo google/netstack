@@ -52,18 +52,15 @@ func (*endpoint) LinkAddress() tcpip.LinkAddress {
 // WritePacket implements stack.LinkEndpoint.WritePacket. It delivers outbound
 // packets to the network-layer dispatcher.
 func (e *endpoint) WritePacket(_ *stack.Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.NetworkProtocolNumber) *tcpip.Error {
-	var views [1]buffer.View
 	if len(payload) == 0 {
 		// We don't have a payload, so just use the buffer from the
 		// header as the full packet.
 		v := hdr.View()
-		vv := v.ToVectorisedView(views)
+		vv := v.ToVectorisedView([1]buffer.View{})
 		e.dispatcher.DeliverNetworkPacket(e, "", protocol, &vv)
 	} else {
-		v := buffer.NewView(len(payload) + hdr.UsedLength())
-		copy(v, hdr.UsedBytes())
-		copy(v[hdr.UsedLength():], payload)
-		vv := v.ToVectorisedView(views)
+		views := []buffer.View{hdr.View(), payload}
+		vv := buffer.NewVectorisedView(len(views[0])+len(views[1]), views)
 		e.dispatcher.DeliverNetworkPacket(e, "", protocol, &vv)
 	}
 
