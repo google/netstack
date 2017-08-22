@@ -15,6 +15,7 @@ package stack
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/netstack/tcpip"
@@ -109,8 +110,17 @@ func (s *Stack) SetTransportProtocolHandler(p tcpip.TransportProtocolNumber, h f
 }
 
 // Stats returns a snapshot of the current stats.
+//
+// NOTE: The underlying stats are updated using atomic instructions as a result
+// the snapshot returned does not represent the value of all the stats at any
+// single given point of time.
 func (s *Stack) Stats() tcpip.Stats {
-	return s.stats
+	return tcpip.Stats{
+		UnknownProtocolRcvdPackets:        atomic.LoadUint64(&s.stats.UnknownProtocolRcvdPackets),
+		UnknownNetworkEndpointRcvdPackets: atomic.LoadUint64(&s.stats.UnknownNetworkEndpointRcvdPackets),
+		MalformedRcvdPackets:              atomic.LoadUint64(&s.stats.MalformedRcvdPackets),
+		DroppedPackets:                    atomic.LoadUint64(&s.stats.DroppedPackets),
+	}
 }
 
 // MutableStats returns a mutable copy of the current stats.
