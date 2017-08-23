@@ -74,7 +74,7 @@ func newHandshake(ep *endpoint, rcvWnd seqnum.Size) (handshake, *tcpip.Error) {
 		ep:          ep,
 		active:      true,
 		rcvWnd:      rcvWnd,
-		rcvWndScale: findWndScale(rcvWnd),
+		rcvWndScale: FindWndScale(rcvWnd),
 	}
 	if err := h.resetState(); err != nil {
 		return handshake{}, err
@@ -83,9 +83,9 @@ func newHandshake(ep *endpoint, rcvWnd seqnum.Size) (handshake, *tcpip.Error) {
 	return h, nil
 }
 
-// findWndScale determines the window scale to use for the given maximum window
+// FindWndScale determines the window scale to use for the given maximum window
 // size.
-func findWndScale(wnd seqnum.Size) int {
+func FindWndScale(wnd seqnum.Size) int {
 	if wnd < 0x10000 {
 		return 0
 	}
@@ -340,7 +340,7 @@ func (h *handshake) execute() *tcpip.Error {
 	}
 
 	// Execute is also called in a listen context so we want to make sure we
-	// only send the TS option when we received the TS in the initial syn.
+	// only send the TS option when we received the TS in the initial SYN.
 	if h.state == handshakeSynRcvd {
 		synOpts.TS = h.ep.sendTSOk
 	}
@@ -392,12 +392,11 @@ func sendSynTCP(r *stack.Route, id stack.TransportEndpointID, flags byte, seq, a
 	}
 
 	if opts.TS {
-		tsOpt := [12]byte{}
-		header.EncodeTSOption(tsOpt[:], opts.TSVal, opts.TSEcr)
+		tsOpt := header.EncodeTSOption(opts.TSVal, opts.TSEcr)
 		options = append(options, tsOpt[:]...)
 	}
 
-	// NOTE: a WS of zero is valid it indicates a scale of 1.
+	// NOTE: a WS of zero is a valid value and it indicates a scale of 1.
 	if opts.WS >= 0 {
 		// Initialize the WS option.
 		options = append(options,
@@ -481,16 +480,18 @@ func sendTCP(r *stack.Route, id stack.TransportEndpointID, data buffer.View, fla
 func (e *endpoint) sendRaw(data buffer.View, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size) *tcpip.Error {
 	if e.sendTSOk {
 		// Embed the timestamp if timestamp has been enabled.
-		options := [12]byte{}
+		//
 		// We only use the lower 32 bits of the unix time in
 		// milliseconds. This is similar to what Linux does where it
 		// uses the lower 32 bits of the jiffies value in the tsVal
-		// field of the timestamp option. Further, RFC7323 section-5.4
-		// recommends millisecond resolution as the lowest recommended
-		// resolution for the timestamp clock.
+		// field of the timestamp option.
+		//
+		// Further, RFC7323 section-5.4 recommends millisecond
+		// resolution as the lowest recommended resolution for the
+		// timestamp clock.
 		//
 		// Ref: https://tools.ietf.org/html/rfc7323#section-5.4.
-		header.EncodeTSOption(options[:], e.timestamp(), uint32(e.recentTS))
+		options := header.EncodeTSOption(e.timestamp(), uint32(e.recentTS))
 		return sendTCPWithOptions(&e.route, e.id, data, flags, seq, ack, rcvWnd, options[:])
 	}
 	return sendTCP(&e.route, e.id, data, flags, seq, ack, rcvWnd)

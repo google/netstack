@@ -335,7 +335,8 @@ func TCPSynOptions(wantOpts header.TCPSynOptions) TransportChecker {
 				tsVal = binary.BigEndian.Uint32(opts[i+2:])
 				tsEcr = uint32(0)
 				if tcp.Flags()&header.TCPFlagAck != 0 {
-					// if the syn is an syn-ack then read the tsEcr value as well.
+					// If the syn is an SYN-ACK then read
+					// the tsEcr value as well.
 					tsEcr = binary.BigEndian.Uint32(opts[i+6:])
 				}
 				foundTS = true
@@ -389,7 +390,7 @@ func TCPTimestampChecker(wantTS bool, wantTSVal uint32, wantTSEcr uint32) Transp
 				i++
 			case header.TCPOptionTS:
 				if i+10 > limit {
-					t.Fatalf("TS option found, but option truncated, option length: %d, want 10 bytes", limit-i)
+					t.Fatalf("TS option found, but option is truncated, option length: %d, want 10 bytes", limit-i)
 				}
 				if opts[i+1] != 10 {
 					t.Fatalf("TS option found, but bad length specified: %d, want: 10", opts[i+1])

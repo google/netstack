@@ -49,7 +49,7 @@ type testContext struct {
 	ep   tcpip.Endpoint
 	wq   waiter.Queue
 
-	// timeStampEnabled is true if ep is connected with the Timestamp option
+	// timeStampEnabled is true if ep is connected with the timestamp option
 	// enabled.
 	timeStampEnabled bool
 }
@@ -60,7 +60,7 @@ const (
 	// of loopback interfaces on linux systems.
 	defaultMTU = 65535
 
-	// defaultIPv4MSS is the MSS sent by the network stack in syn/syn-ack for an
+	// defaultIPv4MSS is the MSS sent by the network stack in SYN/SYN-ACK for an
 	// IPv4 endpoint when the MTU is set to defaultMTU in the test.
 	defaultIPv4MSS = defaultMTU - header.IPv4MinimumSize - header.TCPMinimumSize
 )
@@ -1210,11 +1210,10 @@ func testBrokenUpWrite(c *testContext, maxPayload int) {
 		bytesReceived += payloadLen
 		var options []byte
 		if c.timeStampEnabled {
-			// If timestamp option is enabled then echo back the timestamp and increment
+			// If timestamp option is enabled, echo back the timestamp and increment
 			// the TSEcr value included in the packet and send that back as the TSVal.
 			parsedOpts := tcp.ParsedOptions()
-			tsOpt := [12]byte{}
-			header.EncodeTSOption(tsOpt[:], parsedOpts.TSEcr+1, parsedOpts.TSVal)
+			tsOpt := header.EncodeTSOption(parsedOpts.TSEcr+1, parsedOpts.TSVal)
 			options = append(options, tsOpt[:]...)
 		}
 		// Acknowledge the data.
@@ -1262,11 +1261,11 @@ func passiveConnect(c *testContext, maxPayload, wndScale int, synOptions header.
 
 // NOTE: MSS is not a negotiated option and it can be asymmetric in each
 // direction. This function uses the maxPayload to set the MSS to be sent to the
-// peer on a connect and validates that the MSS in the synACK response is equal
-// to the MTU- (tcphdr len + iphdr len).
+// peer on a connect and validates that the MSS in the SYN-ACK response is equal
+// to the MTU - (tcphdr len + iphdr len).
 //
-// wndScale is the expected window scale in the synack and sndWndScale is the
-// value of the window scaling option to be sent in the syn. If sndWndScale > 0
+// wndScale is the expected window scale in the SYN-ACK and sndWndScale is the
+// value of the window scaling option to be sent in the SYN. If sndWndScale > 0
 // then we send the WindowScale option.
 func passiveConnectWithOptions(c *testContext, maxPayload, wndScale int, synOptions header.TCPSynOptions) {
 	opts := []byte{
@@ -1279,8 +1278,7 @@ func passiveConnectWithOptions(c *testContext, maxPayload, wndScale int, synOpti
 		}...)
 	}
 	if synOptions.TS {
-		tsOpt := [12]byte{}
-		header.EncodeTSOption(tsOpt[:], synOptions.TSVal, synOptions.TSEcr)
+		tsOpt := header.EncodeTSOption(synOptions.TSVal, synOptions.TSEcr)
 		opts = append(opts, tsOpt[:]...)
 	}
 
@@ -1308,8 +1306,8 @@ func passiveConnectWithOptions(c *testContext, maxPayload, wndScale int, synOpti
 		checker.TCPSynOptions(header.TCPSynOptions{MSS: synOptions.MSS, WS: wndScale}),
 	}
 
-	// If TS option was enabled in the original syn then add a checker to
-	// validate the Timestamp option in the syn-ack.
+	// If TS option was enabled in the original SYN then add a checker to
+	// validate the Timestamp option in the SYN-ACK.
 	if synOptions.TS {
 		tcpCheckers = append(tcpCheckers, checker.TCPTimestampChecker(synOptions.TS, 0, synOptions.TSVal))
 	}
@@ -1335,10 +1333,9 @@ func passiveConnectWithOptions(c *testContext, maxPayload, wndScale int, synOpti
 		// Echo the tsVal back to the peer in the tsEcr field of the
 		// timestamp option.
 		opts := tcp.ParsedOptions()
-		tsOpt := [12]byte{}
-		// Increment TSVal by 1 from the value sent in the syn and echo
-		// the TSVal in the syn-ack in the TSEcr field.
-		header.EncodeTSOption(tsOpt[:], synOptions.TSVal+1, opts.TSVal)
+		// Increment TSVal by 1 from the value sent in the SYN and echo
+		// the TSVal in the SYN-ACK in the TSEcr field.
+		tsOpt := header.EncodeTSOption(synOptions.TSVal+1, opts.TSVal)
 		ackHeaders.tcpOpts = tsOpt[:]
 	}
 

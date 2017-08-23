@@ -16,6 +16,12 @@ import (
 	"github.com/google/netstack/waiter"
 )
 
+// defaultWindowScale value specified here depends on the tcp.DefaultBufferSize
+// constant defined in the endpoint.go because the tcp.DefaultBufferSize is used
+// in tcp.newHandshake to determine the window scale to use when sending a
+// SYN/SYN-ACK.
+var defaultWindowScale = tcp.FindWndScale(tcp.DefaultBufferSize)
+
 // createConnectedWithTimestampOption creates and connects c.ep and returns a
 // rawEndpoint which represents the other end of the connection.
 func createConnectedWithTimestampOption(c *testContext) *rawEndpoint {
@@ -46,20 +52,19 @@ func createConnectedWithTimestampOption(c *testContext) *rawEndpoint {
 			checker.TCPSynOptions(header.TCPSynOptions{
 				MSS: uint16(c.linkEP.MTU() - header.IPv4MinimumSize - header.TCPMinimumSize),
 				TS:  true,
-				WS:  2, // depends on the defaultBufferSize in endpoint.go
+				WS:  defaultWindowScale,
 			}),
 		),
 	)
 	tcpSeg := header.TCP(header.IPv4(b).Payload())
 	synOptions := header.ParseSynOptions(tcpSeg.Options(), false)
 
-	// Build options w/ tsVal to be sent in the syn-ack.
+	// Build options w/ tsVal to be sent in the SYN-ACK.
 	tsVal := uint32(1)
 	tsEcr := synOptions.TSVal
-	synAckOptions := [12]byte{}
-	header.EncodeTSOption(synAckOptions[:], tsVal, tsEcr)
+	synAckOptions := header.EncodeTSOption(tsVal, tsEcr)
 
-	// Build Syn-ACK w/ Timestamp enabled.
+	// Build SYN-ACK w/ Timestamp enabled.
 	c.irs = seqnum.Value(tcpSeg.SequenceNumber())
 	iss := seqnum.Value(789)
 	c.sendPacket(nil, &headers{
@@ -115,10 +120,10 @@ func createConnectedWithTimestampOption(c *testContext) *rawEndpoint {
 	}
 }
 
+// TestTimeStampEnabledConnect tests that netstack sends the timestamp option on
+// an active connect and sets the TS Echo Reply fields correctly when the
+// SYN-ACK also indicates support for the TS option and provides a TSVal.
 func TestTimeStampEnabledConnect(t *testing.T) {
-	// This test ensures that netstack sends timestamp option on an active
-	// connect and sets the TS Echo Reply fields correctly when the Syn-ACK
-	// also indicates support for the TS option and provides a TSVal.
 	c := newTestContext(t, defaultMTU)
 	defer c.cleanup()
 
@@ -130,13 +135,15 @@ func TestTimeStampEnabledConnect(t *testing.T) {
 	defer c.wq.EventUnregister(&we)
 
 	// The following tests ensure that TS option once enabled behaves
-	// correctly as per RFC in the cases described in
+	// correctly as described in
 	// https://tools.ietf.org/html/rfc7323#section-4.3.
 	//
-	// We are not testing delayed acks here, but we do test out of order
+	// We are not testing delayed ACKs here, but we do test out of order
 	// packet delivery and filling the sequence number hole created due to
-	// the out of order packet and verify that the sequence numbers and
-	// timestamps are as expected.
+	// the out of order packet.
+	//
+	// The test also verifies that the sequence numbers and timestamps are
+	// as expected.
 	data := []byte{1, 2, 3}
 
 	// First we increment tsVal by a small amount.
@@ -155,7 +162,7 @@ func TestTimeStampEnabledConnect(t *testing.T) {
 
 	// Next we fill the hole and the returned ACK should contain the
 	// cumulative sequence number acking all data sent till now and have the
-	// latest timestamp sent below in it's TSEcr field.
+	// latest timestamp sent below in its TSEcr field.
 	tsVal -= 100
 	rep.sendPacketWithTS(data, tsVal)
 	rep.nextSeqNum += 3
@@ -168,7 +175,7 @@ func TestTimeStampEnabledConnect(t *testing.T) {
 
 	// Increment tsVal again by a large value which should cause the
 	// timestamp value to wrap around. The returned ACK should contain the
-	// wrapped around timestamp in it's tsEcr field and not the tsVal from
+	// wrapped around timestamp in its tsEcr field and not the tsVal from
 	// the previous packet sent above.
 	tsVal += 0x7fffffff
 	rep.sendPacketWithTS(data, tsVal)
@@ -193,8 +200,8 @@ func TestTimeStampEnabledConnect(t *testing.T) {
 	}
 }
 
-// rawEndpoint is just a small wrapper around a tcp endpoint state to
-// make sending data and ack packets easily while being able to manipulate
+// rawEndpoint is just a small wrapper around a TCP endpoint's state to
+// make sending data and ACK packets easily while being able to manipulate
 // the sequence numbers and timestamp values as needed.
 type rawEndpoint struct {
 	c          *testContext
@@ -212,10 +219,9 @@ type rawEndpoint struct {
 // for the packet to be sent out.
 func (r *rawEndpoint) sendPacketWithTS(payload []byte, tsVal uint32) {
 	r.tsVal = tsVal
-	tsOpt := [12]byte{}
-	// Increment TSVal by 1 from the value sent in the syn and echo the
-	// TSVal in the syn-ack in the TSEcr field.
-	header.EncodeTSOption(tsOpt[:], r.tsVal, r.recentTS)
+	// Increment TSVal by 1 from the value sent in the SYN and echo the
+	// TSVal in the SYN-ACK in the TSEcr field.
+	tsOpt := header.EncodeTSOption(r.tsVal, r.recentTS)
 	r.sendPacket(payload, tsOpt[:])
 }
 
@@ -254,10 +260,11 @@ func (r *rawEndpoint) verifyAckWithTS(tsVal uint32) {
 	r.recentTS = opts.TSVal
 }
 
+// TestTimeStampDisabledConnect tests that netstack sends timestamp option on an
+// active connect but if the SYN-ACK doesn't specify the TS option then
+// timestamp option is not enabled and future packets do not contain a
+// timestamp.
 func TestTimeStampDisabledConnect(t *testing.T) {
-	// This test ensures that netstack sends timestamp option on an active
-	// connect but if the syn-ACK doesn't specify the TS option then timestamp
-	// option is not enabled and future packets do not contain a timestamp.
 	c := newTestContext(t, defaultMTU)
 	defer c.cleanup()
 
@@ -280,7 +287,7 @@ func TestTimeStampDisabledConnect(t *testing.T) {
 
 	// Receive SYN packet.
 	b := c.getPacket()
-	// Validate that the syn has the timestamp option and a valid
+	// Validate that the SYN has the timestamp option and a valid
 	// TS value.
 	checker.IPv4(c.t, b,
 		checker.TCP(
@@ -289,13 +296,13 @@ func TestTimeStampDisabledConnect(t *testing.T) {
 			checker.TCPSynOptions(header.TCPSynOptions{
 				MSS: defaultMTU - header.IPv4MinimumSize - header.TCPMinimumSize,
 				TS:  true,
-				WS:  2, // depends on the defaultBufferSize in endpoint.go
+				WS:  defaultWindowScale,
 			}),
 		),
 	)
 
 	tcpSeg := header.TCP(header.IPv4(b).Payload())
-	// Build Syn-ACK w/ no timestamp option.
+	// Build SYN-ACK w/ no timestamp option.
 	c.irs = seqnum.Value(tcpSeg.SequenceNumber())
 	iss := seqnum.Value(789)
 	c.sendPacket(nil, &headers{
@@ -307,7 +314,8 @@ func TestTimeStampDisabledConnect(t *testing.T) {
 		rcvWnd:  30000,
 	})
 
-	// Read ACK and verify that Timestamp Option is missing from the ack.
+	// Read ACK and verify that the timestamp option is missing from the
+	// ACK.
 	checker.IPv4(c.t, c.getPacket(),
 		checker.TCP(
 			checker.DstPort(testPort),
@@ -392,11 +400,11 @@ func timeStampEnabledAccept(t *testing.T, cookieEnabled bool, wndScale int, wndS
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
-	// Check that data is received and the timestamp TSEcr field matches
-	// the expected value.
+	// Check that data is received and that the timestamp option TSEcr field
+	// matches the expected value.
 	b := c.getPacket()
 	checker.IPv4(c.t, b,
-		// add 12 bytes for the timestamp option + 2 NOPs to align at 4
+		// Add 12 bytes for the timestamp option + 2 NOPs to align at 4
 		// byte boundary.
 		checker.PayloadLen(len(data)+header.TCPMinimumSize+12),
 		checker.TCP(
@@ -410,13 +418,13 @@ func timeStampEnabledAccept(t *testing.T, cookieEnabled bool, wndScale int, wndS
 	)
 }
 
+// TestTimeStampEnabledAccept tests that if the SYN on a passive connect
+// specifies the Timestamp option then the Timestamp option is sent on a SYN-ACK
+// and echoes the tsVal field of the original SYN in the tcEcr field of the
+// SYN-ACK. We cover the cases where SYN cookies are enabled/disabled and verify
+// that Timestamp option is enabled in both cases if requested in the original
+// SYN.
 func TestTimeStampEnabledAccept(t *testing.T) {
-	// This test ensures that if the SYN on a passive connect specifies the
-	// Timestamp option then the Timestamp option is sent on a SYN-ACK and
-	// echoes the tsVal field of the original SYN in the tcEcr field of the
-	// SYN-ACK. We cover the cases where SYN cookies are enabled/disabled
-	// and verify that Timestamp option is enabled in both cases if
-	// requested in the original SYN.
 	testCases := []struct {
 		cookieEnabled bool
 		wndScale      int
@@ -506,9 +514,9 @@ func timeStampDisabledAccept(t *testing.T, cookieEnabled bool, wndScale int, wnd
 	)
 }
 
+// TestTimeStampDisabledAccept tests that Timestamp option is not used when the
+// peer doesn't advertise it and connection is established with Accept().
 func TestTimeStampDisabledAccept(t *testing.T) {
-	// This test ensures that Timestamp option is not used when the peer
-	// doesn't advertise it and connection is established with Accept().
 	testCases := []struct {
 		cookieEnabled bool
 		wndScale      int

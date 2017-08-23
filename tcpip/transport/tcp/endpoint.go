@@ -40,8 +40,8 @@ const (
 	notifyClose
 )
 
-// defaultBufferSize is the default size of the receive and send buffers.
-const defaultBufferSize = 208 * 1024
+// DefaultBufferSize is the default size of the receive and send buffers.
+const DefaultBufferSize = 208 * 1024
 
 // endpoint represents a TCP endpoint. This struct serves as the interface
 // between users of the endpoint and the protocol implementation; it is legal to
@@ -110,7 +110,7 @@ type endpoint struct {
 	workerCleanup bool
 
 	// sendTSOk is used to indicate when the TS Option has been negotiated.
-	// When sendTSOk is true every non RST segment should carry a TS as per
+	// When sendTSOk is true every non-RST segment should carry a TS as per
 	// RFC7323#section-1.1
 	sendTSOk bool
 
@@ -119,8 +119,8 @@ type endpoint struct {
 	// updated if required when a new segment is received by this endpoint.
 	recentTS uint32
 
-	// tsOffset is a randomized timestamp offset added to the tsVal field of
-	// the timestamp option. It's recommended for PAWS implementation.
+	// tsOffset is a randomized offset added to the value of the
+	// TSVal field in the timestamp option.
 	tsOffset uint32
 
 	// The options below aren't implemented, but we remember the user
@@ -176,8 +176,8 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 		stack:       stack,
 		netProto:    netProto,
 		waiterQueue: waiterQueue,
-		rcvBufSize:  defaultBufferSize,
-		sndBufSize:  defaultBufferSize,
+		rcvBufSize:  DefaultBufferSize,
+		sndBufSize:  DefaultBufferSize,
 		noDelay:     true,
 		reuseAddr:   true,
 	}
@@ -1091,7 +1091,7 @@ func (e *endpoint) receiveBufferSize() int {
 	return size
 }
 
-// updateRecentTimestamp stores recent timestamp if required using the algorithm
+// updateRecentTimestamp updates the recent timestamp using the algorithm
 // described in https://tools.ietf.org/html/rfc7323#section-4.3
 func (e *endpoint) updateRecentTimestamp(tsVal uint32, maxSentAck seqnum.Value, segSeq seqnum.Value) {
 	if e.sendTSOk && seqnum.Value(e.recentTS).LessThan(seqnum.Value(tsVal)) && segSeq.LessThanEq(maxSentAck) {
@@ -1100,7 +1100,7 @@ func (e *endpoint) updateRecentTimestamp(tsVal uint32, maxSentAck seqnum.Value, 
 }
 
 // maybeEnableTimestamp marks the timestamp option enabled for this endpoint if
-// the syn options indicate that timestamp option was negotiated. It also
+// the SYN options indicate that timestamp option was negotiated. It also
 // initializes the recentTS with the value provided in synOpts.TSval.
 func (e *endpoint) maybeEnableTimestamp(synOpts *header.TCPSynOptions) {
 	if synOpts.TS {
@@ -1116,25 +1116,28 @@ func (e *endpoint) timestamp() uint32 {
 }
 
 // tcpTimeStamp returns a timestamp offset by the provided offset. This is
-// not inlined above as it's used when syn cookies are in use and endpoint
-// is not created at the time when the syn cookie is sent.
+// not inlined above as it's used when SYN cookies are in use and endpoint
+// is not created at the time when the SYN cookie is sent.
 func tcpTimeStamp(offset uint32) uint32 {
 	now := time.Now()
 	return uint32(now.Unix()*1000+int64(now.Nanosecond()/1e6)) + offset
 }
 
 // timeStampOffset returns a randomized timestamp offset to be used when sending
-// timestamp values in a timestamp option for a tcp segment.
+// timestamp values in a timestamp option for a TCP segment.
 func timeStampOffset() uint32 {
 	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {
 		panic(err)
 	}
 	// Initialize a random tsOffset that will be added to the recentTS
-	// everytime the timestamp is sent when Timestamp option is enabled.
-	// See https://tools.ietf.org/html/rfc7323#section-5.4 for details on why
-	// this is required. NOTE: This is not completely to spec as normally this
-	// should be initialized in a manner analogous to how sequence numbers
-	// are randomized per connection basis. But for now this is sufficient.
+	// everytime the timestamp is sent when the Timestamp option is enabled.
+	//
+	// See https://tools.ietf.org/html/rfc7323#section-5.4 for details on
+	// why this is required.
+	//
+	// NOTE: This is not completely to spec as normally this should be
+	// initialized in a manner analogous to how sequence numbers are
+	// randomized per connection basis. But for now this is sufficient.
 	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
 }

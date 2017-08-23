@@ -85,6 +85,7 @@ type TCPSynOptions struct {
 	MSS uint16
 
 	// WS is the window scale option provided by the peer in the SYN.
+	//
 	// Set to -1 if no window scale option was provided.
 	WS int
 
@@ -210,8 +211,8 @@ func (b TCP) Options() []byte {
 	return b[TCPMinimumSize:b.DataOffset()]
 }
 
-// ParsedOptions returns a TCPOptions structure which parses and caches the tcp
-// option values in the tcp segment. NOTE: Invoking this function repeatedly is
+// ParsedOptions returns a TCPOptions structure which parses and caches the TCP
+// option values in the TCP segment. NOTE: Invoking this function repeatedly is
 // expensive as it reparses the options on each invocation.
 func (b TCP) ParsedOptions() TCPOptions {
 	return ParseTCPOptions(b.Options())
@@ -257,7 +258,7 @@ func (b TCP) EncodePartial(partialChecksum, length uint16, seqnum, acknum uint32
 	b.SetChecksum(^checksum)
 }
 
-// ParseSynOptions parses the options received in a syn segment and returns the
+// ParseSynOptions parses the options received in a SYN segment and returns the
 // relevant ones. opts should point to the option part of the TCP Header.
 func ParseSynOptions(opts []byte, isAck bool) TCPSynOptions {
 	limit := len(opts)
@@ -307,7 +308,7 @@ func ParseSynOptions(opts []byte, isAck bool) TCPSynOptions {
 			}
 			synOpts.TSVal = binary.BigEndian.Uint32(opts[i+2:])
 			if isAck {
-				// If the segment is a syn-ack then store the Time Stamp Echo Reply
+				// If the segment is a SYN-ACK then store the Timestamp Echo Reply
 				// in the segment.
 				synOpts.TSEcr = binary.BigEndian.Uint32(opts[i+6:])
 			}
@@ -368,14 +369,16 @@ func ParseTCPOptions(b []byte) TCPOptions {
 	return opts
 }
 
-// EncodeTSOption writes the timestamp option into the provided byte slice with
-// the passed in tsVal/tsEcr. len(b) should be >= 12. This function always pads
-// the option with two TCPOptionNOP to make sure it is correctly quad aligned.
-func EncodeTSOption(b []byte, tsVal, tsEcr uint32) {
+// EncodeTSOption builds and returns an array containing a TCP
+// timestamp option with the TSVal/TSEcr fields set to the value of
+// tsVal/tsEcr. This function also pads the option with two
+// TCPOptionNOP to make sure it is correctly quad aligned.
+func EncodeTSOption(tsVal, tsEcr uint32) (b [12]byte) {
 	b[0] = TCPOptionTS
 	b[1] = 10
 	binary.BigEndian.PutUint32(b[2:], tsVal)
 	binary.BigEndian.PutUint32(b[6:], tsEcr)
 	b[10] = TCPOptionNOP
 	b[11] = TCPOptionNOP
+	return b
 }
