@@ -538,3 +538,62 @@ func TestSendGreaterThanMTUWithOptions(t *testing.T) {
 	_ = createConnectedWithTimestampOption(c)
 	testBrokenUpWrite(c, maxPayload)
 }
+
+func TestSegmentDropWhenTimestampMissing(t *testing.T) {
+	const maxPayload = 100
+	c := newTestContext(t, uint32(header.TCPMinimumSize+header.IPv4MinimumSize+maxPayload))
+	defer c.cleanup()
+
+	rep := createConnectedWithTimestampOption(c)
+
+	// Register for read.
+	we, ch := waiter.NewChannelEntry(nil)
+	c.wq.EventRegister(&we, waiter.EventIn)
+	defer c.wq.EventUnregister(&we)
+
+	droppedPackets := c.s.Stats().DroppedPackets
+	data := []byte{1, 2, 3}
+	// Save the sequence number as we will reset it later down
+	// in the test.
+	savedSeqNum := rep.nextSeqNum
+	rep.sendPacket(data, nil)
+
+	select {
+	case <-ch:
+		t.Fatalf("Got data to read when we expect packet to be dropped")
+	case <-time.After(1 * time.Second):
+		// We expect that no data will be available to read.
+	}
+
+	// Assert that DroppedPackets was incremented by 1.
+	if got, want := c.s.Stats().DroppedPackets, droppedPackets+1; got != want {
+		t.Fatalf("incorrect number of dropped packets, got: %v, want: %v", got, want)
+	}
+
+	droppedPackets = c.s.Stats().DroppedPackets
+	// Reset the sequence number so that the other endpoint accepts
+	// this segment and does not treat it like an out of order delivery.
+	rep.nextSeqNum = savedSeqNum
+	// Now send a packet with timestamp and we should get the data.
+	rep.sendPacketWithTS(data, rep.tsVal+1)
+
+	select {
+	case <-ch:
+	case <-time.After(1 * time.Second):
+		t.Fatalf("Timed out waiting for data to arrive")
+	}
+
+	// Assert that DroppedPackets was not incremented by 1.
+	if got, want := c.s.Stats().DroppedPackets, droppedPackets; got != want {
+		t.Fatalf("incorrect number of dropped packets, got: %v, want: %v", got, want)
+	}
+
+	// Issue a read and we should data.
+	got, err := c.ep.Read(nil)
+	if err != nil {
+		t.Fatalf("Unexpected error from Read: %v", err)
+	}
+	if want := data; bytes.Compare(got, want) != 0 {
+		t.Fatalf("Data is different: got: %v, want: %v", got, want)
+	}
+}

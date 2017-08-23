@@ -1193,7 +1193,6 @@ func testBrokenUpWrite(c *testContext, maxPayload int) {
 		numPackets++
 		tcp := header.TCP(header.IPv4(b).Payload())
 		payloadLen := len(tcp.Payload())
-		c.t.Logf("bytesReceived: %d, payloadLen: %d\n", bytesReceived, payloadLen)
 		checker.IPv4(c.t, b,
 			checker.TCP(
 				checker.DstPort(testPort),

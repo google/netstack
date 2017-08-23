@@ -6,6 +6,7 @@ package tcp
 
 import (
 	"crypto/rand"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/netstack/sleep"
@@ -260,7 +261,16 @@ func (h *handshake) synRcvdState(s *segment) *tcpip.Error {
 	// We have previously received (and acknowledged) the peer's SYN. If the
 	// peer acknowledges our SYN, the handshake is completed.
 	if s.flagIsSet(flagAck) {
-		// Update Timestamp if required. See RFC7323, section-4.3.
+
+		// If the timestamp option is negotiated and the segment does
+		// not carry a timestamp option then the segment must be dropped
+		// as per https://tools.ietf.org/html/rfc7323#section-3.2.
+		if h.ep.sendTSOk && !s.parsedOptions.TS {
+			atomic.AddUint64(&h.ep.stack.MutableStats().DroppedPackets, 1)
+			return nil
+		}
+
+		// Update timestamp if required. See RFC7323, section-4.3.
 		h.ep.updateRecentTimestamp(s.parsedOptions.TSVal, h.ackNum, s.sequenceNumber)
 
 		h.state = handshakeCompleted
@@ -587,6 +597,16 @@ func (e *endpoint) handleSegments() bool {
 			// Patch the window size in the segment according to the
 			// send window scale.
 			s.window <<= e.snd.sndWndScale
+
+			// If the timestamp option is negotiated and the segment
+			// does not carry a timestamp option then the segment
+			// must be dropped as per
+			// https://tools.ietf.org/html/rfc7323#section-3.2.
+			if e.sendTSOk && !s.parsedOptions.TS {
+				atomic.AddUint64(&e.stack.MutableStats().DroppedPackets, 1)
+				s.decRef()
+				continue
+			}
 
 			// RFC 793, page 41 states that "once in the ESTABLISHED
 			// state all segments must carry current acknowledgment
