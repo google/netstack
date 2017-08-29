@@ -184,9 +184,12 @@ func LogPacket(prefix string, protocol tcpip.NetworkProtocolNumber, b, plb []byt
 				flagsStr[i] = ' '
 			}
 		}
-
 		details = fmt.Sprintf("flags:0x%02x (%v) seqnum: %v ack: %v win: %v xsum:0x%x", flags, string(flagsStr), tcp.SequenceNumber(), tcp.AckNumber(), tcp.WindowSize(), tcp.Checksum())
-
+		if flags&header.TCPFlagSyn != 0 {
+			details += fmt.Sprintf(" options: %+v", header.ParseSynOptions(tcp.Options(), flags&header.TCPFlagAck != 0))
+		} else {
+			details += fmt.Sprintf(" options: %+v", tcp.ParsedOptions())
+		}
 	default:
 		log.Printf("%s %v -> %v unknown transport protocol: %d", prefix, src, dst, transProto)
 		return
