@@ -588,7 +588,7 @@ func TestSegmentDropWhenTimestampMissing(t *testing.T) {
 		t.Fatalf("incorrect number of dropped packets, got: %v, want: %v", got, want)
 	}
 
-	// Issue a read and we should data.
+	// Issue a read and we should get data.
 	got, err := c.ep.Read(nil)
 	if err != nil {
 		t.Fatalf("Unexpected error from Read: %v", err)
