@@ -294,19 +294,7 @@ func TestTimeStampDisabledConnect(t *testing.T) {
 	createConnectedWithOptions(c, header.TCPSynOptions{})
 }
 
-func timeStampEnabledAccept(t *testing.T, cookieEnabled bool, wndScale int, wndSize uint16) {
-	savedSynCountThreshold := tcp.SynRcvdCountThreshold
-	defer func() {
-		tcp.SynRcvdCountThreshold = savedSynCountThreshold
-	}()
-
-	if cookieEnabled {
-		tcp.SynRcvdCountThreshold = 0
-	}
-	c := newTestContext(t, defaultMTU)
-	defer c.cleanup()
-
-	c.t.Logf("Test w/ CookieEnabled = %v", cookieEnabled)
+func acceptWithOptions(c *testContext, wndScale int, synOptions header.TCPSynOptions) {
 	// Create EP and start listening.
 	wq := &waiter.Queue{}
 	ep, err := c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, wq)
@@ -323,8 +311,7 @@ func timeStampEnabledAccept(t *testing.T, cookieEnabled bool, wndScale int, wndS
 		c.t.Fatalf("Listen failed: %v", err)
 	}
 
-	tsVal := rand.Uint32()
-	passiveConnectWithOptions(c, 100, wndScale, header.TCPSynOptions{MSS: defaultIPv4MSS, TS: true, TSVal: tsVal})
+	passiveConnectWithOptions(c, 100, wndScale, synOptions)
 
 	// Try to accept the connection.
 	we, ch := waiter.NewChannelEntry(nil)
@@ -345,7 +332,25 @@ func timeStampEnabledAccept(t *testing.T, cookieEnabled bool, wndScale int, wndS
 			c.t.Fatalf("Timed out waiting for accept")
 		}
 	}
+}
 
+func timeStampEnabledAccept(t *testing.T, cookieEnabled bool, wndScale int, wndSize uint16) {
+	savedSynCountThreshold := tcp.SynRcvdCountThreshold
+	defer func() {
+		tcp.SynRcvdCountThreshold = savedSynCountThreshold
+	}()
+
+	if cookieEnabled {
+		tcp.SynRcvdCountThreshold = 0
+	}
+	c := newTestContext(t, defaultMTU)
+	defer c.cleanup()
+
+	c.t.Logf("Test w/ CookieEnabled = %v", cookieEnabled)
+	tsVal := rand.Uint32()
+	acceptWithOptions(c, wndScale, header.TCPSynOptions{MSS: defaultIPv4MSS, TS: true, TSVal: tsVal})
+
+	// Now send some data and validate that timestamp is echoed correctly in the ACK.
 	data := []byte{1, 2, 3}
 	view := buffer.NewView(len(data))
 	copy(view, data)
@@ -405,45 +410,10 @@ func timeStampDisabledAccept(t *testing.T, cookieEnabled bool, wndScale int, wnd
 	defer c.cleanup()
 
 	c.t.Logf("Test w/ CookieEnabled = %v", cookieEnabled)
-	// Create EP and start listening.
-	wq := &waiter.Queue{}
-	ep, err := c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, wq)
-	if err != nil {
-		c.t.Fatalf("NewEndpoint failed: %v", err)
-	}
-	defer ep.Close()
+	acceptWithOptions(c, wndScale, header.TCPSynOptions{MSS: defaultIPv4MSS})
 
-	if err := ep.Bind(tcpip.FullAddress{Port: stackPort}, nil); err != nil {
-		c.t.Fatalf("Bind failed: %v", err)
-	}
-
-	if err := ep.Listen(10); err != nil {
-		c.t.Fatalf("Listen failed: %v", err)
-	}
-
-	// Do 3-way handshake/w no timestamp option.
-	passiveConnectWithOptions(c, 100, wndScale, header.TCPSynOptions{MSS: defaultIPv4MSS})
-
-	// Try to accept the connection.
-	we, ch := waiter.NewChannelEntry(nil)
-	wq.EventRegister(&we, waiter.EventIn)
-	defer wq.EventUnregister(&we)
-
-	c.ep, _, err = ep.Accept()
-	if err == tcpip.ErrWouldBlock {
-		// Wait for connection to be established.
-		select {
-		case <-ch:
-			c.ep, _, err = ep.Accept()
-			if err != nil {
-				c.t.Fatalf("Accept failed: %v", err)
-			}
-
-		case <-time.After(1 * time.Second):
-			c.t.Fatalf("Timed out waiting for accept")
-		}
-	}
-
+	// Now send some data with the accepted connection endpoint and validate
+	// that no timestamp option is sent in the TCP segment.
 	data := []byte{1, 2, 3}
 	view := buffer.NewView(len(data))
 	copy(view, data)

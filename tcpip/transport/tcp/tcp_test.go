@@ -1263,9 +1263,9 @@ func passiveConnect(c *testContext, maxPayload, wndScale int, synOptions header.
 // peer on a connect and validates that the MSS in the SYN-ACK response is equal
 // to the MTU - (tcphdr len + iphdr len).
 //
-// wndScale is the expected window scale in the SYN-ACK and sndWndScale is the
-// value of the window scaling option to be sent in the SYN. If sndWndScale > 0
-// then we send the WindowScale option.
+// wndScale is the expected window scale in the SYN-ACK and synOptions.WS is the
+// value of the window scaling option to be sent in the SYN. If synOptions.WS >
+// 0 then we send the WindowScale option.
 func passiveConnectWithOptions(c *testContext, maxPayload, wndScale int, synOptions header.TCPSynOptions) {
 	opts := []byte{
 		header.TCPOptionMSS, 4, byte(maxPayload / 256), byte(maxPayload % 256),
