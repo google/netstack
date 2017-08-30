@@ -22,9 +22,19 @@ import (
 // SYN/SYN-ACK.
 var defaultWindowScale = tcp.FindWndScale(tcp.DefaultBufferSize)
 
-// createConnectedWithTimestampOption creates and connects c.ep and returns a
-// rawEndpoint which represents the other end of the connection.
+// createConnectedWithTimestampOption creates and connects c.ep with the
+// timestamp option enabled.
 func createConnectedWithTimestampOption(c *testContext) *rawEndpoint {
+	return createConnectedWithOptions(c, header.TCPSynOptions{TS: true, TSVal: 1})
+}
+
+// createConnectedWithOptions creates and connects c.ep with the
+// specified TCP options enabled and returns a rawEndpoint which
+// represents the other end of the connection.
+//
+// It also verifies where required(eg.Timestamp) that the ACK to the
+// SYN-ACK does not carry an option that was not requested.
+func createConnectedWithOptions(c *testContext, wantOptions header.TCPSynOptions) *rawEndpoint {
 	var err *tcpip.Error
 	c.ep, err = c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &c.wq)
 	if err != nil {
@@ -60,11 +70,13 @@ func createConnectedWithTimestampOption(c *testContext) *rawEndpoint {
 	synOptions := header.ParseSynOptions(tcpSeg.Options(), false)
 
 	// Build options w/ tsVal to be sent in the SYN-ACK.
-	tsVal := uint32(1)
-	tsEcr := synOptions.TSVal
-	synAckOptions := header.EncodeTSOption(tsVal, tsEcr)
+	var synAckOptions []byte
+	if wantOptions.TS {
+		tsOpt := header.EncodeTSOption(wantOptions.TSVal, synOptions.TSVal)
+		synAckOptions = append(synAckOptions, tsOpt[:]...)
+	}
 
-	// Build SYN-ACK w/ Timestamp enabled.
+	// Build SYN-ACK.
 	c.irs = seqnum.Value(tcpSeg.SequenceNumber())
 	iss := seqnum.Value(789)
 	c.sendPacket(nil, &headers{
@@ -77,17 +89,28 @@ func createConnectedWithTimestampOption(c *testContext) *rawEndpoint {
 		tcpOpts: synAckOptions[:],
 	})
 
-	// Read ACK and verify that tsEcr of ACK packet is tsVal.
+	// Read ACK.
 	ackPacket := c.getPacket()
-	checker.IPv4(c.t, ackPacket,
-		checker.TCP(
-			checker.DstPort(testPort),
-			checker.TCPFlags(header.TCPFlagAck),
-			checker.SeqNum(uint32(c.irs)+1),
-			checker.AckNum(uint32(iss)+1),
-			checker.TCPTimestampChecker(true, 0, tsVal),
-		),
-	)
+
+	// Verify TCP header fields.
+	tcpCheckers := []checker.TransportChecker{
+		checker.DstPort(testPort),
+		checker.TCPFlags(header.TCPFlagAck),
+		checker.SeqNum(uint32(c.irs) + 1),
+		checker.AckNum(uint32(iss) + 1),
+	}
+
+	// Verify that tsEcr of ACK packet is wantOptions.TSVal if the
+	// timestamp option was enabled, if not then we verify that
+	// there is no timestamp in the ACK packet.
+	if wantOptions.TS {
+		tcpCheckers = append(tcpCheckers, checker.TCPTimestampChecker(true, 0, wantOptions.TSVal))
+	} else {
+		tcpCheckers = append(tcpCheckers, checker.TCPTimestampChecker(false, 0, 0))
+	}
+
+	checker.IPv4(c.t, ackPacket, checker.TCP(tcpCheckers...))
+
 	ackSeg := header.TCP(header.IPv4(ackPacket).Payload())
 	ackOptions := ackSeg.ParsedOptions()
 
@@ -116,7 +139,7 @@ func createConnectedWithTimestampOption(c *testContext) *rawEndpoint {
 		ackNum:     c.irs.Add(1),
 		wndSize:    30000,
 		recentTS:   ackOptions.TSVal,
-		tsVal:      tsVal,
+		tsVal:      wantOptions.TSVal,
 	}
 }
 
@@ -149,7 +172,7 @@ func TestTimeStampEnabledConnect(t *testing.T) {
 	// First we increment tsVal by a small amount.
 	tsVal := rep.tsVal + 100
 	rep.sendPacketWithTS(data, tsVal)
-	rep.verifyAckWithTS(tsVal)
+	rep.verifyACKWithTS(tsVal)
 
 	// Next we send an out of order packet.
 	rep.nextSeqNum += 3
@@ -158,7 +181,7 @@ func TestTimeStampEnabledConnect(t *testing.T) {
 
 	// The ACK should contain the original sequenceNumber and an older TS.
 	rep.nextSeqNum -= 6
-	rep.verifyAckWithTS(tsVal - 200)
+	rep.verifyACKWithTS(tsVal - 200)
 
 	// Next we fill the hole and the returned ACK should contain the
 	// cumulative sequence number acking all data sent till now and have the
@@ -166,12 +189,12 @@ func TestTimeStampEnabledConnect(t *testing.T) {
 	tsVal -= 100
 	rep.sendPacketWithTS(data, tsVal)
 	rep.nextSeqNum += 3
-	rep.verifyAckWithTS(tsVal)
+	rep.verifyACKWithTS(tsVal)
 
 	// Increment tsVal by a large value that doesn't result in a wrap around.
 	tsVal += 0x7fffffff
 	rep.sendPacketWithTS(data, tsVal)
-	rep.verifyAckWithTS(tsVal)
+	rep.verifyACKWithTS(tsVal)
 
 	// Increment tsVal again by a large value which should cause the
 	// timestamp value to wrap around. The returned ACK should contain the
@@ -179,7 +202,7 @@ func TestTimeStampEnabledConnect(t *testing.T) {
 	// the previous packet sent above.
 	tsVal += 0x7fffffff
 	rep.sendPacketWithTS(data, tsVal)
-	rep.verifyAckWithTS(tsVal)
+	rep.verifyACKWithTS(tsVal)
 
 	select {
 	case <-ch:
@@ -240,9 +263,9 @@ func (r *rawEndpoint) sendPacket(payload []byte, opts []byte) {
 	r.nextSeqNum = r.nextSeqNum.Add(seqnum.Size(len(payload)))
 }
 
-// verifyAckWithTS verifies that the tsEcr field in the ack matches the provided
+// verifyACKWithTS verifies that the tsEcr field in the ack matches the provided
 // tsVal.
-func (r *rawEndpoint) verifyAckWithTS(tsVal uint32) {
+func (r *rawEndpoint) verifyACKWithTS(tsVal uint32) {
 	// Read ACK and verify that tsEcr of ACK packet is [1,2,3,4]
 	ackPacket := r.c.getPacket()
 	checker.IPv4(r.c.t, ackPacket,
@@ -268,76 +291,7 @@ func TestTimeStampDisabledConnect(t *testing.T) {
 	c := newTestContext(t, defaultMTU)
 	defer c.cleanup()
 
-	var err *tcpip.Error
-	c.ep, err = c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &c.wq)
-	if err != nil {
-		c.t.Fatalf("c.s.NewEndpoint(tcp, ipv4...) = %v", err)
-	}
-
-	// Start connection attempt.
-	waitEntry, notifyCh := waiter.NewChannelEntry(nil)
-	c.wq.EventRegister(&waitEntry, waiter.EventOut)
-	defer c.wq.EventUnregister(&waitEntry)
-
-	testFullAddr := tcpip.FullAddress{Addr: testAddr, Port: testPort}
-	err = c.ep.Connect(testFullAddr)
-	if err != tcpip.ErrConnectStarted {
-		c.t.Fatalf("c.ep.Connect(%v) = %v", testFullAddr, err)
-	}
-
-	// Receive SYN packet.
-	b := c.getPacket()
-	// Validate that the SYN has the timestamp option and a valid
-	// TS value.
-	checker.IPv4(c.t, b,
-		checker.TCP(
-			checker.DstPort(testPort),
-			checker.TCPFlags(header.TCPFlagSyn),
-			checker.TCPSynOptions(header.TCPSynOptions{
-				MSS: defaultMTU - header.IPv4MinimumSize - header.TCPMinimumSize,
-				TS:  true,
-				WS:  defaultWindowScale,
-			}),
-		),
-	)
-
-	tcpSeg := header.TCP(header.IPv4(b).Payload())
-	// Build SYN-ACK w/ no timestamp option.
-	c.irs = seqnum.Value(tcpSeg.SequenceNumber())
-	iss := seqnum.Value(789)
-	c.sendPacket(nil, &headers{
-		srcPort: tcpSeg.DestinationPort(),
-		dstPort: tcpSeg.SourcePort(),
-		flags:   header.TCPFlagSyn | header.TCPFlagAck,
-		seqNum:  iss,
-		ackNum:  c.irs.Add(1),
-		rcvWnd:  30000,
-	})
-
-	// Read ACK and verify that the timestamp option is missing from the
-	// ACK.
-	checker.IPv4(c.t, c.getPacket(),
-		checker.TCP(
-			checker.DstPort(testPort),
-			checker.TCPFlags(header.TCPFlagAck),
-			checker.SeqNum(uint32(c.irs)+1),
-			checker.AckNum(uint32(iss)+1),
-			checker.TCPTimestampChecker(false, 0, 0),
-		),
-	)
-
-	// Wait for connection to be established.
-	select {
-	case <-notifyCh:
-		err = c.ep.GetSockOpt(tcpip.ErrorOption{})
-		if err != nil {
-			c.t.Fatalf("Unexpected error when connecting: %v", err)
-		}
-	case <-time.After(1 * time.Second):
-		c.t.Fatalf("Timed out waiting for connection")
-	}
-
-	c.port = tcpSeg.SourcePort()
+	createConnectedWithOptions(c, header.TCPSynOptions{})
 }
 
 func timeStampEnabledAccept(t *testing.T, cookieEnabled bool, wndScale int, wndSize uint16) {
@@ -535,7 +489,7 @@ func TestSendGreaterThanMTUWithOptions(t *testing.T) {
 	c := newTestContext(t, uint32(header.TCPMinimumSize+header.IPv4MinimumSize+maxPayload))
 	defer c.cleanup()
 
-	_ = createConnectedWithTimestampOption(c)
+	createConnectedWithTimestampOption(c)
 	testBrokenUpWrite(c, maxPayload)
 }
 
