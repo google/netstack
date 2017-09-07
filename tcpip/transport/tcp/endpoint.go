@@ -394,27 +394,36 @@ func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, *tcpip.
 		return 0, nil
 	}
 
-	s := newSegmentFromView(&e.route, e.id, v)
-
 	e.sndBufMu.Lock()
 
 	// Check if the connection has already been closed for sends.
 	if e.sndBufSize < 0 {
 		e.sndBufMu.Unlock()
-		s.decRef()
 		return 0, tcpip.ErrClosedForSend
 	}
 
 	// Check if we're already over the limit.
-	if e.sndBufUsed > e.sndBufSize {
+	avail := e.sndBufSize - e.sndBufUsed
+	if avail <= 0 {
 		e.sndBufMu.Unlock()
-		s.decRef()
 		return 0, tcpip.ErrWouldBlock
 	}
 
+	// If writing would put us over the size limit, create a smaller view
+	// with the maximum available size and copy into it. We also return
+	// ErrWouldBlock in this case.
+	sizedView := v
+	var err *tcpip.Error
+	if len(sizedView) > avail {
+		sizedView = buffer.NewViewFromBytes(v[:avail])
+		err = tcpip.ErrWouldBlock
+	}
+	l := len(sizedView)
+	s := newSegmentFromView(&e.route, e.id, sizedView)
+
 	// Add data to the send queue.
-	e.sndBufUsed += len(v)
-	e.sndBufInQueue += seqnum.Size(len(v))
+	e.sndBufUsed += l
+	e.sndBufInQueue += seqnum.Size(l)
 	e.sndQueue.PushBack(s)
 
 	e.sndBufMu.Unlock()
@@ -427,8 +436,7 @@ func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, *tcpip.
 		// Let the protocol goroutine do the work.
 		e.sndWaker.Assert()
 	}
-
-	return uintptr(len(v)), nil
+	return uintptr(l), err
 }
 
 // Peek reads data without consuming it from the endpoint.
@@ -1039,9 +1047,9 @@ func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv
 // in the send buffer. The number of newly available bytes is v.
 func (e *endpoint) updateSndBufferUsage(v int) {
 	e.sndBufMu.Lock()
-	notify := e.sndBufUsed > e.sndBufSize
+	notify := e.sndBufUsed >= e.sndBufSize
 	e.sndBufUsed -= v
-	notify = notify && e.sndBufUsed <= e.sndBufSize
+	notify = notify && e.sndBufUsed < e.sndBufSize
 	e.sndBufMu.Unlock()
 
 	if notify {
