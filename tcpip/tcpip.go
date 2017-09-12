@@ -66,6 +66,7 @@ var (
 	ErrNotConnected          = &Error{"endpoint not connected"}
 	ErrConnectionReset       = &Error{"connection reset by peer"}
 	ErrConnectionAborted     = &Error{"connection aborted"}
+	ErrNoSuchFile            = &Error{"no such file"}
 )
 
 // Errors related to Subnet
