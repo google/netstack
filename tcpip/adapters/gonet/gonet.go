@@ -426,6 +426,41 @@ func fullToUDPAddr(addr tcpip.FullAddress) *net.UDPAddr {
 	return &net.UDPAddr{IP: net.IP(addr.Addr), Port: int(addr.Port)}
 }
 
+// DialTCP creates a new TCP Conn connected to the specified address.
+func DialTCP(s tcpip.Stack, addr tcpip.FullAddress, network tcpip.NetworkProtocolNumber) (*Conn, error) {
+	// Create TCP endpoint, then connect.
+	var wq waiter.Queue
+	ep, err := s.NewEndpoint(tcp.ProtocolNumber, network, &wq)
+	if err != nil {
+		return nil, errors.New(err.String())
+	}
+
+	// Create wait queue entry that notifies a channel.
+	//
+	// We do this unconditionally as Connect will always return an error.
+	waitEntry, notifyCh := waiter.NewChannelEntry(nil)
+	wq.EventRegister(&waitEntry, waiter.EventOut)
+	defer wq.EventUnregister(&waitEntry)
+
+	err = ep.Connect(addr)
+	for err != nil {
+		if err != tcpip.ErrConnectStarted {
+			ep.Close()
+			return nil, &net.OpError{
+				Op:   "connect",
+				Net:  "tcp",
+				Addr: fullToTCPAddr(addr),
+				Err:  errors.New(err.String()),
+			}
+		}
+
+		<-notifyCh
+		err = ep.GetSockOpt(tcpip.ErrorOption{})
+	}
+
+	return NewConn(&wq, ep), nil
+}
+
 // A PacketConn is a wrapper around a tcpip endpoint that implements
 // net.PacketConn.
 type PacketConn struct {

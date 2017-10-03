@@ -323,3 +323,93 @@ func TestPacketConnTransfer(t *testing.T) {
 		t.Error("c2.Close():", err)
 	}
 }
+
+func TestTCPConnTransfer(t *testing.T) {
+	s, e := newLoopbackStack()
+	if e != nil {
+		t.Fatalf("newLoopbackStack() = %v", e)
+	}
+
+	ip := tcpip.Address(net.IPv4(169, 254, 10, 1).To4())
+	addr := tcpip.FullAddress{NICID, ip, 11211}
+	s.AddAddress(NICID, ipv4.ProtocolNumber, ip)
+
+	l, err := NewListener(s, addr, ipv4.ProtocolNumber)
+	if err != nil {
+		t.Fatal("NewListener:", err)
+	}
+	defer func() {
+		if err := l.Close(); err != nil {
+			t.Error("l.Close():", err)
+		}
+	}()
+
+	c1, err := DialTCP(s, addr, ipv4.ProtocolNumber)
+	if err != nil {
+		t.Fatal("DialTCP:", err)
+	}
+	defer func() {
+		if err := c1.Close(); err != nil {
+			t.Error("c1.Close():", err)
+		}
+	}()
+
+	c2, err := l.Accept()
+	if err != nil {
+		t.Fatal("l.Accept:", err)
+	}
+	defer func() {
+		if err := c2.Close(); err != nil {
+			t.Error("c2.Close():", err)
+		}
+	}()
+
+	c1.SetDeadline(time.Now().Add(time.Second))
+	c2.SetDeadline(time.Now().Add(time.Second))
+
+	const sent = "abc123"
+
+	tests := []struct {
+		name string
+		c1   net.Conn
+		c2   net.Conn
+	}{
+		{"connected to accepted", c1, c2},
+		{"accepted to connected", c2, c1},
+	}
+
+	for _, test := range tests {
+		if n, err := test.c1.Write([]byte(sent)); err != nil || n != len(sent) {
+			t.Errorf("%s: got test.c1.Write(%q) = %d, %v, want = %d, %v", test.name, sent, n, err, len(sent), nil)
+			continue
+		}
+
+		recv := make([]byte, len(sent))
+		n, err := test.c2.Read(recv)
+		if err != nil || n != len(recv) {
+			t.Errorf("%s: got test.c2.Read() = %d, %v, want = %d, %v", test.name, n, err, len(recv), nil)
+			continue
+		}
+
+		if recv := string(recv); recv != sent {
+			t.Errorf("%s: got recv = %q, want = %q", test.name, recv, sent)
+		}
+	}
+}
+
+func TestTCPDialError(t *testing.T) {
+	s, e := newLoopbackStack()
+	if e != nil {
+		t.Fatalf("newLoopbackStack() = %v", e)
+	}
+
+	ip := tcpip.Address(net.IPv4(169, 254, 10, 1).To4())
+	addr := tcpip.FullAddress{NICID, ip, 11211}
+
+	_, err := DialTCP(s, addr, ipv4.ProtocolNumber)
+	got, ok := err.(*net.OpError)
+	want := tcpip.ErrNoRoute
+	if !ok || got.Err.Error() != want.String() {
+		t.Errorf("Got DialTCP() = %v, want = %v", err, tcpip.ErrNoRoute)
+	}
+}
