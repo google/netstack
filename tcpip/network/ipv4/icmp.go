@@ -198,8 +198,15 @@ func (*pingProtocol) HandleUnknownDestinationPacket(*stack.Route, stack.Transpor
 	return true
 }
 
+// SetOption implements TransportProtocol.SetOption.
+func (p *pingProtocol) SetOption(option interface{}) *tcpip.Error {
+	return tcpip.ErrUnknownProtocolOption
+}
+
 func init() {
-	stack.RegisterTransportProtocol(PingProtocolName, &pingProtocol{})
+	stack.RegisterTransportProtocolFactory(PingProtocolName, func() stack.TransportProtocol {
+		return &pingProtocol{}
+	})
 }
 
 type pingEndpoint struct {

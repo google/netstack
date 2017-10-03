@@ -181,6 +181,11 @@ func (p *protocol) NewEndpoint(nicid tcpip.NICID, addr tcpip.Address, linkAddrCa
 	return newEndpoint(nicid, addr, dispatcher, linkEP), nil
 }
 
+// SetOption implements NetworkProtocol.SetOption.
+func (p *protocol) SetOption(option interface{}) *tcpip.Error {
+	return tcpip.ErrUnknownProtocolOption
+}
+
 // hashRoute calculates a hash value for the given route. It uses the source &
 // destination address, the transport protocol number, and a random initial
 // value (generated once on initialization) to generate the hash.
@@ -207,5 +212,7 @@ func init() {
 	}
 	hashIV = r[buckets]
 
-	stack.RegisterNetworkProtocol(ProtocolName, NewProtocol())
+	stack.RegisterNetworkProtocolFactory(ProtocolName, func() stack.NetworkProtocol {
+		return &protocol{}
+	})
 }

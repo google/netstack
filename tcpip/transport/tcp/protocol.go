@@ -88,6 +88,13 @@ func replyWithReset(s *segment) {
 	sendTCP(&s.route, s.id, nil, flagRst|flagAck, seq, ack, 0)
 }
 
+// SetOption implements TransportProtocol.SetOption.
+func (p *protocol) SetOption(option interface{}) *tcpip.Error {
+	return tcpip.ErrUnknownProtocolOption
+}
+
 func init() {
-	stack.RegisterTransportProtocol(ProtocolName, &protocol{})
+	stack.RegisterTransportProtocolFactory(ProtocolName, func() stack.TransportProtocol {
+		return &protocol{}
+	})
 }

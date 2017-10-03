@@ -89,12 +89,23 @@ func (f *fakeNetworkEndpoint) WritePacket(r *stack.Route, hdr *buffer.Prependabl
 
 func (*fakeNetworkEndpoint) Close() {}
 
+type fakeNetGoodOption bool
+
+type fakeNetBadOption bool
+
+type fakeNetInvalidValueOption int
+
+type fakeNetOptions struct {
+	good bool
+}
+
 // fakeNetworkProtocol is a network-layer protocol descriptor. It aggregates the
 // number of packets sent and received via endpoints of this protocol. The index
 // where packets are added is given by the packet's destination address MOD 10.
 type fakeNetworkProtocol struct {
 	packetCount     [10]int
 	sendPacketCount [10]int
+	opts            fakeNetOptions
 }
 
 func (f *fakeNetworkProtocol) Number() tcpip.NetworkProtocolNumber {
@@ -119,6 +130,18 @@ func (f *fakeNetworkProtocol) NewEndpoint(nicid tcpip.NICID, addr tcpip.Address,
 	}, nil
 }
 
+func (f *fakeNetworkProtocol) SetOption(option interface{}) *tcpip.Error {
+	switch v := option.(type) {
+	case fakeNetGoodOption:
+		f.opts.good = bool(v)
+		return nil
+	case fakeNetInvalidValueOption:
+		return tcpip.ErrInvalidOptionValue
+	default:
+		return tcpip.ErrUnknownProtocolOption
+	}
+}
+
 func TestNetworkReceive(t *testing.T) {
 	// Create a stack with the fake network protocol, one nic, and two
 	// addresses attached to it: 1 & 2.
@@ -136,6 +159,7 @@ func TestNetworkReceive(t *testing.T) {
 		t.Fatalf("AddAddress failed: %v", err)
 	}
 
+	fakeNet := s.NetworkProtocolInstance(fakeNetNumber).(*fakeNetworkProtocol)
 	var views [1]buffer.View
 	// Allocate the buffer containing the packet that will be injected into
 	// the stack.
@@ -216,7 +240,7 @@ func TestNetworkSend(t *testing.T) {
 	// address: 1. The route table sends all packets through the only
 	// existing nic.
 	id, linkEP := channel.New(10, defaultMTU, "")
-	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
+	s := stack.New([]string{"fakeNet"}, nil)
 	if err := s.CreateNIC(1, id); err != nil {
 		t.Fatalf("NewNIC failed: %v", err)
 	}
@@ -238,7 +262,7 @@ func TestNetworkSendMultiRoute(t *testing.T) {
 	// Create a stack with the fake network protocol, two nics, and two
 	// addresses per nic, the first nic has odd address, the second one has
 	// even addresses.
-	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
+	s := stack.New([]string{"fakeNet"}, nil)
 
 	id1, linkEP1 := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(1, id1); err != nil {
@@ -317,7 +341,7 @@ func TestRoutes(t *testing.T) {
 	// Create a stack with the fake network protocol, two nics, and two
 	// addresses per nic, the first nic has odd address, the second one has
 	// even addresses.
-	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
+	s := stack.New([]string{"fakeNet"}, nil)
 
 	id1, _ := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(1, id1); err != nil {
@@ -381,7 +405,7 @@ func TestRoutes(t *testing.T) {
 }
 
 func TestAddressRemoval(t *testing.T) {
-	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
+	s := stack.New([]string{"fakeNet"}, nil)
 
 	id, linkEP := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(1, id); err != nil {
@@ -394,6 +418,8 @@ func TestAddressRemoval(t *testing.T) {
 
 	var views [1]buffer.View
 	buf := buffer.NewView(30)
+
+	fakeNet := s.NetworkProtocolInstance(fakeNetNumber).(*fakeNetworkProtocol)
 
 	// Write a packet, and check that it gets delivered.
 	fakeNet.packetCount[1] = 0
@@ -423,7 +449,7 @@ func TestAddressRemoval(t *testing.T) {
 }
 
 func TestDelayedRemovalDueToRoute(t *testing.T) {
-	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
+	s := stack.New([]string{"fakeNet"}, nil)
 
 	id, linkEP := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(1, id); err != nil {
@@ -437,6 +463,8 @@ func TestDelayedRemovalDueToRoute(t *testing.T) {
 	s.SetRouteTable([]tcpip.Route{
 		{"\x00", "\x00", "\x00", 1},
 	})
+
+	fakeNet := s.NetworkProtocolInstance(fakeNetNumber).(*fakeNetworkProtocol)
 
 	var views [1]buffer.View
 	buf := buffer.NewView(30)
@@ -489,7 +517,7 @@ func TestDelayedRemovalDueToRoute(t *testing.T) {
 }
 
 func TestPromiscuousMode(t *testing.T) {
-	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
+	s := stack.New([]string{"fakeNet"}, nil)
 
 	id, linkEP := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(1, id); err != nil {
@@ -499,6 +527,8 @@ func TestPromiscuousMode(t *testing.T) {
 	s.SetRouteTable([]tcpip.Route{
 		{"\x00", "\x00", "\x00", 1},
 	})
+
+	fakeNet := s.NetworkProtocolInstance(fakeNetNumber).(*fakeNetworkProtocol)
 
 	var views [1]buffer.View
 	buf := buffer.NewView(30)
@@ -545,7 +575,7 @@ func TestPromiscuousMode(t *testing.T) {
 
 // Set the subnet, then check that packet is delivered.
 func TestSubnetAcceptsMatchingPacket(t *testing.T) {
-	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
+	s := stack.New([]string{"fakeNet"}, nil)
 
 	id, linkEP := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(1, id); err != nil {
@@ -555,6 +585,8 @@ func TestSubnetAcceptsMatchingPacket(t *testing.T) {
 	s.SetRouteTable([]tcpip.Route{
 		{"\x00", "\x00", "\x00", 1},
 	})
+
+	fakeNet := s.NetworkProtocolInstance(fakeNetNumber).(*fakeNetworkProtocol)
 
 	var views [1]buffer.View
 	buf := buffer.NewView(30)
@@ -577,7 +609,7 @@ func TestSubnetAcceptsMatchingPacket(t *testing.T) {
 
 // Set destination outside the subnet, then check it doesn't get delivered.
 func TestSubnetRejectsNonmatchingPacket(t *testing.T) {
-	s := stack.New([]string{"fakeNet"}, nil).(*stack.Stack)
+	s := stack.New([]string{"fakeNet"}, nil)
 
 	id, linkEP := channel.New(10, defaultMTU, "")
 	if err := s.CreateNIC(1, id); err != nil {
@@ -587,6 +619,8 @@ func TestSubnetRejectsNonmatchingPacket(t *testing.T) {
 	s.SetRouteTable([]tcpip.Route{
 		{"\x00", "\x00", "\x00", 1},
 	})
+
+	fakeNet := s.NetworkProtocolInstance(fakeNetNumber).(*fakeNetworkProtocol)
 
 	var views [1]buffer.View
 	buf := buffer.NewView(30)
@@ -606,8 +640,41 @@ func TestSubnetRejectsNonmatchingPacket(t *testing.T) {
 	}
 }
 
-var fakeNet fakeNetworkProtocol
+func TestSetOption(t *testing.T) {
+	s := stack.New([]string{"fakeNet"}, []string{})
+
+	// Try an unsupported network protocol.
+	if err := s.SetNetworkProtocolOption(tcpip.NetworkProtocolNumber(99999), fakeNetGoodOption(false)); err != tcpip.ErrUnknownProtocol {
+		t.Fatalf("SetNetworkProtocolOption(fakeNet2, blah, false) = %v, want = tcpip.ErrUnknownProtocol", err)
+	}
+
+	testCases := []struct {
+		option   interface{}
+		want     *tcpip.Error
+		verifier func(t *testing.T, p stack.NetworkProtocol)
+	}{
+		{fakeNetGoodOption(true), nil, func(t *testing.T, p stack.NetworkProtocol) {
+			t.Helper()
+			fakeNet := p.(*fakeNetworkProtocol)
+			if fakeNet.opts.good != true {
+				t.Fatalf("fakeNet.opts.good = false, want = true")
+			}
+		}},
+		{fakeNetBadOption(true), tcpip.ErrUnknownProtocolOption, nil},
+		{fakeNetInvalidValueOption(1), tcpip.ErrInvalidOptionValue, nil},
+	}
+	for _, tc := range testCases {
+		if got := s.SetNetworkProtocolOption(fakeNetNumber, tc.option); tc.want != got {
+			t.Errorf("s.SetOption(fakeNet, %v) = %v, want = %v", tc.option, got, tc.want)
+		}
+		if tc.verifier != nil {
+			tc.verifier(t, s.NetworkProtocolInstance(fakeNetNumber))
+		}
+	}
+}
 
 func init() {
-	stack.RegisterNetworkProtocol("fakeNet", &fakeNet)
+	stack.RegisterNetworkProtocolFactory("fakeNet", func() stack.NetworkProtocol {
+		return &fakeNetworkProtocol{}
+	})
 }

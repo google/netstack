@@ -140,10 +140,21 @@ func (f *fakeTransportEndpoint) HandlePacket(*stack.Route, stack.TransportEndpoi
 	f.proto.packetCount++
 }
 
+type fakeTransportGoodOption bool
+
+type fakeTransportBadOption bool
+
+type fakeTransportInvalidValueOption int
+
+type fakeTransportProtocolOptions struct {
+	good bool
+}
+
 // fakeTransportProtocol is a transport-layer protocol descriptor. It
 // aggregates the number of packets received via endpoints of this protocol.
 type fakeTransportProtocol struct {
 	packetCount int
+	opts        fakeTransportProtocolOptions
 }
 
 func (*fakeTransportProtocol) Number() tcpip.TransportProtocolNumber {
@@ -164,6 +175,18 @@ func (*fakeTransportProtocol) ParsePorts(buffer.View) (src, dst uint16, err *tcp
 
 func (*fakeTransportProtocol) HandleUnknownDestinationPacket(*stack.Route, stack.TransportEndpointID, *buffer.VectorisedView) bool {
 	return true
+}
+
+func (f *fakeTransportProtocol) SetOption(option interface{}) *tcpip.Error {
+	switch v := option.(type) {
+	case fakeTransportGoodOption:
+		f.opts.good = bool(v)
+		return nil
+	case fakeTransportInvalidValueOption:
+		return tcpip.ErrInvalidOptionValue
+	default:
+		return tcpip.ErrUnknownProtocolOption
+	}
 }
 
 func TestTransportReceive(t *testing.T) {
@@ -189,6 +212,8 @@ func TestTransportReceive(t *testing.T) {
 	if err := ep.Connect(tcpip.FullAddress{0, "\x02", 0}); err != nil {
 		t.Fatalf("Connect failed: %v", err)
 	}
+
+	fakeTrans := s.TransportProtocolInstance(fakeTransNumber).(*fakeTransportProtocol)
 
 	var views [1]buffer.View
 	// Create buffer that will hold the packet.
@@ -255,13 +280,48 @@ func TestTransportSend(t *testing.T) {
 		t.Fatalf("write failed: %v", err)
 	}
 
+	fakeNet := s.NetworkProtocolInstance(fakeNetNumber).(*fakeNetworkProtocol)
+
 	if fakeNet.sendPacketCount[2] != 1 {
 		t.Errorf("sendPacketCount = %d, want %d", fakeNet.sendPacketCount[2], 1)
 	}
 }
 
-var fakeTrans fakeTransportProtocol
+func TestTransportSetOption(t *testing.T) {
+	s := stack.New([]string{"fakeNet"}, []string{"fakeTrans"})
+
+	// Try an unsupported transport protocol.
+	if err := s.SetTransportProtocolOption(tcpip.TransportProtocolNumber(99999), fakeTransportGoodOption(false)); err != tcpip.ErrUnknownProtocol {
+		t.Fatalf("SetTransportProtocolOption(fakeTrans2, blah, false) = %v, want = tcpip.ErrUnknownProtocol", err)
+	}
+
+	testCases := []struct {
+		option   interface{}
+		want     *tcpip.Error
+		verifier func(t *testing.T, p stack.TransportProtocol)
+	}{
+		{fakeTransportGoodOption(true), nil, func(t *testing.T, p stack.TransportProtocol) {
+			t.Helper()
+			fakeTrans := p.(*fakeTransportProtocol)
+			if fakeTrans.opts.good != true {
+				t.Fatalf("fakeTrans.opts.good = false, want = true")
+			}
+		}},
+		{fakeTransportBadOption(true), tcpip.ErrUnknownProtocolOption, nil},
+		{fakeTransportInvalidValueOption(1), tcpip.ErrInvalidOptionValue, nil},
+	}
+	for _, tc := range testCases {
+		if got := s.SetTransportProtocolOption(fakeTransNumber, tc.option); tc.want != got {
+			t.Errorf("s.SetOption(fakeTrans, %v) = %v, want = %v", tc.option, got, tc.want)
+		}
+		if tc.verifier != nil {
+			tc.verifier(t, s.TransportProtocolInstance(fakeTransNumber))
+		}
+	}
+}
 
 func init() {
-	stack.RegisterTransportProtocol("fakeTrans", &fakeTrans)
+	stack.RegisterTransportProtocolFactory("fakeTrans", func() stack.TransportProtocol {
+		return &fakeTransportProtocol{}
+	})
 }

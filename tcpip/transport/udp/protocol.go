@@ -56,6 +56,13 @@ func (p *protocol) HandleUnknownDestinationPacket(*stack.Route, stack.TransportE
 	return true
 }
 
+// SetOption implements TransportProtocol.SetOption.
+func (p *protocol) SetOption(option interface{}) *tcpip.Error {
+	return tcpip.ErrUnknownProtocolOption
+}
+
 func init() {
-	stack.RegisterTransportProtocol(ProtocolName, &protocol{})
+	stack.RegisterTransportProtocolFactory(ProtocolName, func() stack.TransportProtocol {
+		return &protocol{}
+	})
 }

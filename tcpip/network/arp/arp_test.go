@@ -62,7 +62,7 @@ func newTestContext(t *testing.T) *testContext {
 
 	return &testContext{
 		t:      t,
-		s:      s.(*stack.Stack),
+		s:      s,
 		linkEP: linkEP,
 	}
 }

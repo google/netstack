@@ -67,6 +67,7 @@ var (
 	ErrConnectionReset       = &Error{"connection reset by peer"}
 	ErrConnectionAborted     = &Error{"connection aborted"}
 	ErrNoSuchFile            = &Error{"no such file"}
+	ErrInvalidOptionValue    = &Error{"invalid option value specified"}
 )
 
 // Errors related to Subnet
@@ -365,6 +366,18 @@ type Stack interface {
 	// CheckNetworkProtocol checks if a given network protocol is enabled in the
 	// stack.
 	CheckNetworkProtocol(protocol NetworkProtocolNumber) bool
+
+	// SetNetworkProtocolOption allows configuring individual protocol level
+	// options. This method returns an error if the protocol is not
+	// supported or option is not supported by the protocol implementation
+	// or the provided value is incorrect.
+	SetNetworkProtocolOption(network NetworkProtocolNumber, option interface{}) *Error
+
+	// SetTransportProtocolOption allows configuring individual protocol
+	// level options. This method returns an error if the protocol is not
+	// supported or option is not supported by the protocol implementation
+	// or the provided value is incorrect.
+	SetTransportProtocolOption(transport TransportProtocolNumber, option interface{}) *Error
 }
 
 // Stats holds statistics about the networking stack.

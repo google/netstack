@@ -69,6 +69,11 @@ type TransportProtocol interface {
 	// The return value indicates whether the packet was well-formed (for
 	// stats purposes only).
 	HandleUnknownDestinationPacket(r *Route, id TransportEndpointID, vv *buffer.VectorisedView) bool
+
+	// SetOption allows enabling/disabling protocol specific features.
+	// SetOption returns an error if the option is not supported or the
+	// provided option value is invalid.
+	SetOption(option interface{}) *tcpip.Error
 }
 
 // TransportDispatcher contains the methods used by the network stack to deliver
@@ -129,6 +134,11 @@ type NetworkProtocol interface {
 
 	// NewEndpoint creates a new endpoint of this protocol.
 	NewEndpoint(nicid tcpip.NICID, addr tcpip.Address, linkAddrCache LinkAddressCache, dispatcher TransportDispatcher, sender LinkEndpoint) (NetworkEndpoint, *tcpip.Error)
+
+	// SetOption allows enabling/disabling protocol specific features.
+	// SetOption returns an error if the option is not supported or the
+	// provided option value is invalid.
+	SetOption(option interface{}) *tcpip.Error
 }
 
 // NetworkDispatcher contains the methods used by the network stack to deliver
@@ -195,26 +205,34 @@ type LinkAddressCache interface {
 	AddLinkAddress(nicid tcpip.NICID, addr tcpip.Address, linkAddr tcpip.LinkAddress)
 }
 
+// TransportProtocolFactory functions are used by the stack to instantiate
+// transport protocols.
+type TransportProtocolFactory func() TransportProtocol
+
+// NetworkProtocolFactory provides methods to be used by the stack to
+// instantiate network protocols.
+type NetworkProtocolFactory func() NetworkProtocol
+
 var (
-	transportProtocols = make(map[string]TransportProtocol)
-	networkProtocols   = make(map[string]NetworkProtocol)
+	transportProtocols = make(map[string]TransportProtocolFactory)
+	networkProtocols   = make(map[string]NetworkProtocolFactory)
 
 	linkEPMu           sync.RWMutex
 	nextLinkEndpointID tcpip.LinkEndpointID = 1
 	linkEndpoints                           = make(map[tcpip.LinkEndpointID]LinkEndpoint)
 )
 
-// RegisterTransportProtocol registers a new transport protocol with the stack
-// so that it becomes available to users of the stack. This function is intended
-// to be called by init() functions of the protocols.
-func RegisterTransportProtocol(name string, p TransportProtocol) {
+// RegisterTransportProtocolFactory registers a new transport protocol factory
+// with the stack so that it becomes available to users of the stack. This
+// function is intended to be called by init() functions of the protocols.
+func RegisterTransportProtocolFactory(name string, p TransportProtocolFactory) {
 	transportProtocols[name] = p
 }
 
-// RegisterNetworkProtocol registers a new network protocol with the stack so
-// that it becomes available to users of the stack. This function is intended
-// to be called by init() functions of the protocols.
-func RegisterNetworkProtocol(name string, p NetworkProtocol) {
+// RegisterNetworkProtocolFactory registers a new network protocol factory with
+// the stack so that it becomes available to users of the stack. This function
+// is intended to be called by init() functions of the protocols.
+func RegisterNetworkProtocolFactory(name string, p NetworkProtocolFactory) {
 	networkProtocols[name] = p
 }
 

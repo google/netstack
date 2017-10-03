@@ -8,9 +8,10 @@
 // For consumers, the only function of interest is New(), everything else is
 // provided by the tcpip/public package.
 //
-// For protocol implementers, RegisterTransportProtocol() and
-// RegisterNetworkProtocol() are used to register protocols with the stack,
-// which will then be instantiated when consumers interact with the stack.
+// For protocol implementers, RegisterTransportProtocolFactory() and
+// RegisterNetworkProtocolFactory() are used to register protocol factories with
+// the stack, which will then be used to instantiate protocol objects when
+// consumers interact with the stack.
 package stack
 
 import (
@@ -54,8 +55,14 @@ type Stack struct {
 }
 
 // New allocates a new networking stack with only the requested networking and
-// transport protocols.
-func New(network []string, transport []string) tcpip.Stack {
+// transport protocols configured with default options.
+//
+// Protocol options can be changed by calling the
+// SetNetworkProtocolOption/SetTransportProtocolOption methods provided by the
+// stack. Please refer to individual protocol implementations as to what options
+// are supported.
+func New(network []string, transport []string) *Stack {
+
 	s := &Stack{
 		transportProtocols: make(map[tcpip.TransportProtocolNumber]*transportProtocolState),
 		networkProtocols:   make(map[tcpip.NetworkProtocolNumber]NetworkProtocol),
@@ -67,13 +74,12 @@ func New(network []string, transport []string) tcpip.Stack {
 
 	// Add specified network protocols.
 	for _, name := range network {
-		netProto, ok := networkProtocols[name]
+		netProtoFactory, ok := networkProtocols[name]
 		if !ok {
 			continue
 		}
-
+		netProto := netProtoFactory()
 		s.networkProtocols[netProto.Number()] = netProto
-
 		if r, ok := netProto.(LinkAddressResolver); ok {
 			s.linkAddrResolvers[r.LinkAddressProtocol()] = r
 		}
@@ -81,11 +87,11 @@ func New(network []string, transport []string) tcpip.Stack {
 
 	// Add specified transport protocols.
 	for _, name := range transport {
-		transProto, ok := transportProtocols[name]
+		transProtoFactory, ok := transportProtocols[name]
 		if !ok {
 			continue
 		}
-
+		transProto := transProtoFactory()
 		s.transportProtocols[transProto.Number()] = &transportProtocolState{
 			proto: transProto,
 		}
@@ -95,6 +101,30 @@ func New(network []string, transport []string) tcpip.Stack {
 	s.demux = newTransportDemuxer(s)
 
 	return s
+}
+
+// SetNetworkProtocolOption allows configuring individual protocol level
+// options. This method returns an error if the protocol is not supported or
+// option is not supported by the protocol implementation or the provided value
+// is incorrect.
+func (s *Stack) SetNetworkProtocolOption(network tcpip.NetworkProtocolNumber, option interface{}) *tcpip.Error {
+	netProto, ok := s.networkProtocols[network]
+	if !ok {
+		return tcpip.ErrUnknownProtocol
+	}
+	return netProto.SetOption(option)
+}
+
+// SetTransportProtocolOption allows configuring individual protocol level
+// options. This method returns an error if the protocol is not supported or
+// option is not supported by the protocol implementation or the provided value
+// is incorrect.
+func (s *Stack) SetTransportProtocolOption(transport tcpip.TransportProtocolNumber, option interface{}) *tcpip.Error {
+	transProtoState, ok := s.transportProtocols[transport]
+	if !ok {
+		return tcpip.ErrUnknownProtocol
+	}
+	return transProtoState.proto.SetOption(option)
 }
 
 // SetTransportProtocolHandler sets the per-stack default handler for the given
@@ -396,4 +426,24 @@ func (s *Stack) UnregisterTransportEndpoint(nicID tcpip.NICID, netProtos []tcpip
 	if nic != nil {
 		nic.demux.unregisterEndpoint(netProtos, protocol, id)
 	}
+}
+
+// NetworkProtocolInstance returns the protocol instance in the stack for the
+// specified network protocol. This method is public for protocol implementers
+// and tests to use.
+func (s *Stack) NetworkProtocolInstance(num tcpip.NetworkProtocolNumber) NetworkProtocol {
+	if p, ok := s.networkProtocols[num]; ok {
+		return p
+	}
+	return nil
+}
+
+// TransportProtocolInstance returns the protocol instance in the stack for the
+// specified transport protocol. This method is public for protocol implementers
+// and tests to use.
+func (s *Stack) TransportProtocolInstance(num tcpip.TransportProtocolNumber) TransportProtocol {
+	if pState, ok := s.transportProtocols[num]; ok {
+		return pState.proto
+	}
+	return nil
 }

@@ -137,6 +137,13 @@ func (p *protocol) NewEndpoint(nicid tcpip.NICID, addr tcpip.Address, linkAddrCa
 	return newEndpoint(nicid, addr, dispatcher, linkEP), nil
 }
 
+// SetOption implements NetworkProtocol.SetOption.
+func (p *protocol) SetOption(option interface{}) *tcpip.Error {
+	return tcpip.ErrUnknownProtocolOption
+}
+
 func init() {
-	stack.RegisterNetworkProtocol(ProtocolName, NewProtocol())
+	stack.RegisterNetworkProtocolFactory(ProtocolName, func() stack.NetworkProtocol {
+		return &protocol{}
+	})
 }

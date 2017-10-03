@@ -94,7 +94,8 @@ func (e *endpoint) HandlePacket(r *stack.Route, vv *buffer.VectorisedView) {
 }
 
 // protocol implements stack.NetworkProtocol and stack.LinkAddressResolver.
-type protocol struct{}
+type protocol struct {
+}
 
 func (p *protocol) Number() tcpip.NetworkProtocolNumber { return ProtocolNumber }
 func (p *protocol) MinimumPacketSize() int              { return header.ARPSize }
@@ -136,8 +137,15 @@ func (*protocol) LinkAddressRequest(addr, localAddr tcpip.Address, linkEP stack.
 	return linkEP.WritePacket(r, &hdr, nil, ProtocolNumber)
 }
 
+// SetOption implements NetworkProtocol.SetOption.
+func (p *protocol) SetOption(option interface{}) *tcpip.Error {
+	return tcpip.ErrUnknownProtocolOption
+}
+
 var broadcastMAC = tcpip.LinkAddress([]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
 
 func init() {
-	stack.RegisterNetworkProtocol(ProtocolName, &protocol{})
+	stack.RegisterNetworkProtocolFactory(ProtocolName, func() stack.NetworkProtocol {
+		return &protocol{}
+	})
 }
