@@ -301,7 +301,6 @@ func TestTransportSetOption(t *testing.T) {
 		verifier func(t *testing.T, p stack.TransportProtocol)
 	}{
 		{fakeTransportGoodOption(true), nil, func(t *testing.T, p stack.TransportProtocol) {
-			t.Helper()
 			fakeTrans := p.(*fakeTransportProtocol)
 			if fakeTrans.opts.good != true {
 				t.Fatalf("fakeTrans.opts.good = false, want = true")
