@@ -195,6 +195,9 @@ type Endpoint interface {
 	// Write writes data to the endpoint's peer, or the provided address if
 	// one is specified. This method does not block if the data cannot be
 	// written.
+	//
+	// Note that unlike io.Writer.Write, it is not an error for Write to
+	// perform a partial write.
 	Write(buffer.View, *FullAddress) (uintptr, *Error)
 
 	// Peek reads data without consuming it from the endpoint.
