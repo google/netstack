@@ -131,7 +131,9 @@ type Context struct {
 func New(t *testing.T, mtu uint32) *Context {
 	s := stack.New([]string{ipv4.ProtocolName, ipv6.ProtocolName}, []string{tcp.ProtocolName})
 
-	id, linkEP := channel.New(256, mtu, "")
+	// Some of the congestion control tests send up to 640 packets, we so
+	// set the channel size to 1000.
+	id, linkEP := channel.New(1000, mtu, "")
 	if testing.Verbose() {
 		id = sniffer.New(id)
 	}

@@ -19,8 +19,8 @@ const (
 	// minRTO is the minimium allowed value for the retransmit timeout.
 	minRTO = 200 * time.Millisecond
 
-	// initalCwnd is the initial congestion window.
-	initialCwnd = 10
+	// InitialCwnd is the initial congestion window.
+	InitialCwnd = 10
 )
 
 // sender holds the state necessary to send TCP segments.
@@ -120,7 +120,7 @@ type fastRecovery struct {
 func newSender(ep *endpoint, iss, irs seqnum.Value, sndWnd seqnum.Size, mss uint16, sndWndScale int) *sender {
 	s := &sender{
 		ep:               ep,
-		sndCwnd:          initialCwnd,
+		sndCwnd:          InitialCwnd,
 		sndSsthresh:      math.MaxInt64,
 		sndWnd:           sndWnd,
 		sndUna:           iss + 1,
@@ -231,7 +231,9 @@ func (s *sender) retransmitTimerExpired() bool {
 		s.reduceSlowStartThreshold()
 	}
 
-	// Reduce the congestion window to 1, i.e., enter slow-start.
+	// Reduce the congestion window to 1, i.e., enter slow-start. Per
+	// RFC 5681, page 7, we must use 1 regardless of the value of the
+	// initial congestion window.
 	s.sndCwnd = 1
 
 	// Mark the next segment to be sent as the first unacknowledged one and
@@ -257,8 +259,8 @@ func (s *sender) sendData() {
 	// transmission if the TCP has not sent data in the interval exceeding
 	// the retrasmission timeout."
 	if !s.fr.active && time.Now().Sub(s.lastSendTime) > s.rto {
-		if s.sndCwnd > initialCwnd {
-			s.sndCwnd = initialCwnd
+		if s.sndCwnd > InitialCwnd {
+			s.sndCwnd = InitialCwnd
 		}
 	}
 

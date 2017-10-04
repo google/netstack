@@ -1496,23 +1496,28 @@ func DisabledTestFinWithPendingDataCwndFull(t *testing.T) {
 
 	c.CreateConnected(789, 30000, nil)
 
-	// Write something out but don't ACK it yet.
+	// Write enough segments to fill the congestion window before ACK'ing
+	// any of them.
 	view := buffer.NewView(10)
-	if _, err := c.EP.Write(view, nil); err != nil {
-		t.Fatalf("Unexpected error from Write: %v", err)
+	for i := tcp.InitialCwnd; i > 0; i-- {
+		if _, err := c.EP.Write(view, nil); err != nil {
+			t.Fatalf("Unexpected error from Write: %v", err)
+		}
 	}
 
 	next := uint32(c.IRS) + 1
-	checker.IPv4(t, c.GetPacket(),
-		checker.PayloadLen(len(view)+header.TCPMinimumSize),
-		checker.TCP(
-			checker.DstPort(context.TestPort),
-			checker.SeqNum(next),
-			checker.AckNum(790),
-			checker.TCPFlagsMatch(header.TCPFlagAck, ^uint8(header.TCPFlagPsh)),
-		),
-	)
-	next += uint32(len(view))
+	for i := tcp.InitialCwnd; i > 0; i-- {
+		checker.IPv4(t, c.GetPacket(),
+			checker.PayloadLen(len(view)+header.TCPMinimumSize),
+			checker.TCP(
+				checker.DstPort(context.TestPort),
+				checker.SeqNum(next),
+				checker.AckNum(790),
+				checker.TCPFlagsMatch(header.TCPFlagAck, ^uint8(header.TCPFlagPsh)),
+			),
+		)
+		next += uint32(len(view))
+	}
 
 	// Shutdown the connection, check that the FIN segment isn't sent
 	// because the congestion window doesn't allow it. Wait until a
@@ -1525,7 +1530,7 @@ func DisabledTestFinWithPendingDataCwndFull(t *testing.T) {
 		checker.PayloadLen(len(view)+header.TCPMinimumSize),
 		checker.TCP(
 			checker.DstPort(context.TestPort),
-			checker.SeqNum(next-uint32(len(view))),
+			checker.SeqNum(uint32(c.IRS)+1),
 			checker.AckNum(790),
 			checker.TCPFlagsMatch(header.TCPFlagAck, ^uint8(header.TCPFlagPsh)),
 		),
@@ -1768,7 +1773,7 @@ func DisabledTestExponentialIncreaseDuringSlowStart(t *testing.T) {
 	c.CreateConnected(789, 30000, nil)
 
 	const iterations = 7
-	data := buffer.NewView(maxPayload * (1 << (iterations + 1)))
+	data := buffer.NewView(maxPayload * (tcp.InitialCwnd << (iterations + 1)))
 	for i := range data {
 		data[i] = byte(i)
 	}
@@ -1779,7 +1784,7 @@ func DisabledTestExponentialIncreaseDuringSlowStart(t *testing.T) {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
-	expected := 1
+	expected := tcp.InitialCwnd
 	bytesRead := 0
 	for i := 0; i < iterations; i++ {
 		// Read all packets expected on this iteration. Don't
@@ -1810,7 +1815,7 @@ func DisabledTestCongestionAvoidance(t *testing.T) {
 	c.CreateConnected(789, 30000, nil)
 
 	const iterations = 7
-	data := buffer.NewView(2 * maxPayload * (1 << (iterations + 1)))
+	data := buffer.NewView(2 * maxPayload * (tcp.InitialCwnd << (iterations + 1)))
 	for i := range data {
 		data[i] = byte(i)
 	}
@@ -1822,10 +1827,10 @@ func DisabledTestCongestionAvoidance(t *testing.T) {
 	}
 
 	// Do slow start for a few iterations.
-	expected := 1
+	expected := tcp.InitialCwnd
 	bytesRead := 0
 	for i := 0; i < iterations; i++ {
-		expected = 1 << uint(i)
+		expected = tcp.InitialCwnd << uint(i)
 		if i > 0 {
 			// Acknowledge all the data received so far if not on
 			// first iteration.
@@ -1899,7 +1904,7 @@ func DisabledTestFastRecovery(t *testing.T) {
 	c.CreateConnected(789, 30000, nil)
 
 	const iterations = 7
-	data := buffer.NewView(2 * maxPayload * (1 << (iterations + 1)))
+	data := buffer.NewView(2 * maxPayload * (tcp.InitialCwnd << (iterations + 1)))
 	for i := range data {
 		data[i] = byte(i)
 	}
@@ -1911,10 +1916,10 @@ func DisabledTestFastRecovery(t *testing.T) {
 	}
 
 	// Do slow start for a few iterations.
-	expected := 1
+	expected := tcp.InitialCwnd
 	bytesRead := 0
 	for i := 0; i < iterations; i++ {
-		expected = 1 << uint(i)
+		expected = tcp.InitialCwnd << uint(i)
 		if i > 0 {
 			// Acknowledge all the data received so far if not on
 			// first iteration.
@@ -1999,7 +2004,7 @@ func DisabledTestRetransmit(t *testing.T) {
 	c.CreateConnected(789, 30000, nil)
 
 	const iterations = 7
-	data := buffer.NewView(maxPayload * (1 << (iterations + 1)))
+	data := buffer.NewView(maxPayload * (tcp.InitialCwnd << (iterations + 1)))
 	for i := range data {
 		data[i] = byte(i)
 	}
@@ -2014,10 +2019,10 @@ func DisabledTestRetransmit(t *testing.T) {
 	}
 
 	// Do slow start for a few iterations.
-	expected := 1
+	expected := tcp.InitialCwnd
 	bytesRead := 0
 	for i := 0; i < iterations; i++ {
-		expected = 1 << uint(i)
+		expected = tcp.InitialCwnd << uint(i)
 		if i > 0 {
 			// Acknowledge all the data received so far if not on
 			// first iteration.
@@ -2045,7 +2050,7 @@ func DisabledTestRetransmit(t *testing.T) {
 	rtxOffset = bytesRead - expected*maxPayload/2
 	c.SendAck(790, rtxOffset)
 
-	// Receive the remaining data, making sure that acknowledge data is not
+	// Receive the remaining data, making sure that acknowledged data is not
 	// retransmitted.
 	for offset := rtxOffset; offset < len(data); offset += maxPayload {
 		c.ReceiveAndCheckPacket(data, offset, maxPayload)
