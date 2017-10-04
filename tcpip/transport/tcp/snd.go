@@ -19,9 +19,8 @@ const (
 	// minRTO is the minimium allowed value for the retransmit timeout.
 	minRTO = 200 * time.Millisecond
 
-	// initalCwnd is the initial congestion window. We use the conservative
-	// value of 1.
-	initialCwnd = 1
+	// initalCwnd is the initial congestion window.
+	initialCwnd = 10
 )
 
 // sender holds the state necessary to send TCP segments.

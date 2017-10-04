@@ -1490,7 +1490,7 @@ func TestFinWithNoPendingData(t *testing.T) {
 	)
 }
 
-func TestFinWithPendingDataCwndFull(t *testing.T) {
+func DisabledTestFinWithPendingDataCwndFull(t *testing.T) {
 	c := context.New(t, defaultMTU)
 	defer c.Cleanup()
 
@@ -1760,7 +1760,7 @@ func TestFinWithPartialAck(t *testing.T) {
 	})
 }
 
-func TestExponentialIncreaseDuringSlowStart(t *testing.T) {
+func DisabledTestExponentialIncreaseDuringSlowStart(t *testing.T) {
 	maxPayload := 10
 	c := context.New(t, uint32(header.TCPMinimumSize+header.IPv4MinimumSize+maxPayload))
 	defer c.Cleanup()
@@ -1802,7 +1802,7 @@ func TestExponentialIncreaseDuringSlowStart(t *testing.T) {
 	}
 }
 
-func TestCongestionAvoidance(t *testing.T) {
+func DisabledTestCongestionAvoidance(t *testing.T) {
 	maxPayload := 10
 	c := context.New(t, uint32(header.TCPMinimumSize+header.IPv4MinimumSize+maxPayload))
 	defer c.Cleanup()
@@ -1891,7 +1891,7 @@ func TestCongestionAvoidance(t *testing.T) {
 	}
 }
 
-func TestFastRecovery(t *testing.T) {
+func DisabledTestFastRecovery(t *testing.T) {
 	maxPayload := 10
 	c := context.New(t, uint32(header.TCPMinimumSize+header.IPv4MinimumSize+maxPayload))
 	defer c.Cleanup()
@@ -1991,7 +1991,7 @@ func TestFastRecovery(t *testing.T) {
 	}
 }
 
-func TestRetransmit(t *testing.T) {
+func DisabledTestRetransmit(t *testing.T) {
 	maxPayload := 10
 	c := context.New(t, uint32(header.TCPMinimumSize+header.IPv4MinimumSize+maxPayload))
 	defer c.Cleanup()
