@@ -44,7 +44,7 @@ const (
 type testContext struct {
 	t      *testing.T
 	linkEP *channel.Endpoint
-	s      tcpip.Stack
+	s      *stack.Stack
 
 	ep tcpip.Endpoint
 	wq waiter.Queue

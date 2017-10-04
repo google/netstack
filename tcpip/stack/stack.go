@@ -144,6 +144,7 @@ func (s *Stack) SetTransportProtocolHandler(p tcpip.TransportProtocolNumber, h f
 // NOTE: The underlying stats are updated using atomic instructions as a result
 // the snapshot returned does not represent the value of all the stats at any
 // single given point of time.
+// TODO: Make stats available in sentry for debugging/diag.
 func (s *Stack) Stats() tcpip.Stats {
 	return tcpip.Stats{
 		UnknownProtocolRcvdPackets:        atomic.LoadUint64(&s.stats.UnknownProtocolRcvdPackets),
@@ -162,7 +163,7 @@ func (s *Stack) MutableStats() *tcpip.Stats {
 }
 
 // SetRouteTable assigns the route table to be used by this stack. It
-// specifies which NIC to use for a given destination address mask.
+// specifies which NIC to use for given destination address ranges.
 func (s *Stack) SetRouteTable(table []tcpip.Route) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

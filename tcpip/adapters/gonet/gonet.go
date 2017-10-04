@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
+	"github.com/google/netstack/tcpip/stack"
 	"github.com/google/netstack/tcpip/transport/tcp"
 	"github.com/google/netstack/tcpip/transport/udp"
 	"github.com/google/netstack/waiter"
@@ -31,14 +32,14 @@ func (e *timeoutError) Temporary() bool { return true }
 // A Listener is a wrapper around a tcpip endpoint that implements
 // net.Listener.
 type Listener struct {
-	stack  tcpip.Stack
+	stack  *stack.Stack
 	ep     tcpip.Endpoint
 	wq     *waiter.Queue
 	cancel chan struct{}
 }
 
 // NewListener creates a new Listener.
-func NewListener(s tcpip.Stack, addr tcpip.FullAddress, network tcpip.NetworkProtocolNumber) (*Listener, error) {
+func NewListener(s *stack.Stack, addr tcpip.FullAddress, network tcpip.NetworkProtocolNumber) (*Listener, error) {
 	// Create TCP endpoint, bind it, then start listening.
 	var wq waiter.Queue
 	ep, err := s.NewEndpoint(tcp.ProtocolNumber, network, &wq)
@@ -427,7 +428,7 @@ func fullToUDPAddr(addr tcpip.FullAddress) *net.UDPAddr {
 }
 
 // DialTCP creates a new TCP Conn connected to the specified address.
-func DialTCP(s tcpip.Stack, addr tcpip.FullAddress, network tcpip.NetworkProtocolNumber) (*Conn, error) {
+func DialTCP(s *stack.Stack, addr tcpip.FullAddress, network tcpip.NetworkProtocolNumber) (*Conn, error) {
 	// Create TCP endpoint, then connect.
 	var wq waiter.Queue
 	ep, err := s.NewEndpoint(tcp.ProtocolNumber, network, &wq)
@@ -466,13 +467,13 @@ func DialTCP(s tcpip.Stack, addr tcpip.FullAddress, network tcpip.NetworkProtoco
 type PacketConn struct {
 	deadlineTimer
 
-	stack tcpip.Stack
+	stack *stack.Stack
 	ep    tcpip.Endpoint
 	wq    *waiter.Queue
 }
 
 // NewPacketConn creates a new PacketConn.
-func NewPacketConn(s tcpip.Stack, addr tcpip.FullAddress, network tcpip.NetworkProtocolNumber) (*PacketConn, error) {
+func NewPacketConn(s *stack.Stack, addr tcpip.FullAddress, network tcpip.NetworkProtocolNumber) (*PacketConn, error) {
 	// Create UDP endpoint and bind it.
 	var wq waiter.Queue
 	ep, err := s.NewEndpoint(udp.ProtocolNumber, network, &wq)

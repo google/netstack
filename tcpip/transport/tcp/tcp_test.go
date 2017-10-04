@@ -15,7 +15,6 @@ import (
 	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/network/ipv4"
 	"github.com/google/netstack/tcpip/seqnum"
-	"github.com/google/netstack/tcpip/stack"
 	"github.com/google/netstack/tcpip/transport/tcp"
 	"github.com/google/netstack/tcpip/transport/tcp/testing/context"
 	"github.com/google/netstack/waiter"
@@ -1116,7 +1115,7 @@ func TestForwarderSendMSSLessThanMTU(t *testing.T) {
 	c := context.New(t, mtu)
 	defer c.Cleanup()
 
-	s := c.Stack().(*stack.Stack)
+	s := c.Stack()
 	ch := make(chan *tcpip.Error, 1)
 	f := tcp.NewForwarder(s, 65536, 10, func(r *tcp.ForwarderRequest) {
 		var err *tcpip.Error

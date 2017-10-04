@@ -342,47 +342,6 @@ type TransportProtocolNumber uint32
 // NetworkProtocolNumber is the number of a network protocol.
 type NetworkProtocolNumber uint32
 
-// Stack represents a networking stack, with all supported protocols, NICs, and
-// route table.
-type Stack interface {
-	// NewEndpoint creates a new transport layer endpoint of the given
-	// protocol.
-	NewEndpoint(transport TransportProtocolNumber, network NetworkProtocolNumber, waiterQueue *waiter.Queue) (Endpoint, *Error)
-
-	// SetRouteTable assigns the route table to be used by this stack. It
-	// specifies which NICs to use for given destination address ranges.
-	SetRouteTable(table []Route)
-
-	// CreateNIC creates a NIC with the provided id and link-layer sender.
-	CreateNIC(id NICID, linkEndpoint LinkEndpointID) *Error
-
-	// AddAddress adds a new network-layer address to the specified NIC.
-	AddAddress(id NICID, protocol NetworkProtocolNumber, addr Address) *Error
-
-	// Stats returns a snapshot of the current stats.
-	// TODO: Make stats available in sentry for debugging/diag.
-	Stats() Stats
-
-	// NICSubnets returns a map of NICIDs to their associated subnets.
-	NICSubnets() map[NICID][]Subnet
-
-	// CheckNetworkProtocol checks if a given network protocol is enabled in the
-	// stack.
-	CheckNetworkProtocol(protocol NetworkProtocolNumber) bool
-
-	// SetNetworkProtocolOption allows configuring individual protocol level
-	// options. This method returns an error if the protocol is not
-	// supported or option is not supported by the protocol implementation
-	// or the provided value is incorrect.
-	SetNetworkProtocolOption(network NetworkProtocolNumber, option interface{}) *Error
-
-	// SetTransportProtocolOption allows configuring individual protocol
-	// level options. This method returns an error if the protocol is not
-	// supported or option is not supported by the protocol implementation
-	// or the provided value is incorrect.
-	SetTransportProtocolOption(transport TransportProtocolNumber, option interface{}) *Error
-}
-
 // Stats holds statistics about the networking stack.
 type Stats struct {
 	// UnkownProtocolRcvdPackets is the number of packets received by the

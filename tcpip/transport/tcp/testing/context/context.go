@@ -100,7 +100,7 @@ type Headers struct {
 type Context struct {
 	t      *testing.T
 	linkEP *channel.Endpoint
-	s      tcpip.Stack
+	s      *stack.Stack
 
 	// IRS holds the initial sequence number in the SYN sent by endpoint in
 	// case of an active connect or the sequence number sent by the endpoint
@@ -177,7 +177,7 @@ func (c *Context) Cleanup() {
 }
 
 // Stack returns a reference to the stack in the Context.
-func (c *Context) Stack() tcpip.Stack {
+func (c *Context) Stack() *stack.Stack {
 	return c.s
 }
 
