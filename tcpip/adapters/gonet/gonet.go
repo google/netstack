@@ -366,7 +366,7 @@ func (c *Conn) Write(b []byte) (int, error) {
 				// the notification.
 				select {
 				case <-deadline:
-					return 0, c.newOpError("write", &timeoutError{})
+					return nbytes, c.newOpError("write", &timeoutError{})
 				case <-notifyCh:
 				}
 			}
@@ -382,7 +382,7 @@ func (c *Conn) Write(b []byte) (int, error) {
 		return nbytes, nil
 	}
 
-	return 0, c.newOpError("write", errors.New(err.String()))
+	return nbytes, c.newOpError("write", errors.New(err.String()))
 }
 
 // Close implements net.Conn.Close.
@@ -565,7 +565,7 @@ func (c *PacketConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 			}
 			select {
 			case <-deadline:
-				return 0, c.newRemoteOpError("write", addr, &timeoutError{})
+				return int(n), c.newRemoteOpError("write", addr, &timeoutError{})
 			case <-notifyCh:
 			}
 		}
@@ -575,7 +575,7 @@ func (c *PacketConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 		return int(n), nil
 	}
 
-	return 0, c.newRemoteOpError("write", addr, errors.New(err.String()))
+	return int(n), c.newRemoteOpError("write", addr, errors.New(err.String()))
 }
 
 // Close implements net.PacketConn.Close.
