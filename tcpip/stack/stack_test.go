@@ -654,6 +654,7 @@ func TestSetOption(t *testing.T) {
 		verifier func(t *testing.T, p stack.NetworkProtocol)
 	}{
 		{fakeNetGoodOption(true), nil, func(t *testing.T, p stack.NetworkProtocol) {
+			t.Helper()
 			fakeNet := p.(*fakeNetworkProtocol)
 			if fakeNet.opts.good != true {
 				t.Fatalf("fakeNet.opts.good = false, want = true")
