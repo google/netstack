@@ -62,6 +62,12 @@ func (e *endpoint) MTU() uint32 {
 	return e.lower.MTU()
 }
 
+// Capabilities implements stack.LinkEndpoint.Capabilities. It just forwards the
+// request to the lower endpoint.
+func (e *endpoint) Capabilities() stack.LinkEndpointCapabilities {
+	return e.lower.Capabilities()
+}
+
 // MaxHeaderLength implements the stack.LinkEndpoint interface. It just forwards
 // the request to the lower endpoint.
 func (e *endpoint) MaxHeaderLength() uint16 {

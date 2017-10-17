@@ -64,6 +64,11 @@ func (r *Route) PseudoHeaderChecksum(protocol tcpip.TransportProtocolNumber) uin
 	return header.PseudoHeaderChecksum(protocol, r.LocalAddress, r.RemoteAddress)
 }
 
+// Capabilities returns the link-layer capabilities of the route.
+func (r *Route) Capabilities() LinkEndpointCapabilities {
+	return r.ref.ep.Capabilities()
+}
+
 // WritePacket writes the packet through the given route.
 func (r *Route) WritePacket(hdr *buffer.Prependable, payload buffer.View, protocol tcpip.TransportProtocolNumber) *tcpip.Error {
 	return r.ref.ep.WritePacket(r, hdr, payload, protocol)

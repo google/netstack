@@ -143,6 +143,11 @@ func (e *endpoint) MTU() uint32 {
 	return e.mtu - header.EthernetMinimumSize
 }
 
+// Capabilities implements stack.LinkEndpoint.Capabilities.
+func (*endpoint) Capabilities() stack.LinkEndpointCapabilities {
+	return 0
+}
+
 // MaxHeaderLength implements stack.LinkEndpoint.MaxHeaderLength. It returns the
 // ethernet frame header size.
 func (*endpoint) MaxHeaderLength() uint16 {

@@ -68,6 +68,11 @@ func (e *endpoint) MTU() uint32 {
 	return e.mtu
 }
 
+// Capabilities implements stack.LinkEndpoint.Capabilities.
+func (*endpoint) Capabilities() stack.LinkEndpointCapabilities {
+	return 0
+}
+
 // MaxHeaderLength returns the maximum size of the header. Given that it
 // doesn't have a header, it just returns 0.
 func (*endpoint) MaxHeaderLength() uint16 {

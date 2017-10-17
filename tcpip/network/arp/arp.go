@@ -50,6 +50,10 @@ func (e *endpoint) NICID() tcpip.NICID {
 	return e.nicid
 }
 
+func (e *endpoint) Capabilities() stack.LinkEndpointCapabilities {
+	return e.linkEP.Capabilities()
+}
+
 func (e *endpoint) ID() *stack.NetworkEndpointID {
 	return &stack.NetworkEndpointID{ProtocolAddress}
 }

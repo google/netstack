@@ -74,6 +74,10 @@ func (f *fakeNetworkEndpoint) PseudoHeaderChecksum(protocol tcpip.TransportProto
 	return 0
 }
 
+func (f *fakeNetworkEndpoint) Capabilities() stack.LinkEndpointCapabilities {
+	return f.linkEP.Capabilities()
+}
+
 func (f *fakeNetworkEndpoint) WritePacket(r *stack.Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.TransportProtocolNumber) *tcpip.Error {
 	// Increment the sent packet count in the protocol descriptor.
 	f.proto.sendPacketCount[int(r.RemoteAddress[0])%len(f.proto.sendPacketCount)]++

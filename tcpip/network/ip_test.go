@@ -76,6 +76,11 @@ func (*testObject) MTU() uint32 {
 	return 65536
 }
 
+// Capabilities implements stack.LinkEndpoint.Capabilities.
+func (*testObject) Capabilities() stack.LinkEndpointCapabilities {
+	return 0
+}
+
 // MaxHeaderLength is only implemented to satisfy the LinkEndpoint interface.
 func (*testObject) MaxHeaderLength() uint16 {
 	return 0

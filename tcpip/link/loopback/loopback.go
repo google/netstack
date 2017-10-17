@@ -38,6 +38,12 @@ func (*endpoint) MTU() uint32 {
 	return 65536
 }
 
+// Capabilities implements stack.LinkEndpoint.Capabilities. Loopback advertises
+// itself as supporting checksum offload, but in reality it's just omitted.
+func (*endpoint) Capabilities() stack.LinkEndpointCapabilities {
+	return stack.CapabilityChecksumOffload
+}
+
 // MaxHeaderLength implements stack.LinkEndpoint.MaxHeaderLength. Given that the
 // loopback interface doesn't have a header, it just returns 0.
 func (*endpoint) MaxHeaderLength() uint16 {

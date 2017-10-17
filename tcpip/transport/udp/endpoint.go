@@ -339,20 +339,22 @@ func sendUDP(r *stack.Route, data buffer.View, localPort, remotePort uint16) *tc
 	// Initialize the header.
 	udp := header.UDP(hdr.Prepend(header.UDPMinimumSize))
 
-	length := uint16(hdr.UsedLength())
-	xsum := r.PseudoHeaderChecksum(ProtocolNumber)
-	if data != nil {
-		length += uint16(len(data))
-		xsum = header.Checksum(data, xsum)
-	}
-
+	length := uint16(hdr.UsedLength()) + uint16(len(data))
 	udp.Encode(&header.UDPFields{
 		SrcPort: localPort,
 		DstPort: remotePort,
 		Length:  length,
 	})
 
-	udp.SetChecksum(^udp.CalculateChecksum(xsum, length))
+	// Only calculate the checksum if offloading isn't supported.
+	if r.Capabilities()&stack.CapabilityChecksumOffload == 0 {
+		xsum := r.PseudoHeaderChecksum(ProtocolNumber)
+		if data != nil {
+			xsum = header.Checksum(data, xsum)
+		}
+
+		udp.SetChecksum(^udp.CalculateChecksum(xsum, length))
+	}
 
 	return r.WritePacket(&hdr, data, ProtocolNumber)
 }

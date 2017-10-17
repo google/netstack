@@ -74,6 +74,11 @@ func (e *endpoint) MTU() uint32 {
 	return lmtu - uint32(e.MaxHeaderLength())
 }
 
+// Capabilities implements stack.NetworkEndpoint.Capabilities.
+func (e *endpoint) Capabilities() stack.LinkEndpointCapabilities {
+	return e.linkEP.Capabilities()
+}
+
 // NICID returns the ID of the NIC this endpoint belongs to.
 func (e *endpoint) NICID() tcpip.NICID {
 	return e.nicid

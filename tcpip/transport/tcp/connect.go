@@ -440,14 +440,17 @@ func sendTCPWithOptions(r *stack.Route, id stack.TransportEndpointID, data buffe
 	})
 	copy(tcp[header.TCPMinimumSize:], opts)
 
-	length := uint16(hdr.UsedLength())
-	xsum := r.PseudoHeaderChecksum(ProtocolNumber)
-	if data != nil {
-		length += uint16(len(data))
-		xsum = header.Checksum(data, xsum)
-	}
+	// Only calculate the checksum if offloading isn't supported.
+	if r.Capabilities()&stack.CapabilityChecksumOffload == 0 {
+		length := uint16(hdr.UsedLength())
+		xsum := r.PseudoHeaderChecksum(ProtocolNumber)
+		if data != nil {
+			length += uint16(len(data))
+			xsum = header.Checksum(data, xsum)
+		}
 
-	tcp.SetChecksum(^tcp.CalculateChecksum(xsum, length))
+		tcp.SetChecksum(^tcp.CalculateChecksum(xsum, length))
+	}
 
 	return r.WritePacket(&hdr, data, ProtocolNumber)
 }
@@ -474,14 +477,17 @@ func sendTCP(r *stack.Route, id stack.TransportEndpointID, data buffer.View, fla
 		WindowSize: uint16(rcvWnd),
 	})
 
-	length := uint16(hdr.UsedLength())
-	xsum := r.PseudoHeaderChecksum(ProtocolNumber)
-	if data != nil {
-		length += uint16(len(data))
-		xsum = header.Checksum(data, xsum)
-	}
+	// Only calculate the checksum if offloading isn't supported.
+	if r.Capabilities()&stack.CapabilityChecksumOffload == 0 {
+		length := uint16(hdr.UsedLength())
+		xsum := r.PseudoHeaderChecksum(ProtocolNumber)
+		if data != nil {
+			length += uint16(len(data))
+			xsum = header.Checksum(data, xsum)
+		}
 
-	tcp.SetChecksum(^tcp.CalculateChecksum(xsum, length))
+		tcp.SetChecksum(^tcp.CalculateChecksum(xsum, length))
+	}
 
 	return r.WritePacket(&hdr, data, ProtocolNumber)
 }

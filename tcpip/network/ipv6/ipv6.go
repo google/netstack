@@ -66,6 +66,11 @@ func (e *endpoint) ID() *stack.NetworkEndpointID {
 	return &e.id
 }
 
+// Capabilities implements stack.NetworkEndpoint.Capabilities.
+func (e *endpoint) Capabilities() stack.LinkEndpointCapabilities {
+	return e.linkEP.Capabilities()
+}
+
 // MaxHeaderLength returns the maximum length needed by ipv6 headers (and
 // underlying protocols).
 func (e *endpoint) MaxHeaderLength() uint16 {
