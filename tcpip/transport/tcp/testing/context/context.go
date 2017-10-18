@@ -483,6 +483,9 @@ type RawEndpoint struct {
 	WndSize    seqnum.Size
 	RecentTS   uint32 // Stores the latest timestamp to echo back.
 	TSVal      uint32 // TSVal stores the last timestamp sent by this endpoint.
+
+	// SackPermitted is true if SACKPermitted option was negotiated for this endpoint.
+	SACKPermitted bool
 }
 
 // SendPacketWithTS embeds the provided tsVal in the Timestamp option
@@ -530,6 +533,22 @@ func (r *RawEndpoint) VerifyACKWithTS(tsVal uint32) {
 	r.RecentTS = opts.TSVal
 }
 
+// VerifyACKNoSACK verifies that the ACK does not contain a SACK block.
+func (r *RawEndpoint) VerifyACKNoSACK() {
+	// Read ACK and verify that the TCP options in the segment do
+	// not contain a SACK block.
+	ackPacket := r.C.GetPacket()
+	checker.IPv4(r.C.t, ackPacket,
+		checker.TCP(
+			checker.DstPort(r.SrcPort),
+			checker.TCPFlags(header.TCPFlagAck),
+			checker.SeqNum(uint32(r.AckNum)),
+			checker.AckNum(uint32(r.NextSeqNum)),
+			checker.TCPNoSACKBlockChecker(),
+		),
+	)
+}
+
 // CreateConnectedWithOptions creates and connects c.ep with the specified TCP
 // options enabled and returns a RawEndpoint which represents the other end of
 // the connection.
@@ -562,9 +581,10 @@ func (c *Context) CreateConnectedWithOptions(wantOptions header.TCPSynOptions) *
 			checker.DstPort(TestPort),
 			checker.TCPFlags(header.TCPFlagSyn),
 			checker.TCPSynOptions(header.TCPSynOptions{
-				MSS: uint16(c.linkEP.MTU() - header.IPv4MinimumSize - header.TCPMinimumSize),
-				TS:  true,
-				WS:  defaultWindowScale,
+				MSS:           uint16(c.linkEP.MTU() - header.IPv4MinimumSize - header.TCPMinimumSize),
+				TS:            true,
+				WS:            defaultWindowScale,
+				SACKPermitted: c.SACKEnabled(),
 			}),
 		),
 	)
@@ -576,6 +596,10 @@ func (c *Context) CreateConnectedWithOptions(wantOptions header.TCPSynOptions) *
 	if wantOptions.TS {
 		tsOpt := header.EncodeTSOption(wantOptions.TSVal, synOptions.TSVal)
 		synAckOptions = append(synAckOptions, tsOpt[:]...)
+	}
+	if wantOptions.SACKPermitted {
+		sackPermittedOpt := header.EncodeSACKPermittedOption()
+		synAckOptions = append(synAckOptions, sackPermittedOpt[:]...)
 	}
 
 	// Build SYN-ACK.
@@ -634,22 +658,26 @@ func (c *Context) CreateConnectedWithOptions(wantOptions header.TCPSynOptions) *
 	c.TimeStampEnabled = true
 
 	return &RawEndpoint{
-		C:          c,
-		SrcPort:    tcpSeg.DestinationPort(),
-		DstPort:    tcpSeg.SourcePort(),
-		Flags:      header.TCPFlagAck | header.TCPFlagPsh,
-		NextSeqNum: iss + 1,
-		AckNum:     c.IRS.Add(1),
-		WndSize:    30000,
-		RecentTS:   ackOptions.TSVal,
-		TSVal:      wantOptions.TSVal,
+		C:             c,
+		SrcPort:       tcpSeg.DestinationPort(),
+		DstPort:       tcpSeg.SourcePort(),
+		Flags:         header.TCPFlagAck | header.TCPFlagPsh,
+		NextSeqNum:    iss + 1,
+		AckNum:        c.IRS.Add(1),
+		WndSize:       30000,
+		RecentTS:      ackOptions.TSVal,
+		TSVal:         wantOptions.TSVal,
+		SACKPermitted: wantOptions.SACKPermitted,
 	}
 }
 
 // AcceptWithOptions initializes a listening endpoint and connects to it with the
 // provided options enabled. It also verifies that the SYN-ACK has the expected
 // values for the provided options.
-func (c *Context) AcceptWithOptions(wndScale int, synOptions header.TCPSynOptions) {
+//
+// The function returns a RawEndpoint representing the other end of the accepted
+// endpoint.
+func (c *Context) AcceptWithOptions(wndScale int, synOptions header.TCPSynOptions) *RawEndpoint {
 	// Create EP and start listening.
 	wq := &waiter.Queue{}
 	ep, err := c.s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, wq)
@@ -666,7 +694,7 @@ func (c *Context) AcceptWithOptions(wndScale int, synOptions header.TCPSynOption
 		c.t.Fatalf("Listen failed: %v", err)
 	}
 
-	c.PassiveConnectWithOptions(100, wndScale, synOptions)
+	rep := c.PassiveConnectWithOptions(100, wndScale, synOptions)
 
 	// Try to accept the connection.
 	we, ch := waiter.NewChannelEntry(nil)
@@ -687,6 +715,7 @@ func (c *Context) AcceptWithOptions(wndScale int, synOptions header.TCPSynOption
 			c.t.Fatalf("Timed out waiting for accept")
 		}
 	}
+	return rep
 }
 
 // PassiveConnect just disables WindowScaling and delegates the call to
@@ -709,7 +738,7 @@ func (c *Context) PassiveConnect(maxPayload, wndScale int, synOptions header.TCP
 // wndScale is the expected window scale in the SYN-ACK and synOptions.WS is the
 // value of the window scaling option to be sent in the SYN. If synOptions.WS >
 // 0 then we send the WindowScale option.
-func (c *Context) PassiveConnectWithOptions(maxPayload, wndScale int, synOptions header.TCPSynOptions) {
+func (c *Context) PassiveConnectWithOptions(maxPayload, wndScale int, synOptions header.TCPSynOptions) *RawEndpoint {
 	opts := []byte{
 		header.TCPOptionMSS, 4, byte(maxPayload / 256), byte(maxPayload % 256),
 	}
@@ -724,6 +753,11 @@ func (c *Context) PassiveConnectWithOptions(maxPayload, wndScale int, synOptions
 		opts = append(opts, tsOpt[:]...)
 	}
 
+	if synOptions.SACKPermitted {
+		sackPermittedOpt := header.EncodeSACKPermittedOption()
+		opts = append(opts, sackPermittedOpt[:]...)
+	}
+
 	// Send a SYN request.
 	iss := seqnum.Value(testInitialSequenceNumber)
 	c.SendPacket(nil, &Headers{
@@ -735,7 +769,8 @@ func (c *Context) PassiveConnectWithOptions(maxPayload, wndScale int, synOptions
 		TCPOpts: opts,
 	})
 
-	// Receive the SYN-ACK reply. Make sure MSS is present.
+	// Receive the SYN-ACK reply. Make sure MSS and other expected options
+	// are present.
 	b := c.GetPacket()
 	tcp := header.TCP(header.IPv4(b).Payload())
 	c.IRS = seqnum.Value(tcp.SequenceNumber())
@@ -745,7 +780,7 @@ func (c *Context) PassiveConnectWithOptions(maxPayload, wndScale int, synOptions
 		checker.DstPort(TestPort),
 		checker.TCPFlags(header.TCPFlagAck | header.TCPFlagSyn),
 		checker.AckNum(uint32(iss) + 1),
-		checker.TCPSynOptions(header.TCPSynOptions{MSS: synOptions.MSS, WS: wndScale}),
+		checker.TCPSynOptions(header.TCPSynOptions{MSS: synOptions.MSS, WS: wndScale, SACKPermitted: synOptions.SACKPermitted}),
 	}
 
 	// If TS option was enabled in the original SYN then add a checker to
@@ -773,13 +808,13 @@ func (c *Context) PassiveConnectWithOptions(maxPayload, wndScale int, synOptions
 		ackHeaders.RcvWnd = rcvWnd >> byte(synOptions.WS)
 	}
 
+	parsedOpts := tcp.ParsedOptions()
 	if synOptions.TS {
 		// Echo the tsVal back to the peer in the tsEcr field of the
 		// timestamp option.
-		opts := tcp.ParsedOptions()
 		// Increment TSVal by 1 from the value sent in the SYN and echo
 		// the TSVal in the SYN-ACK in the TSEcr field.
-		tsOpt := header.EncodeTSOption(synOptions.TSVal+1, opts.TSVal)
+		tsOpt := header.EncodeTSOption(synOptions.TSVal+1, parsedOpts.TSVal)
 		ackHeaders.TCPOpts = tsOpt[:]
 	}
 
@@ -787,4 +822,28 @@ func (c *Context) PassiveConnectWithOptions(maxPayload, wndScale int, synOptions
 	c.SendPacket(nil, ackHeaders)
 
 	c.Port = StackPort
+
+	return &RawEndpoint{
+		C:             c,
+		SrcPort:       TestPort,
+		DstPort:       StackPort,
+		Flags:         header.TCPFlagPsh | header.TCPFlagAck,
+		NextSeqNum:    iss + 1,
+		AckNum:        c.IRS + 1,
+		WndSize:       rcvWnd,
+		SACKPermitted: synOptions.SACKPermitted,
+		RecentTS:      parsedOpts.TSVal,
+		TSVal:         synOptions.TSVal + 1,
+	}
+}
+
+// SACKEnabled returns true if the TCP Protocol option SACKEnabled is set to true
+// for the Stack in the context.
+func (c *Context) SACKEnabled() bool {
+	var v tcp.SACKEnabled
+	if err := c.Stack().TransportProtocolOption(tcp.ProtocolNumber, &v); err != nil {
+		// Stack doesn't support SACK. So just return.
+		return false
+	}
+	return bool(v)
 }

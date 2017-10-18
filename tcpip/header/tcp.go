@@ -40,11 +40,13 @@ const (
 
 // Options that may be present in a TCP segment.
 const (
-	TCPOptionEOL = 0
-	TCPOptionNOP = 1
-	TCPOptionMSS = 2
-	TCPOptionWS  = 3
-	TCPOptionTS  = 8
+	TCPOptionEOL           = 0
+	TCPOptionNOP           = 1
+	TCPOptionMSS           = 2
+	TCPOptionWS            = 3
+	TCPOptionTS            = 8
+	TCPOptionSACKPermitted = 4
+	TCPOptionSACK          = 5
 )
 
 // TCPFields contains the fields of a TCP packet. It is used to describe the
@@ -97,6 +99,9 @@ type TCPSynOptions struct {
 
 	// TSEcr is the value of the TSEcr field in the timestamp option.
 	TSEcr uint32
+
+	// SACKPermitted is true if the SACK option was provided in the SYN/SYN-ACK.
+	SACKPermitted bool
 }
 
 // TCPOptions are used to parse and cache the TCP segment options for a non
@@ -314,6 +319,12 @@ func ParseSynOptions(opts []byte, isAck bool) TCPSynOptions {
 			}
 			synOpts.TS = true
 			i += 10
+		case TCPOptionSACKPermitted:
+			if i+2 > limit || opts[i+1] != 2 {
+				return synOpts
+			}
+			synOpts.SACKPermitted = true
+			i += 2
 
 		default:
 			// We don't recognize this option, just skip over it.
@@ -381,4 +392,16 @@ func EncodeTSOption(tsVal, tsEcr uint32) (b [12]byte) {
 	b[10] = TCPOptionNOP
 	b[11] = TCPOptionNOP
 	return b
+}
+
+// EncodeSACKPermittedOption builds and returns an array containing
+// a TCP SACK permitted option. This function also pads the option
+// with two TCPOptionNOP to make sure it is correctly quad aligned.
+func EncodeSACKPermittedOption() [4]byte {
+	return [...]byte{
+		TCPOptionSACKPermitted,
+		2,
+		TCPOptionNOP,
+		TCPOptionNOP,
+	}
 }

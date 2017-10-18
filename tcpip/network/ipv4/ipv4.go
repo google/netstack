@@ -191,6 +191,11 @@ func (p *protocol) SetOption(option interface{}) *tcpip.Error {
 	return tcpip.ErrUnknownProtocolOption
 }
 
+// Option implements NetworkProtocol.Option.
+func (p *protocol) Option(option interface{}) *tcpip.Error {
+	return tcpip.ErrUnknownProtocolOption
+}
+
 // hashRoute calculates a hash value for the given route. It uses the source &
 // destination address, the transport protocol number, and a random initial
 // value (generated once on initialization) to generate the hash.

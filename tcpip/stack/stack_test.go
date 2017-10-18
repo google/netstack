@@ -146,6 +146,16 @@ func (f *fakeNetworkProtocol) SetOption(option interface{}) *tcpip.Error {
 	}
 }
 
+func (f *fakeNetworkProtocol) Option(option interface{}) *tcpip.Error {
+	switch v := option.(type) {
+	case *fakeNetGoodOption:
+		*v = fakeNetGoodOption(f.opts.good)
+		return nil
+	default:
+		return tcpip.ErrUnknownProtocolOption
+	}
+}
+
 func TestNetworkReceive(t *testing.T) {
 	// Create a stack with the fake network protocol, one nic, and two
 	// addresses attached to it: 1 & 2.
@@ -644,7 +654,7 @@ func TestSubnetRejectsNonmatchingPacket(t *testing.T) {
 	}
 }
 
-func TestSetOption(t *testing.T) {
+func TestNetworkOptions(t *testing.T) {
 	s := stack.New([]string{"fakeNet"}, []string{})
 
 	// Try an unsupported network protocol.
@@ -654,7 +664,7 @@ func TestSetOption(t *testing.T) {
 
 	testCases := []struct {
 		option   interface{}
-		want     *tcpip.Error
+		wantErr  *tcpip.Error
 		verifier func(t *testing.T, p stack.NetworkProtocol)
 	}{
 		{fakeNetGoodOption(true), nil, func(t *testing.T, p stack.NetworkProtocol) {
@@ -663,13 +673,20 @@ func TestSetOption(t *testing.T) {
 			if fakeNet.opts.good != true {
 				t.Fatalf("fakeNet.opts.good = false, want = true")
 			}
+			var v fakeNetGoodOption
+			if err := s.NetworkProtocolOption(fakeNetNumber, &v); err != nil {
+				t.Fatalf("s.NetworkProtocolOption(fakeNetNumber, &v) = %v, want = nil, where v is option %T", v, err)
+			}
+			if v != true {
+				t.Fatalf("s.NetworkProtocolOption(fakeNetNumber, &v) returned v = %v, want = true", v)
+			}
 		}},
 		{fakeNetBadOption(true), tcpip.ErrUnknownProtocolOption, nil},
 		{fakeNetInvalidValueOption(1), tcpip.ErrInvalidOptionValue, nil},
 	}
 	for _, tc := range testCases {
-		if got := s.SetNetworkProtocolOption(fakeNetNumber, tc.option); tc.want != got {
-			t.Errorf("s.SetOption(fakeNet, %v) = %v, want = %v", tc.option, got, tc.want)
+		if got := s.SetNetworkProtocolOption(fakeNetNumber, tc.option); got != tc.wantErr {
+			t.Errorf("s.SetNetworkProtocolOption(fakeNet, %v) = %v, want = %v", tc.option, got, tc.wantErr)
 		}
 		if tc.verifier != nil {
 			tc.verifier(t, s.NetworkProtocolInstance(fakeNetNumber))

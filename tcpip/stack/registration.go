@@ -74,6 +74,11 @@ type TransportProtocol interface {
 	// SetOption returns an error if the option is not supported or the
 	// provided option value is invalid.
 	SetOption(option interface{}) *tcpip.Error
+
+	// Option allows retrieving protocol specific option values.
+	// Option returns an error if the option is not supported or the
+	// provided option value is invalid.
+	Option(option interface{}) *tcpip.Error
 }
 
 // TransportDispatcher contains the methods used by the network stack to deliver
@@ -143,6 +148,11 @@ type NetworkProtocol interface {
 	// SetOption returns an error if the option is not supported or the
 	// provided option value is invalid.
 	SetOption(option interface{}) *tcpip.Error
+
+	// Option allows retrieving protocol specific option values.
+	// Option returns an error if the option is not supported or the
+	// provided option value is invalid.
+	Option(option interface{}) *tcpip.Error
 }
 
 // NetworkDispatcher contains the methods used by the network stack to deliver

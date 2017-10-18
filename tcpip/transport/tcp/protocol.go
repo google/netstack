@@ -11,6 +11,8 @@
 package tcp
 
 import (
+	"sync"
+
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
@@ -27,7 +29,14 @@ const (
 	ProtocolNumber = header.TCPProtocolNumber
 )
 
-type protocol struct{}
+// SACKEnabled option can be used to enable SACK support in the TCP
+// protocol. See: https://tools.ietf.org/html/rfc2018.
+type SACKEnabled bool
+
+type protocol struct {
+	mu          sync.Mutex
+	sackEnabled bool
+}
 
 // Number returns the tcp protocol number.
 func (*protocol) Number() tcpip.TransportProtocolNumber {
@@ -90,7 +99,28 @@ func replyWithReset(s *segment) {
 
 // SetOption implements TransportProtocol.SetOption.
 func (p *protocol) SetOption(option interface{}) *tcpip.Error {
-	return tcpip.ErrUnknownProtocolOption
+	switch v := option.(type) {
+	case SACKEnabled:
+		p.mu.Lock()
+		p.sackEnabled = bool(v)
+		p.mu.Unlock()
+		return nil
+	default:
+		return tcpip.ErrUnknownProtocolOption
+	}
+}
+
+// Option implements TransportProtocol.Option.
+func (p *protocol) Option(option interface{}) *tcpip.Error {
+	switch v := option.(type) {
+	case *SACKEnabled:
+		p.mu.Lock()
+		*v = SACKEnabled(p.sackEnabled)
+		p.mu.Unlock()
+		return nil
+	default:
+		return tcpip.ErrUnknownProtocolOption
+	}
 }
 
 func init() {

@@ -199,6 +199,7 @@ func (l *listenContext) createConnectedEndpoint(s *segment, iss seqnum.Value, ir
 	n.rcvBufSize = int(l.rcvWnd)
 
 	n.maybeEnableTimestamp(rcvdSynOpts)
+	n.maybeEnableSACKPermitted(rcvdSynOpts)
 
 	// Register new endpoint so that packets are routed to it.
 	if err := n.stack.RegisterTransportEndpoint(n.boundNICID, n.effectiveNetProtos, ProtocolNumber, n.id, n); err != nil {

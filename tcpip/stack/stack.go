@@ -115,6 +115,23 @@ func (s *Stack) SetNetworkProtocolOption(network tcpip.NetworkProtocolNumber, op
 	return netProto.SetOption(option)
 }
 
+// NetworkProtocolOption allows retrieving individual protocol level option
+// values. This method returns an error if the protocol is not supported or
+// option is not supported by the protocol implementation.
+// e.g.
+// var v ipv4.MyOption
+// err := s.NetworkProtocolOption(tcpip.IPv4ProtocolNumber, &v)
+// if err != nil {
+//   ...
+// }
+func (s *Stack) NetworkProtocolOption(network tcpip.NetworkProtocolNumber, option interface{}) *tcpip.Error {
+	netProto, ok := s.networkProtocols[network]
+	if !ok {
+		return tcpip.ErrUnknownProtocol
+	}
+	return netProto.Option(option)
+}
+
 // SetTransportProtocolOption allows configuring individual protocol level
 // options. This method returns an error if the protocol is not supported or
 // option is not supported by the protocol implementation or the provided value
@@ -125,6 +142,21 @@ func (s *Stack) SetTransportProtocolOption(transport tcpip.TransportProtocolNumb
 		return tcpip.ErrUnknownProtocol
 	}
 	return transProtoState.proto.SetOption(option)
+}
+
+// TransportProtocolOption allows retrieving individual protocol level option
+// values. This method returns an error if the protocol is not supported or
+// option is not supported by the protocol implementation.
+// var v tcp.SACKEnabled
+// if err := s.TransportProtocolOption(tcpip.TCPProtocolNumber, &v); err != nil {
+//   ...
+// }
+func (s *Stack) TransportProtocolOption(transport tcpip.TransportProtocolNumber, option interface{}) *tcpip.Error {
+	transProtoState, ok := s.transportProtocols[transport]
+	if !ok {
+		return tcpip.ErrUnknownProtocol
+	}
+	return transProtoState.proto.Option(option)
 }
 
 // SetTransportProtocolHandler sets the per-stack default handler for the given

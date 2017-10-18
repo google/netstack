@@ -208,6 +208,11 @@ func (h *handshake) synSentState(s *segment) *tcpip.Error {
 		TS:    rcvSynOpts.TS,
 		TSVal: h.ep.timestamp(),
 		TSEcr: h.ep.recentTS,
+
+		// We only send SACKPermitted if the other side indicated it
+		// permits SACK. This is not explicitly defined in the RFC but
+		// this is the behaviour implemented by Linux.
+		SACKPermitted: rcvSynOpts.SACKPermitted,
 	}
 	sendSynTCP(&s.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, synOpts)
 
@@ -249,10 +254,11 @@ func (h *handshake) synRcvdState(s *segment) *tcpip.Error {
 			return err
 		}
 		synOpts := header.TCPSynOptions{
-			WS:    h.rcvWndScale,
-			TS:    h.ep.sendTSOk,
-			TSVal: h.ep.timestamp(),
-			TSEcr: h.ep.recentTS,
+			WS:            h.rcvWndScale,
+			TS:            h.ep.sendTSOk,
+			TSVal:         h.ep.timestamp(),
+			TSEcr:         h.ep.recentTS,
+			SACKPermitted: h.ep.sackPermitted,
 		}
 		sendSynTCP(&s.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, synOpts)
 		return nil
@@ -340,19 +346,29 @@ func (h *handshake) execute() *tcpip.Error {
 	s.AddWaker(&h.ep.newSegmentWaker, wakerForNewSegment)
 	defer s.Done()
 
+	var sackEnabled SACKEnabled
+	if err := h.ep.stack.TransportProtocolOption(ProtocolNumber, &sackEnabled); err != nil {
+		// If stack returned an error when checking for SACKEnabled
+		// status then just default to switching off SACK negotiation.
+		sackEnabled = false
+	}
+
 	// Send the initial SYN segment and loop until the handshake is
 	// completed.
 	synOpts := header.TCPSynOptions{
-		WS:    h.rcvWndScale,
-		TS:    true,
-		TSVal: h.ep.timestamp(),
-		TSEcr: h.ep.recentTS,
+		WS:            h.rcvWndScale,
+		TS:            true,
+		TSVal:         h.ep.timestamp(),
+		TSEcr:         h.ep.recentTS,
+		SACKPermitted: bool(sackEnabled),
 	}
 
 	// Execute is also called in a listen context so we want to make sure we
-	// only send the TS option when we received the TS in the initial SYN.
+	// only send the TS/SACK option when we received the TS/SACK in the
+	// initial SYN.
 	if h.state == handshakeSynRcvd {
 		synOpts.TS = h.ep.sendTSOk
+		synOpts.SACKPermitted = h.ep.sackPermitted && bool(sackEnabled)
 	}
 	sendSynTCP(&h.ep.route, h.ep.id, h.flags, h.iss, h.ackNum, h.rcvWnd, synOpts)
 	for h.state != handshakeCompleted {
@@ -411,6 +427,11 @@ func sendSynTCP(r *stack.Route, id stack.TransportEndpointID, flags byte, seq, a
 		// Initialize the WS option.
 		options = append(options,
 			header.TCPOptionWS, 3, uint8(opts.WS), header.TCPOptionNOP)
+	}
+
+	if opts.SACKPermitted {
+		sackPermitted := header.EncodeSACKPermittedOption()
+		options = append(options, sackPermitted[:]...)
 	}
 
 	return sendTCPWithOptions(r, id, nil, flags, seq, ack, rcvWnd, options)

@@ -147,6 +147,11 @@ func (p *protocol) SetOption(option interface{}) *tcpip.Error {
 	return tcpip.ErrUnknownProtocolOption
 }
 
+// Option implements NetworkProtocol.Option.
+func (p *protocol) Option(option interface{}) *tcpip.Error {
+	return tcpip.ErrUnknownProtocolOption
+}
+
 func init() {
 	stack.RegisterNetworkProtocolFactory(ProtocolName, func() stack.NetworkProtocol {
 		return &protocol{}

@@ -123,6 +123,10 @@ type endpoint struct {
 	// TSVal field in the timestamp option.
 	tsOffset uint32
 
+	// sackPermitted is set to true if the peer sends the TCPSACKPermitted
+	// option in the SYN/SYN-ACK.
+	sackPermitted bool
+
 	// The options below aren't implemented, but we remember the user
 	// settings because applications expect to be able to set/query these
 	// options.
@@ -1148,4 +1152,18 @@ func timeStampOffset() uint32 {
 	// initialized in a manner analogous to how sequence numbers are
 	// randomized per connection basis. But for now this is sufficient.
 	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
+}
+
+// maybeEnableSACKPermitted marks the SACKPermitted option enabled for this endpoint
+// if the SYN options indicate that the SACK option was negotiated and the TCP
+// stack is configured to enable TCP SACK option.
+func (e *endpoint) maybeEnableSACKPermitted(synOpts *header.TCPSynOptions) {
+	var v SACKEnabled
+	if err := e.stack.TransportProtocolOption(ProtocolNumber, &v); err != nil {
+		// Stack doesn't support SACK. So just return.
+		return
+	}
+	if bool(v) && synOpts.SACKPermitted {
+		e.sackPermitted = true
+	}
 }

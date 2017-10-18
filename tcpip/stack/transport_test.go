@@ -189,6 +189,16 @@ func (f *fakeTransportProtocol) SetOption(option interface{}) *tcpip.Error {
 	}
 }
 
+func (f *fakeTransportProtocol) Option(option interface{}) *tcpip.Error {
+	switch v := option.(type) {
+	case *fakeTransportGoodOption:
+		*v = fakeTransportGoodOption(f.opts.good)
+		return nil
+	default:
+		return tcpip.ErrUnknownProtocolOption
+	}
+}
+
 func TestTransportReceive(t *testing.T) {
 	id, linkEP := channel.New(10, defaultMTU, "")
 	s := stack.New([]string{"fakeNet"}, []string{"fakeTrans"})
@@ -287,7 +297,7 @@ func TestTransportSend(t *testing.T) {
 	}
 }
 
-func TestTransportSetOption(t *testing.T) {
+func TestTransportOptions(t *testing.T) {
 	s := stack.New([]string{"fakeNet"}, []string{"fakeTrans"})
 
 	// Try an unsupported transport protocol.
@@ -297,7 +307,7 @@ func TestTransportSetOption(t *testing.T) {
 
 	testCases := []struct {
 		option   interface{}
-		want     *tcpip.Error
+		wantErr  *tcpip.Error
 		verifier func(t *testing.T, p stack.TransportProtocol)
 	}{
 		{fakeTransportGoodOption(true), nil, func(t *testing.T, p stack.TransportProtocol) {
@@ -306,13 +316,21 @@ func TestTransportSetOption(t *testing.T) {
 			if fakeTrans.opts.good != true {
 				t.Fatalf("fakeTrans.opts.good = false, want = true")
 			}
+			var v fakeTransportGoodOption
+			if err := s.TransportProtocolOption(fakeTransNumber, &v); err != nil {
+				t.Fatalf("s.TransportProtocolOption(fakeTransNumber, &v) = %v, want = nil, where v is option %T", v, err)
+			}
+			if v != true {
+				t.Fatalf("s.TransportProtocolOption(fakeTransNumber, &v) returned v = %v, want = true", v)
+			}
+
 		}},
 		{fakeTransportBadOption(true), tcpip.ErrUnknownProtocolOption, nil},
 		{fakeTransportInvalidValueOption(1), tcpip.ErrInvalidOptionValue, nil},
 	}
 	for _, tc := range testCases {
-		if got := s.SetTransportProtocolOption(fakeTransNumber, tc.option); tc.want != got {
-			t.Errorf("s.SetOption(fakeTrans, %v) = %v, want = %v", tc.option, got, tc.want)
+		if got := s.SetTransportProtocolOption(fakeTransNumber, tc.option); got != tc.wantErr {
+			t.Errorf("s.SetTransportProtocolOption(fakeTrans, %v) = %v, want = %v", tc.option, got, tc.wantErr)
 		}
 		if tc.verifier != nil {
 			tc.verifier(t, s.TransportProtocolInstance(fakeTransNumber))
