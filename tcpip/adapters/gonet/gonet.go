@@ -444,19 +444,18 @@ func DialTCP(s *stack.Stack, addr tcpip.FullAddress, network tcpip.NetworkProtoc
 	defer wq.EventUnregister(&waitEntry)
 
 	err = ep.Connect(addr)
-	for err != nil {
-		if err != tcpip.ErrConnectStarted {
-			ep.Close()
-			return nil, &net.OpError{
-				Op:   "connect",
-				Net:  "tcp",
-				Addr: fullToTCPAddr(addr),
-				Err:  errors.New(err.String()),
-			}
-		}
-
+	if err == tcpip.ErrConnectStarted {
 		<-notifyCh
 		err = ep.GetSockOpt(tcpip.ErrorOption{})
+	}
+	if err != nil {
+		ep.Close()
+		return nil, &net.OpError{
+			Op:   "connect",
+			Net:  "tcp",
+			Addr: fullToTCPAddr(addr),
+			Err:  errors.New(err.String()),
+		}
 	}
 
 	return NewConn(&wq, ep), nil
