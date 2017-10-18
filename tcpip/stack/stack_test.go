@@ -587,6 +587,49 @@ func TestPromiscuousMode(t *testing.T) {
 	}
 }
 
+func TestAddressSpoofing(t *testing.T) {
+	srcAddr := tcpip.Address("\x01")
+	dstAddr := tcpip.Address("\x02")
+
+	s := stack.New([]string{"fakeNet"}, nil)
+
+	id, _ := channel.New(10, defaultMTU, "")
+	if err := s.CreateNIC(1, id); err != nil {
+		t.Fatalf("CreateNIC failed: %v", err)
+	}
+
+	if err := s.AddAddress(1, fakeNetNumber, dstAddr); err != nil {
+		t.Fatalf("AddAddress failed: %v", err)
+	}
+
+	s.SetRouteTable([]tcpip.Route{
+		{"\x00", "\x00", "\x00", 1},
+	})
+
+	// With address spoofing disabled, FindRoute does not permit an address
+	// that was not added to the NIC to be used as the source.
+	r, err := s.FindRoute(0, srcAddr, dstAddr, fakeNetNumber)
+	if err == nil {
+		t.Errorf("FindRoute succeeded with route %+v when it should have failed", r)
+	}
+
+	// With address spoofing enabled, FindRoute permits any address to be used
+	// as the source.
+	if err := s.SetSpoofing(1, true); err != nil {
+		t.Fatalf("SetSpoofing failed: %v", err)
+	}
+	r, err = s.FindRoute(0, srcAddr, dstAddr, fakeNetNumber)
+	if err != nil {
+		t.Fatalf("FindRoute failed: %v", err)
+	}
+	if r.LocalAddress != srcAddr {
+		t.Errorf("Route has wrong local address: got %v, wanted %v", r.LocalAddress, srcAddr)
+	}
+	if r.RemoteAddress != dstAddr {
+		t.Errorf("Route has wrong remote address: got %v, wanted %v", r.RemoteAddress, dstAddr)
+	}
+}
+
 // Set the subnet, then check that packet is delivered.
 func TestSubnetAcceptsMatchingPacket(t *testing.T) {
 	s := stack.New([]string{"fakeNet"}, nil)

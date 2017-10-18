@@ -24,6 +24,7 @@ type NIC struct {
 	demux *transportDemuxer
 
 	mu          sync.RWMutex
+	spoofing    bool
 	promiscuous bool
 	primary     map[tcpip.NetworkProtocolNumber]*ilist.List
 	endpoints   map[NetworkEndpointID]*referencedNetworkEndpoint
@@ -54,6 +55,13 @@ func (n *NIC) setPromiscuousMode(enable bool) {
 	n.mu.Unlock()
 }
 
+// setSpoofing enables or disables address spoofing.
+func (n *NIC) setSpoofing(enable bool) {
+	n.mu.Lock()
+	n.spoofing = enable
+	n.mu.Unlock()
+}
+
 // primaryEndpoint returns the primary endpoint of n for the given network
 // protocol.
 func (n *NIC) primaryEndpoint(protocol tcpip.NetworkProtocolNumber) *referencedNetworkEndpoint {
@@ -77,14 +85,32 @@ func (n *NIC) primaryEndpoint(protocol tcpip.NetworkProtocolNumber) *referencedN
 
 // findEndpoint finds the endpoint, if any, with the given address.
 func (n *NIC) findEndpoint(protocol tcpip.NetworkProtocolNumber, address tcpip.Address) *referencedNetworkEndpoint {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
+	id := NetworkEndpointID{address}
 
-	ref := n.endpoints[NetworkEndpointID{address}]
-	if ref == nil || !ref.tryIncRef() {
-		return nil
+	n.mu.RLock()
+	ref := n.endpoints[id]
+	if ref != nil && !ref.tryIncRef() {
+		ref = nil
+	}
+	spoofing := n.spoofing
+	n.mu.RUnlock()
+
+	if ref != nil || !spoofing {
+		return ref
 	}
 
+	// Try again with the lock in exclusive mode. If we still can't get the
+	// endpoint, create a new "temporary" endpoint. It will only exist while
+	// there's a route through it.
+	n.mu.Lock()
+	ref = n.endpoints[id]
+	if ref == nil || !ref.tryIncRef() {
+		ref, _ = n.addAddressLocked(protocol, address, true)
+		if ref != nil {
+			ref.holdsInsertRef = false
+		}
+	}
+	n.mu.Unlock()
 	return ref
 }
 

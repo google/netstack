@@ -415,6 +415,22 @@ func (s *Stack) SetPromiscuousMode(nicID tcpip.NICID, enable bool) *tcpip.Error 
 	return nil
 }
 
+// SetSpoofing enables or disables address spoofing in the given NIC, allowing
+// endpoints to bind to any address in the NIC.
+func (s *Stack) SetSpoofing(nicID tcpip.NICID, enable bool) *tcpip.Error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	nic := s.nics[nicID]
+	if nic == nil {
+		return tcpip.ErrUnknownNICID
+	}
+
+	nic.setSpoofing(enable)
+
+	return nil
+}
+
 // AddLinkAddress adds a link address to the stack link cache.
 func (s *Stack) AddLinkAddress(nicid tcpip.NICID, addr tcpip.Address, linkAddr tcpip.LinkAddress) {
 	fullAddr := tcpip.FullAddress{NIC: nicid, Addr: addr}
