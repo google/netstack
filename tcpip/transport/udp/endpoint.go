@@ -74,7 +74,6 @@ type endpoint struct {
 }
 
 func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waiterQueue *waiter.Queue) *endpoint {
-	// TODO: Use the send buffer size initialized here.
 	return &endpoint{
 		stack:         stack,
 		netProto:      netProto,
