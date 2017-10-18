@@ -555,7 +555,7 @@ func (e *endpoint) bindLocked(addr tcpip.FullAddress, commit func() *tcpip.Error
 
 	if len(addr.Addr) != 0 {
 		// A local address was specified, verify that it's valid.
-		if e.stack.CheckLocalAddress(addr.NIC, addr.Addr) == 0 {
+		if e.stack.CheckLocalAddress(addr.NIC, netProto, addr.Addr) == 0 {
 			return tcpip.ErrBadLocalAddress
 		}
 	}

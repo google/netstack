@@ -976,7 +976,7 @@ func (e *endpoint) Bind(addr tcpip.FullAddress, commit func() *tcpip.Error) (ret
 	// If an address is specified, we must ensure that it's one of our
 	// local addresses.
 	if len(addr.Addr) != 0 {
-		nic := e.stack.CheckLocalAddress(addr.NIC, addr.Addr)
+		nic := e.stack.CheckLocalAddress(addr.NIC, netProto, addr.Addr)
 		if nic == 0 {
 			return tcpip.ErrBadLocalAddress
 		}

@@ -339,7 +339,7 @@ func (s *Stack) FindRoute(id tcpip.NICID, localAddr, remoteAddr tcpip.Address, n
 
 		var ref *referencedNetworkEndpoint
 		if len(localAddr) != 0 {
-			ref = nic.findEndpoint(localAddr)
+			ref = nic.findEndpoint(netProto, localAddr)
 		} else {
 			ref = nic.primaryEndpoint(netProto)
 		}
@@ -367,7 +367,7 @@ func (s *Stack) CheckNetworkProtocol(protocol tcpip.NetworkProtocolNumber) bool 
 // CheckLocalAddress determines if the given local address exists, and if it
 // does, returns the id of the NIC it's bound to. Returns 0 if the address
 // does not exist.
-func (s *Stack) CheckLocalAddress(nicid tcpip.NICID, addr tcpip.Address) tcpip.NICID {
+func (s *Stack) CheckLocalAddress(nicid tcpip.NICID, protocol tcpip.NetworkProtocolNumber, addr tcpip.Address) tcpip.NICID {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -378,7 +378,7 @@ func (s *Stack) CheckLocalAddress(nicid tcpip.NICID, addr tcpip.Address) tcpip.N
 			return 0
 		}
 
-		ref := nic.findEndpoint(addr)
+		ref := nic.findEndpoint(protocol, addr)
 		if ref == nil {
 			return 0
 		}
@@ -390,7 +390,7 @@ func (s *Stack) CheckLocalAddress(nicid tcpip.NICID, addr tcpip.Address) tcpip.N
 
 	// Go through all the NICs.
 	for _, nic := range s.nics {
-		ref := nic.findEndpoint(addr)
+		ref := nic.findEndpoint(protocol, addr)
 		if ref != nil {
 			ref.decRef()
 			return nic.id

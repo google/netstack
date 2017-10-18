@@ -226,7 +226,7 @@ type LinkAddressCache interface {
 	// CheckLocalAddress determines if the given local address exists, and if it
 	// does, returns the id of the NIC it's bound to. Returns 0 if the address
 	// does not exist.
-	CheckLocalAddress(nicid tcpip.NICID, addr tcpip.Address) tcpip.NICID
+	CheckLocalAddress(nicid tcpip.NICID, protocol tcpip.NetworkProtocolNumber, addr tcpip.Address) tcpip.NICID
 
 	// AddLinkAddress adds a link address to the cache.
 	AddLinkAddress(nicid tcpip.NICID, addr tcpip.Address, linkAddr tcpip.LinkAddress)
