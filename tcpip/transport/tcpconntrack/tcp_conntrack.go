@@ -51,6 +51,9 @@ type TCB struct {
 
 	// firstFin holds a pointer to the first stream to send a FIN.
 	firstFin *stream
+
+	// state is the current state of the stream.
+	state Result
 }
 
 // Init initalizes the state of the TCB according to the initial SYN.
@@ -69,18 +72,38 @@ func (t *TCB) Init(initialSyn header.TCP) {
 	t.inbound.una = 0
 	t.inbound.nxt = 0
 	t.inbound.end = seqnum.Value(initialSyn.WindowSize())
+	t.state = ResultConnecting
 }
 
 // UpdateStateInbound updates the state of the TCB based on the supplied inbound
 // segment.
 func (t *TCB) UpdateStateInbound(tcp header.TCP) Result {
-	return t.handlerInbound(t, tcp)
+	st := t.handlerInbound(t, tcp)
+	if st != ResultDrop {
+		t.state = st
+	}
+	return st
 }
 
 // UpdateStateOutbound updates the state of the TCB based on the supplied
 // outbound segment.
 func (t *TCB) UpdateStateOutbound(tcp header.TCP) Result {
-	return t.handlerOutbound(t, tcp)
+	st := t.handlerOutbound(t, tcp)
+	if st != ResultDrop {
+		t.state = st
+	}
+	return st
+}
+
+// IsAlive returns true as long as the connection is established(Alive)
+// or connecting state.
+func (t *TCB) IsAlive() bool {
+	return !t.inbound.rstSeen && !t.outbound.rstSeen && (!t.inbound.closed() || !t.outbound.closed())
+}
+
+// OutboundSendSequenceNumber returns the snd.NXT for the outbound stream.
+func (t *TCB) OutboundSendSequenceNumber() seqnum.Value {
+	return t.outbound.nxt
 }
 
 // adapResult modifies the supplied "Result" according to the state of the TCB;
@@ -118,6 +141,7 @@ func synSentStateInbound(t *TCB, tcp header.TCP) Result {
 	// implicitly acceptable).
 	if flags&header.TCPFlagRst != 0 {
 		if ackPresent {
+			t.inbound.rstSeen = true
 			return ResultReset
 		}
 		return ResultConnecting
@@ -185,6 +209,7 @@ func update(tcp header.TCP, inbound, outbound *stream, firstFin **stream) Result
 
 	flags := tcp.Flags()
 	if flags&header.TCPFlagRst != 0 {
+		inbound.rstSeen = true
 		return ResultReset
 	}
 
@@ -260,6 +285,9 @@ type stream struct {
 	// fin is the sequence number of the FIN. It is only valid after finSeen
 	// is set to true.
 	fin seqnum.Value
+
+	// rstSeen indicates if a RST has already been sent on this stream.
+	rstSeen bool
 }
 
 // acceptable determines if the segment with the given sequence number and data
