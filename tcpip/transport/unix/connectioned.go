@@ -394,6 +394,17 @@ func (e *connectionedEndpoint) Bind(addr tcpip.FullAddress, commit func() *tcpip
 	return nil
 }
 
+// SendMsg writes data and a control message to the endpoint's peer.
+// This method does not block if the data cannot be written.
+func (e *connectionedEndpoint) SendMsg(data [][]byte, c ControlMessages, to BoundEndpoint) (uintptr, *tcpip.Error) {
+	// Stream sockets do not support specifying the endpoint. Seqpacket
+	// sockets ignore the passed endpoint.
+	if e.stype == SockStream && to != nil {
+		return 0, tcpip.ErrNotSupported
+	}
+	return e.baseEndpoint.SendMsg(data, c, to)
+}
+
 // Readiness returns the current readiness of the connectionedEndpoint. For
 // example, if waiter.EventIn is set, the connectionedEndpoint is immediately
 // readable.
