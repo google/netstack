@@ -11,23 +11,40 @@
 package sniffer
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
+	"io"
+	"os"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
+	"github.com/google/netstack/tcpip/link/rawfile"
 	"github.com/google/netstack/tcpip/stack"
 	"log"
 )
 
-// LogPackets is a flag used to enable or disable packet valid values
-// are 0 or 1.
+// LogPackets is a flag used to enable or disable packet logging via the log
+// package. Valid values are 0 or 1.
+//
+// LogPackets must be accessed atomically.
 var LogPackets uint32 = 1
+
+// LogPacketsToFile is a flag used to enable or disable logging packets to a
+// pcap file. Valid values are 0 or 1. A file must have been specified when the
+// sniffer was created for this flag to have effect.
+//
+// LogPacketsToFile must be accessed atomically.
+var LogPacketsToFile uint32 = 1
 
 type endpoint struct {
 	dispatcher stack.NetworkDispatcher
 	lower      stack.LinkEndpoint
+	file       *os.File
+	maxPCAPLen uint32
 }
 
 // New creates a new sniffer link-layer endpoint. It wraps around another
@@ -38,12 +55,81 @@ func New(lower tcpip.LinkEndpointID) tcpip.LinkEndpointID {
 	})
 }
 
+func zoneOffset() (int32, error) {
+	loc, err := time.LoadLocation("Local")
+	if err != nil {
+		return 0, err
+	}
+	date := time.Date(0, 0, 0, 0, 0, 0, 0, loc)
+	_, offset := date.Zone()
+	return int32(offset), nil
+}
+
+func writePCAPHeader(w io.Writer, maxLen uint32) error {
+	offset, err := zoneOffset()
+	if err != nil {
+		return err
+	}
+	return binary.Write(w, binary.BigEndian, pcapHeader{
+		// From https://wiki.wireshark.org/Development/LibpcapFileFormat
+		MagicNumber: 0xa1b2c3d4,
+
+		VersionMajor: 2,
+		VersionMinor: 4,
+		Thiszone:     offset,
+		Sigfigs:      0,
+		Snaplen:      maxLen,
+		Network:      101, // LINKTYPE_RAW
+	})
+}
+
+// NewWithFile creates a new sniffer link-layer endpoint. It wraps around
+// another endpoint and logs packets and they traverse the endpoint.
+//
+// Packets can be logged to file in the pcap format in addition to the standard
+// human-readable logs.
+//
+// snapLen is the maximum amount of a packet to be saved. Packets with a length
+// less than or equal too snapLen will be saved in their entirety. Longer
+// packets will be truncated to snapLen.
+func NewWithFile(lower tcpip.LinkEndpointID, file *os.File, snapLen uint32) (tcpip.LinkEndpointID, error) {
+	if err := writePCAPHeader(file, snapLen); err != nil {
+		return 0, err
+	}
+	return stack.RegisterLinkEndpoint(&endpoint{
+		lower:      stack.FindLinkEndpoint(lower),
+		file:       file,
+		maxPCAPLen: snapLen,
+	}), nil
+}
+
 // DeliverNetworkPacket implements the stack.NetworkDispatcher interface. It is
 // called by the link-layer endpoint being wrapped when a packet arrives, and
 // logs the packet before forwarding to the actual dispatcher.
 func (e *endpoint) DeliverNetworkPacket(linkEP stack.LinkEndpoint, remoteLinkAddr tcpip.LinkAddress, protocol tcpip.NetworkProtocolNumber, vv *buffer.VectorisedView) {
 	if atomic.LoadUint32(&LogPackets) == 1 {
 		LogPacket("recv", protocol, vv.First(), nil)
+	}
+	if e.file != nil && atomic.LoadUint32(&LogPacketsToFile) == 1 {
+		vs := vv.Views()
+		bs := make([][]byte, 1, 1+len(vs))
+		var length int
+		for _, v := range vs {
+			if length+len(v) > int(e.maxPCAPLen) {
+				l := int(e.maxPCAPLen) - length
+				bs = append(bs, []byte(v)[:l])
+				length += l
+				break
+			}
+			bs = append(bs, []byte(v))
+			length += len(v)
+		}
+		buf := bytes.NewBuffer(make([]byte, 0, pcapPacketHeaderLen))
+		binary.Write(buf, binary.BigEndian, newPCAPPacketHeader(uint32(length), uint32(vv.Size())))
+		bs[0] = buf.Bytes()
+		if err := rawfile.NonBlockingWriteN(int(e.file.Fd()), bs...); err != nil {
+			panic(err)
+		}
 	}
 	e.dispatcher.DeliverNetworkPacket(e, remoteLinkAddr, protocol, vv)
 }
@@ -84,6 +170,25 @@ func (e *endpoint) LinkAddress() tcpip.LinkAddress {
 func (e *endpoint) WritePacket(r *stack.Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.NetworkProtocolNumber) *tcpip.Error {
 	if atomic.LoadUint32(&LogPackets) == 1 {
 		LogPacket("send", protocol, hdr.UsedBytes(), payload)
+	}
+	if e.file != nil && atomic.LoadUint32(&LogPacketsToFile) == 1 {
+		bs := [][]byte{nil, hdr.UsedBytes(), payload}
+		var length int
+
+		for i, b := range bs[1:] {
+			if rem := int(e.maxPCAPLen) - length; len(b) > rem {
+				b = b[:rem]
+			}
+			bs[i+1] = b
+			length += len(b)
+		}
+
+		buf := bytes.NewBuffer(make([]byte, 0, pcapPacketHeaderLen))
+		binary.Write(buf, binary.BigEndian, newPCAPPacketHeader(uint32(length), uint32(hdr.UsedLength()+len(payload))))
+		bs[0] = buf.Bytes()
+		if err := rawfile.NonBlockingWriteN(int(e.file.Fd()), bs...); err != nil {
+			panic(err)
+		}
 	}
 	return e.lower.WritePacket(r, hdr, payload, protocol)
 }

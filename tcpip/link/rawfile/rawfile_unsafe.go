@@ -80,7 +80,30 @@ func NonBlockingWrite2(fd int, b1, b2 []byte) *tcpip.Error {
 		},
 	}
 
-	_, _, e := syscall.RawSyscall(syscall.SYS_WRITEV, uintptr(fd), uintptr(unsafe.Pointer(&iovec[0])), 2)
+	_, _, e := syscall.RawSyscall(syscall.SYS_WRITEV, uintptr(fd), uintptr(unsafe.Pointer(&iovec[0])), uintptr(len(iovec)))
+	if e != 0 {
+		return TranslateErrno(e)
+	}
+
+	return nil
+}
+
+// NonBlockingWriteN writes up to N byte slices to a file descriptor in a
+// single syscall. It fails if partial data is written.
+func NonBlockingWriteN(fd int, bs ...[]byte) *tcpip.Error {
+	iovec := make([]syscall.Iovec, 0, len(bs))
+
+	for _, b := range bs {
+		if len(b) == 0 {
+			continue
+		}
+		iovec = append(iovec, syscall.Iovec{
+			Base: (*byte)(unsafe.Pointer(&b[0])),
+			Len:  uint64(len(b)),
+		})
+	}
+
+	_, _, e := syscall.RawSyscall(syscall.SYS_WRITEV, uintptr(fd), uintptr(unsafe.Pointer(&iovec[0])), uintptr(len(iovec)))
 	if e != 0 {
 		return TranslateErrno(e)
 	}
