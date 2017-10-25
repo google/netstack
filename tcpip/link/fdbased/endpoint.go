@@ -31,6 +31,9 @@ type endpoint struct {
 	// mtu (maximum transmission unit) is the maximum size of a packet.
 	mtu uint32
 
+	// caps holds the endpoint capabilities.
+	caps stack.LinkEndpointCapabilities
+
 	// closed is a function to be called when the FD's peer (if any) closes
 	// its end of the communication pipe.
 	closed func(*tcpip.Error)
@@ -41,12 +44,18 @@ type endpoint struct {
 }
 
 // New creates a new fd-based endpoint.
-func New(fd int, mtu uint32, closed func(*tcpip.Error)) tcpip.LinkEndpointID {
+func New(fd int, mtu uint32, checksumOffload bool, closed func(*tcpip.Error)) tcpip.LinkEndpointID {
 	syscall.SetNonblock(fd, true)
+
+	caps := stack.LinkEndpointCapabilities(0)
+	if checksumOffload {
+		caps |= stack.CapabilityChecksumOffload
+	}
 
 	e := &endpoint{
 		fd:     fd,
 		mtu:    mtu,
+		caps:   caps,
 		closed: closed,
 		views:  make([]buffer.View, len(BufConfig)),
 		iovecs: make([]syscall.Iovec, len(BufConfig)),
@@ -69,8 +78,8 @@ func (e *endpoint) MTU() uint32 {
 }
 
 // Capabilities implements stack.LinkEndpoint.Capabilities.
-func (*endpoint) Capabilities() stack.LinkEndpointCapabilities {
-	return 0
+func (e *endpoint) Capabilities() stack.LinkEndpointCapabilities {
+	return e.caps
 }
 
 // MaxHeaderLength returns the maximum size of the header. Given that it

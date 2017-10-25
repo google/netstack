@@ -125,7 +125,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	linkID := fdbased.New(fd, mtu, nil)
+	linkID := fdbased.New(fd, mtu, false, nil)
 	if err := s.CreateNIC(1, sniffer.New(linkID)); err != nil {
 		log.Fatal(err)
 	}
