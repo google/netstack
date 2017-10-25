@@ -1017,7 +1017,7 @@ func (e *endpoint) GetRemoteAddress() (tcpip.FullAddress, *tcpip.Error) {
 	defer e.mu.RUnlock()
 
 	if e.state != stateConnected {
-		return tcpip.FullAddress{}, tcpip.ErrInvalidEndpointState
+		return tcpip.FullAddress{}, tcpip.ErrNotConnected
 	}
 
 	return tcpip.FullAddress{
