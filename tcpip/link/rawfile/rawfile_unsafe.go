@@ -71,11 +71,11 @@ func NonBlockingWrite2(fd int, b1, b2 []byte) *tcpip.Error {
 	// a writev syscall.
 	iovec := [...]syscall.Iovec{
 		{
-			Base: (*byte)(unsafe.Pointer(&b1[0])),
+			Base: &b1[0],
 			Len:  uint64(len(b1)),
 		},
 		{
-			Base: (*byte)(unsafe.Pointer(&b2[0])),
+			Base: &b2[0],
 			Len:  uint64(len(b2)),
 		},
 	}
@@ -98,7 +98,7 @@ func NonBlockingWriteN(fd int, bs ...[]byte) *tcpip.Error {
 			continue
 		}
 		iovec = append(iovec, syscall.Iovec{
-			Base: (*byte)(unsafe.Pointer(&b[0])),
+			Base: &b[0],
 			Len:  uint64(len(b)),
 		})
 	}
