@@ -220,7 +220,7 @@ func (e *endpoint) Readiness(mask waiter.EventMask) waiter.EventMask {
 		// Determine if the endpoint is writable if requested.
 		if (mask & waiter.EventOut) != 0 {
 			e.sndBufMu.Lock()
-			if e.sndBufSize < 0 || e.sndBufUsed <= e.sndBufSize {
+			if e.sndBufSize < 0 || e.sndBufUsed < e.sndBufSize {
 				result |= waiter.EventOut
 			}
 			e.sndBufMu.Unlock()
