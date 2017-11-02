@@ -233,7 +233,7 @@ func (s *Server) handleDiscover(hreq header, opts options) {
 	copy(h.siaddr(), s.cfg.ServerAddress)
 	copy(h.chaddr(), hreq.chaddr())
 	h.setOptions(opts)
-	s.ep.Write(buffer.View(h), &s.broadcast)
+	s.ep.Write(buffer.View(h), tcpip.WriteOptions{To: &s.broadcast})
 }
 
 func (s *Server) handleRequest(hreq header, opts options) {
@@ -270,7 +270,7 @@ func (s *Server) handleRequest(hreq header, opts options) {
 	copy(h.siaddr(), s.cfg.ServerAddress)
 	copy(h.chaddr(), hreq.chaddr())
 	h.setOptions(opts)
-	s.ep.Write(buffer.View(h), &s.broadcast)
+	s.ep.Write(buffer.View(h), tcpip.WriteOptions{To: &s.broadcast})
 }
 
 type leaseState int

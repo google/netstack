@@ -192,13 +192,12 @@ type Endpoint interface {
 	// It will also either return an error or data, never both.
 	Read(*FullAddress) (buffer.View, *Error)
 
-	// Write writes data to the endpoint's peer, or the provided address if
-	// one is specified. This method does not block if the data cannot be
-	// written.
+	// Write writes data to the endpoint's peer. This method does not block if
+	// the data cannot be written.
 	//
 	// Note that unlike io.Writer.Write, it is not an error for Write to
 	// perform a partial write.
-	Write(buffer.View, *FullAddress) (uintptr, *Error)
+	Write(buffer.View, WriteOptions) (uintptr, *Error)
 
 	// Peek reads data without consuming it from the endpoint.
 	//
@@ -258,6 +257,16 @@ type Endpoint interface {
 	// GetSockOpt gets a socket option. opt should be a pointer to one of the
 	// *Option types.
 	GetSockOpt(opt interface{}) *Error
+}
+
+// WriteOptions contains options for Endpoint.Write.
+type WriteOptions struct {
+	// If To is not nil, write to the given address instead of the endpoint's
+	// peer.
+	To *FullAddress
+
+	// More has the same semantics as Linux's MSG_MORE.
+	More bool
 }
 
 // ErrorOption is used in GetSockOpt to specify that the last error reported by

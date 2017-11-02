@@ -376,9 +376,10 @@ func (e *endpoint) readLocked() (buffer.View, *tcpip.Error) {
 }
 
 // Write writes data to the endpoint's peer.
-func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, *tcpip.Error) {
+func (e *endpoint) Write(v buffer.View, opts tcpip.WriteOptions) (uintptr, *tcpip.Error) {
 	// Linux completely ignores any address passed to sendto(2) for TCP sockets
-	// (without the MSG_FASTOPEN flag).
+	// (without the MSG_FASTOPEN flag). Corking is unimplemented, so opts.More
+	// is also ignored.
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()

@@ -9,6 +9,7 @@ import (
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/checker"
 	"github.com/google/netstack/tcpip/header"
+	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/transport/tcp"
 	"github.com/google/netstack/tcpip/transport/tcp/testing/context"
 	"github.com/google/netstack/waiter"
@@ -132,7 +133,7 @@ func timeStampEnabledAccept(t *testing.T, cookieEnabled bool, wndScale int, wndS
 	view := buffer.NewView(len(data))
 	copy(view, data)
 
-	if _, err := c.EP.Write(view, nil); err != nil {
+	if _, err := c.EP.Write(view, tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -195,7 +196,7 @@ func timeStampDisabledAccept(t *testing.T, cookieEnabled bool, wndScale int, wnd
 	view := buffer.NewView(len(data))
 	copy(view, data)
 
-	if _, err := c.EP.Write(view, nil); err != nil {
+	if _, err := c.EP.Write(view, tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 

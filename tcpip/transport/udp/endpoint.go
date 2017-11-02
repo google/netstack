@@ -200,7 +200,14 @@ func (e *endpoint) prepareForWrite(to *tcpip.FullAddress) (retry bool, err *tcpi
 
 // Write writes data to the endpoint's peer. This method does not block
 // if the data cannot be written.
-func (e *endpoint) Write(v buffer.View, to *tcpip.FullAddress) (uintptr, *tcpip.Error) {
+func (e *endpoint) Write(v buffer.View, opts tcpip.WriteOptions) (uintptr, *tcpip.Error) {
+	// MSG_MORE is unimplemented.
+	if opts.More {
+		return 0, tcpip.ErrInvalidOptionValue
+	}
+
+	to := opts.To
+
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 

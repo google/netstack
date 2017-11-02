@@ -50,7 +50,7 @@ func (*fakeTransportEndpoint) Read(*tcpip.FullAddress) (buffer.View, *tcpip.Erro
 	return buffer.View{}, nil
 }
 
-func (f *fakeTransportEndpoint) Write(v buffer.View, _ *tcpip.FullAddress) (uintptr, *tcpip.Error) {
+func (f *fakeTransportEndpoint) Write(v buffer.View, _ tcpip.WriteOptions) (uintptr, *tcpip.Error) {
 	if len(f.route.RemoteAddress) == 0 {
 		return 0, tcpip.ErrNoRoute
 	}
@@ -285,7 +285,7 @@ func TestTransportSend(t *testing.T) {
 
 	// Create buffer that will hold the payload.
 	view := buffer.NewView(30)
-	_, err = ep.Write(view, nil)
+	_, err = ep.Write(view, tcpip.WriteOptions{})
 	if err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
