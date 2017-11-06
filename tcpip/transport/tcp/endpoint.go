@@ -379,7 +379,7 @@ func (e *endpoint) readLocked() (buffer.View, *tcpip.Error) {
 func (e *endpoint) Write(v buffer.View, opts tcpip.WriteOptions) (uintptr, *tcpip.Error) {
 	// Linux completely ignores any address passed to sendto(2) for TCP sockets
 	// (without the MSG_FASTOPEN flag). Corking is unimplemented, so opts.More
-	// is also ignored.
+	// and opts.EndOfRecord are also ignored.
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()

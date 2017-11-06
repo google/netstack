@@ -267,6 +267,9 @@ type WriteOptions struct {
 
 	// More has the same semantics as Linux's MSG_MORE.
 	More bool
+
+	// EndOfRecord has the same semantics as Linux's MSG_EOR.
+	EndOfRecord bool
 }
 
 // ErrorOption is used in GetSockOpt to specify that the last error reported by
