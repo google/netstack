@@ -13,9 +13,6 @@ import (
 	"github.com/google/netstack/tcpip"
 )
 
-// TODO: Placed here to avoid breakage caused by coverage
-// instrumentation. Any, even unrelated, changes to this file should ensure
-// that coverage still work. See bug for details.
 //go:noescape
 func blockingPoll(fds unsafe.Pointer, nfds int, timeout int64) (n int, err syscall.Errno)
 
