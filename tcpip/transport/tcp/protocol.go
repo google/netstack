@@ -12,6 +12,7 @@ package tcp
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
@@ -27,13 +28,27 @@ const (
 
 	// ProtocolNumber is the tcp protocol number.
 	ProtocolNumber = header.TCPProtocolNumber
+
+	// DefaultBufferSize is the default size of the receive and send buffers.
+	DefaultBufferSize = 208 * 1024
 )
 
 // SACKEnabled option can be used to enable SACK support in the TCP
 // protocol. See: https://tools.ietf.org/html/rfc2018.
 type SACKEnabled bool
 
+// SendBufferSizeOption allows the default send buffer size for TCP  endpoints
+// to be queried or configured.
+type SendBufferSizeOption int
+
+// ReceiveBufferSizeOption allows the default receive buffer size for TCP
+// endpoints to be queried or configured.
+type ReceiveBufferSizeOption int
+
 type protocol struct {
+	sendBufferSize int64
+	recvBufferSize int64
+
 	mu          sync.Mutex
 	sackEnabled bool
 }
@@ -105,6 +120,21 @@ func (p *protocol) SetOption(option interface{}) *tcpip.Error {
 		p.sackEnabled = bool(v)
 		p.mu.Unlock()
 		return nil
+
+	case SendBufferSizeOption:
+		if v <= 0 {
+			return tcpip.ErrInvalidOptionValue
+		}
+		atomic.StoreInt64(&p.sendBufferSize, int64(v))
+		return nil
+
+	case ReceiveBufferSizeOption:
+		if v <= 0 {
+			return tcpip.ErrInvalidOptionValue
+		}
+		atomic.StoreInt64(&p.recvBufferSize, int64(v))
+		return nil
+
 	default:
 		return tcpip.ErrUnknownProtocolOption
 	}
@@ -118,6 +148,15 @@ func (p *protocol) Option(option interface{}) *tcpip.Error {
 		*v = SACKEnabled(p.sackEnabled)
 		p.mu.Unlock()
 		return nil
+
+	case *SendBufferSizeOption:
+		*v = SendBufferSizeOption(atomic.LoadInt64(&p.sendBufferSize))
+		return nil
+
+	case *ReceiveBufferSizeOption:
+		*v = ReceiveBufferSizeOption(atomic.LoadInt64(&p.recvBufferSize))
+		return nil
+
 	default:
 		return tcpip.ErrUnknownProtocolOption
 	}
@@ -125,6 +164,9 @@ func (p *protocol) Option(option interface{}) *tcpip.Error {
 
 func init() {
 	stack.RegisterTransportProtocolFactory(ProtocolName, func() stack.TransportProtocol {
-		return &protocol{}
+		return &protocol{
+			sendBufferSize: DefaultBufferSize,
+			recvBufferSize: DefaultBufferSize,
+		}
 	})
 }

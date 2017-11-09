@@ -15,6 +15,7 @@ import (
 	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/network/ipv4"
 	"github.com/google/netstack/tcpip/seqnum"
+	"github.com/google/netstack/tcpip/stack"
 	"github.com/google/netstack/tcpip/transport/tcp"
 	"github.com/google/netstack/tcpip/transport/tcp/testing/context"
 	"github.com/google/netstack/waiter"
@@ -2359,4 +2360,76 @@ func TestReusePort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Listen failed: %v", err)
 	}
+}
+
+func checkRecvBufferSize(t *testing.T, ep tcpip.Endpoint, v int) {
+	t.Helper()
+
+	var s tcpip.ReceiveBufferSizeOption
+	if err := ep.GetSockOpt(&s); err != nil {
+		t.Fatalf("GetSockOpt failed: %v", err)
+	}
+
+	if int(s) != v {
+		t.Fatalf("Bad receive buffer size: want=%v, got=%v", v, s)
+	}
+}
+
+func checkSendBufferSize(t *testing.T, ep tcpip.Endpoint, v int) {
+	t.Helper()
+
+	var s tcpip.SendBufferSizeOption
+	if err := ep.GetSockOpt(&s); err != nil {
+		t.Fatalf("GetSockOpt failed: %v", err)
+	}
+
+	if int(s) != v {
+		t.Fatalf("Bad send buffer size: want=%v, got=%v", v, s)
+	}
+}
+
+func TestDefaultBufferSizes(t *testing.T) {
+	s := stack.New([]string{ipv4.ProtocolName}, []string{tcp.ProtocolName})
+
+	// Check the default values.
+	ep, err := s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &waiter.Queue{})
+	if err != nil {
+		t.Fatalf("NewEndpoint failed; %v", err)
+	}
+	defer func() {
+		if ep != nil {
+			ep.Close()
+		}
+	}()
+
+	checkSendBufferSize(t, ep, tcp.DefaultBufferSize)
+	checkRecvBufferSize(t, ep, tcp.DefaultBufferSize)
+
+	// Change the default send buffer size.
+	if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, tcp.SendBufferSizeOption(tcp.DefaultBufferSize*2)); err != nil {
+		t.Fatalf("SetTransportProtocolOption failed: %v", err)
+	}
+
+	ep.Close()
+	ep, err = s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &waiter.Queue{})
+	if err != nil {
+		t.Fatalf("NewEndpoint failed; %v", err)
+	}
+
+	checkSendBufferSize(t, ep, tcp.DefaultBufferSize*2)
+	checkRecvBufferSize(t, ep, tcp.DefaultBufferSize)
+
+	// Change the default receive buffer size.
+	if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, tcp.ReceiveBufferSizeOption(tcp.DefaultBufferSize*3)); err != nil {
+		t.Fatalf("SetTransportProtocolOption failed: %v", err)
+	}
+
+	ep.Close()
+	ep, err = s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &waiter.Queue{})
+	if err != nil {
+		t.Fatalf("NewEndpoint failed; %v", err)
+	}
+
+	checkSendBufferSize(t, ep, tcp.DefaultBufferSize*2)
+	checkRecvBufferSize(t, ep, tcp.DefaultBufferSize*3)
 }

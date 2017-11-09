@@ -40,9 +40,6 @@ const (
 	notifyClose
 )
 
-// DefaultBufferSize is the default size of the receive and send buffers.
-const DefaultBufferSize = 208 * 1024
-
 // endpoint represents a TCP endpoint. This struct serves as the interface
 // between users of the endpoint and the protocol implementation; it is legal to
 // have concurrent goroutines make calls into the endpoint, they are properly
@@ -185,6 +182,17 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 		noDelay:     true,
 		reuseAddr:   true,
 	}
+
+	var ss SendBufferSizeOption
+	if err := stack.TransportProtocolOption(ProtocolNumber, &ss); err == nil {
+		e.sndBufSize = int(ss)
+	}
+
+	var rs ReceiveBufferSizeOption
+	if err := stack.TransportProtocolOption(ProtocolNumber, &rs); err == nil {
+		e.rcvBufSize = int(rs)
+	}
+
 	e.segmentQueue.setLimit(2 * e.rcvBufSize)
 	e.workMu.Init()
 	e.workMu.Lock()
@@ -614,7 +622,7 @@ func (e *endpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 
 	case *tcpip.ReceiveBufferSizeOption:
 		e.rcvListMu.Lock()
-		*o = tcpip.ReceiveBufferSizeOption(e.rcvBufSize * 2)
+		*o = tcpip.ReceiveBufferSizeOption(e.rcvBufSize)
 		e.rcvListMu.Unlock()
 		return nil
 
