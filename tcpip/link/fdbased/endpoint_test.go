@@ -35,13 +35,11 @@ func TestBufConfigFirst(t *testing.T) {
 	}
 }
 
-func build(bufConfig []int) *endpoint {
-	e := &endpoint{
-		views:  make([]buffer.View, len(bufConfig)),
-		iovecs: make([]syscall.Iovec, len(bufConfig)),
-	}
-	e.allocateViews(bufConfig)
-	return e
+func build(bufConfig []int) ([]buffer.View, []syscall.Iovec) {
+	views := make([]buffer.View, len(bufConfig))
+	iovecs := make([]syscall.Iovec, len(bufConfig))
+	allocateViews(bufConfig, views, iovecs)
+	return views, iovecs
 }
 
 var capLengthTestCases = []struct {
@@ -83,13 +81,13 @@ var capLengthTestCases = []struct {
 
 func TestCapLength(t *testing.T) {
 	for _, c := range capLengthTestCases {
-		e := build(c.config)
-		used := e.capViews(c.n, c.config)
+		views, _ := build(c.config)
+		used := capViews(c.n, c.config, views)
 		if used != c.wantUsed {
 			t.Errorf("Test \"%s\" failed when calling capViews(%d, %v). Got %d. Want %d", c.comment, c.n, c.config, used, c.wantUsed)
 		}
-		lengths := make([]int, len(e.views))
-		for i, v := range e.views {
+		lengths := make([]int, len(views))
+		for i, v := range views {
 			lengths[i] = len(v)
 		}
 		if !reflect.DeepEqual(lengths, c.wantLengths) {

@@ -596,6 +596,22 @@ func (e *endpoint) completeWorker() {
 	}
 }
 
+// handleSegmentsInline is called to handle segments "inline", that is, when
+// we're performing the work from the same goroutine that is delivering packets.
+func (e *endpoint) handleSegmentsInline() {
+	e.handleSegments()
+
+	// If we've reached the stop condition, even though we handled the
+	// segment(s) inline, we need to wake up the protocol goroutine for it
+	// to gracefully tear down all state.
+	//
+	// We don't need this check on the inline case because it is performed
+	// by the caller of handleSegments there.
+	if e.stopConditionReached() {
+		e.newSegmentWaker.Assert()
+	}
+}
+
 // handleSegments pulls segments from the queue and processes them. It returns
 // true if the protocol loop should continue, false otherwise.
 func (e *endpoint) handleSegments() bool {
@@ -618,6 +634,7 @@ func (e *endpoint) handleSegments() bool {
 				e.state = stateError
 				e.hardError = tcpip.ErrConnectionReset
 				e.mu.Unlock()
+				e.rstWaker.Assert()
 				return false
 			}
 		} else if s.flagIsSet(flagAck) {
@@ -656,6 +673,16 @@ func (e *endpoint) handleSegments() bool {
 	}
 
 	return true
+}
+
+// stopConditionReached determines if the stop condition for the main loop has
+// been reached. The condition is that both recv and send streams have been
+// closed and that all queued data has been sent to and acknowledged by the
+// peer.
+//
+// This function must be called with workMu held.
+func (e *endpoint) stopConditionReached() bool {
+	return e.rcv.closed && e.snd.closed && e.snd.sndUna == e.snd.sndNxtList
 }
 
 // protocolMainLoop is the main loop of the TCP protocol. It runs in its own
@@ -742,6 +769,12 @@ func (e *endpoint) protocolMainLoop(passive bool) *tcpip.Error {
 			},
 		},
 		{
+			w: &e.rstWaker,
+			f: func() bool {
+				return false
+			},
+		},
+		{
 			w: &e.snd.resendWaker,
 			f: func() bool {
 				if !e.snd.retransmitTimerExpired() {
@@ -783,7 +816,7 @@ func (e *endpoint) protocolMainLoop(passive bool) *tcpip.Error {
 
 	// Main loop. Handle segments until both send and receive ends of the
 	// connection have completed.
-	for !e.rcv.closed || !e.snd.closed || e.snd.sndUna != e.snd.sndNxtList {
+	for !e.stopConditionReached() {
 		e.workMu.Unlock()
 		v, _ := s.Fetch(true)
 		e.workMu.Lock()

@@ -12,6 +12,8 @@
 package fdbased
 
 import (
+	"runtime"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/google/netstack/tcpip"
@@ -38,9 +40,12 @@ type endpoint struct {
 	// its end of the communication pipe.
 	closed func(*tcpip.Error)
 
-	vv     *buffer.VectorisedView
-	iovecs []syscall.Iovec
-	views  []buffer.View
+	// pendingReaders is the number of readers that haven't stopped yet.
+	pendingReaders int32
+
+	// readerCh is a channel used as a semaphore to allow only one reader
+	// goroutine to run at a time.
+	readerCh chan struct{}
 }
 
 // New creates a new fd-based endpoint.
@@ -53,22 +58,27 @@ func New(fd int, mtu uint32, checksumOffload bool, closed func(*tcpip.Error)) tc
 	}
 
 	e := &endpoint{
-		fd:     fd,
-		mtu:    mtu,
-		caps:   caps,
-		closed: closed,
-		views:  make([]buffer.View, len(BufConfig)),
-		iovecs: make([]syscall.Iovec, len(BufConfig)),
+		fd:       fd,
+		mtu:      mtu,
+		caps:     caps,
+		closed:   closed,
+		readerCh: make(chan struct{}, 1),
 	}
-	vv := buffer.NewVectorisedView(0, e.views)
-	e.vv = &vv
 	return stack.RegisterLinkEndpoint(e)
 }
 
 // Attach launches the goroutine that reads packets from the file descriptor and
 // dispatches them via the provided dispatcher.
 func (e *endpoint) Attach(dispatcher stack.NetworkDispatcher) {
-	go e.dispatchLoop(dispatcher)
+	// Allow one reader to go through.
+	e.readerCh <- struct{}{}
+
+	// Start all readers.
+	n := int32(runtime.GOMAXPROCS(0))
+	atomic.StoreInt32(&e.pendingReaders, n)
+	for i := n; i > 0; i-- {
+		go e.dispatchLoop(dispatcher)
+	}
 }
 
 // MTU implements stack.LinkEndpoint.MTU. It returns the value initialized
@@ -104,26 +114,26 @@ func (e *endpoint) WritePacket(_ *stack.Route, hdr *buffer.Prependable, payload 
 	return rawfile.NonBlockingWrite2(e.fd, hdr.UsedBytes(), payload)
 }
 
-func (e *endpoint) capViews(n int, buffers []int) int {
+func capViews(n int, buffers []int, views []buffer.View) int {
 	c := 0
 	for i, s := range buffers {
 		c += s
 		if c >= n {
-			e.views[i].CapLength(s - (c - n))
+			views[i].CapLength(s - (c - n))
 			return i + 1
 		}
 	}
 	return len(buffers)
 }
 
-func (e *endpoint) allocateViews(bufConfig []int) {
-	for i, v := range e.views {
+func allocateViews(bufConfig []int, views []buffer.View, iovecs []syscall.Iovec) {
+	for i, v := range views {
 		if v != nil {
 			break
 		}
 		b := buffer.NewView(bufConfig[i])
-		e.views[i] = b
-		e.iovecs[i] = syscall.Iovec{
+		views[i] = b
+		iovecs[i] = syscall.Iovec{
 			Base: &b[0],
 			Len:  uint64(len(b)),
 		}
@@ -131,10 +141,13 @@ func (e *endpoint) allocateViews(bufConfig []int) {
 }
 
 // dispatch reads one packet from the file descriptor and dispatches it.
-func (e *endpoint) dispatch(d stack.NetworkDispatcher, largeV buffer.View) (bool, *tcpip.Error) {
-	e.allocateViews(BufConfig)
+func (e *endpoint) dispatch(d stack.NetworkDispatcher, vv *buffer.VectorisedView, views []buffer.View, iovecs []syscall.Iovec) (bool, *tcpip.Error) {
+	allocateViews(BufConfig, views, iovecs)
 
-	n, err := rawfile.BlockingReadv(e.fd, e.iovecs)
+	// Read the next packet. After we've read it, allow another reader to
+	// concurrently read from the fd.
+	n, err := rawfile.BlockingReadv(e.fd, iovecs)
+	e.readerCh <- struct{}{}
 	if err != nil {
 		return false, err
 	}
@@ -143,14 +156,10 @@ func (e *endpoint) dispatch(d stack.NetworkDispatcher, largeV buffer.View) (bool
 		return false, nil
 	}
 
-	used := e.capViews(n, BufConfig)
-	e.vv.SetViews(e.views[:used])
-	e.vv.SetSize(n)
-
 	// We don't get any indication of what the packet is, so try to guess
 	// if it's an IPv4 or IPv6 packet.
 	var p tcpip.NetworkProtocolNumber
-	switch header.IPVersion(e.views[0]) {
+	switch header.IPVersion(views[0]) {
 	case header.IPv4Version:
 		p = header.IPv4ProtocolNumber
 	case header.IPv6Version:
@@ -159,11 +168,15 @@ func (e *endpoint) dispatch(d stack.NetworkDispatcher, largeV buffer.View) (bool
 		return true, nil
 	}
 
-	d.DeliverNetworkPacket(e, "", p, e.vv)
+	used := capViews(n, BufConfig, views)
+	vv.SetViews(views[:used])
+	vv.SetSize(n)
+
+	d.DeliverNetworkPacket(e, "", p, vv)
 
 	// Prepare e.views for another packet: release used views.
 	for i := 0; i < used; i++ {
-		e.views[i] = nil
+		views[i] = nil
 	}
 
 	return true, nil
@@ -172,11 +185,19 @@ func (e *endpoint) dispatch(d stack.NetworkDispatcher, largeV buffer.View) (bool
 // dispatchLoop reads packets from the file descriptor in a loop and dispatches
 // them to the network stack.
 func (e *endpoint) dispatchLoop(d stack.NetworkDispatcher) *tcpip.Error {
-	v := buffer.NewView(header.MaxIPPacketSize)
+	views := make([]buffer.View, len(BufConfig))
+	iovecs := make([]syscall.Iovec, len(BufConfig))
+	vv := buffer.NewVectorisedView(0, views)
 	for {
-		cont, err := e.dispatch(d, v)
+		// Wait for this reader's turn to read from the fd.
+		<-e.readerCh
+
+		// Attempt to read and dispatch the next packet.
+		cont, err := e.dispatch(d, &vv, views, iovecs)
 		if err != nil || !cont {
-			if e.closed != nil {
+			if e.closed != nil && atomic.AddInt32(&e.pendingReaders, -1) == 0 {
+				// We call this once, when the last reader
+				// completes.
 				e.closed(err)
 			}
 			return err
@@ -209,8 +230,9 @@ func NewInjectable(fd int, mtu uint32) (tcpip.LinkEndpointID, *InjectableEndpoin
 	syscall.SetNonblock(fd, true)
 
 	e := &InjectableEndpoint{endpoint: endpoint{
-		fd:  fd,
-		mtu: mtu,
+		fd:   fd,
+		mtu:  mtu,
+		caps: stack.CapabilityChecksumOffload,
 	}}
 
 	return stack.RegisterLinkEndpoint(e), e

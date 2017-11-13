@@ -149,6 +149,11 @@ type endpoint struct {
 	sndWaker      sleep.Waker
 	sndCloseWaker sleep.Waker
 
+	// rstWaker is used to immediately stop the main protocol goroutine. It
+	// is useful when work is performed by another goroutine (by acquiring
+	// workMu) that ends up resetting the connection.
+	rstWaker sleep.Waker
+
 	// newSegmentWaker is used to indicate to the protocol goroutine that
 	// it needs to wake up and handle new segments queued to it.
 	newSegmentWaker sleep.Waker
@@ -291,17 +296,23 @@ func (e *endpoint) Close() {
 	// for reuse after Close() is called. If also registered, it means this
 	// is a listening socket, so we must unregister as well otherwise the
 	// next user would fail in Listen() when trying to register.
+	unregister := false
 	if e.isPortReserved {
 		e.stack.ReleasePort(e.effectiveNetProtos, ProtocolNumber, e.id.LocalAddress, e.id.LocalPort)
 		e.isPortReserved = false
 
-		if e.isRegistered {
-			e.stack.UnregisterTransportEndpoint(e.boundNICID, e.effectiveNetProtos, ProtocolNumber, e.id)
-			e.isRegistered = false
-		}
+		unregister = e.isRegistered
+		e.isRegistered = false
 	}
 
 	e.mu.Unlock()
+
+	// Unregister if needed now that we don't have the lock anymore, and
+	// won't cause deadlocks between HandlePacket needing the lock and
+	// unregistration waiting for HandlePacket to finish.
+	if unregister {
+		e.stack.UnregisterTransportEndpoint(e.boundNICID, e.effectiveNetProtos, ProtocolNumber, e.id)
+	}
 
 	// Now that we don't hold the lock anymore, either perform the local
 	// cleanup or kick the worker to make sure it knows it needs to cleanup.
@@ -1046,14 +1057,25 @@ func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv
 		return
 	}
 
-	// Send packet to worker goroutine.
-	if e.segmentQueue.enqueue(s) {
-		e.newSegmentWaker.Assert()
-	} else {
+	// Enqueue packet so that it will be processed.
+	if !e.segmentQueue.enqueue(s) {
 		// The queue is full, so we drop the segment.
 		atomic.AddUint64(&e.stack.MutableStats().DroppedPackets, 1)
 		s.decRef()
+		return
 	}
+
+	// Do the work inline if no other goroutine is currently working on this
+	// endpoint.
+	if e.workMu.TryLock() {
+		e.handleSegmentsInline()
+		e.workMu.Unlock()
+		return
+	}
+
+	// Wake up the main protocol goroutine to handle the packet if we
+	// couldn't handle it inline.
+	e.newSegmentWaker.Assert()
 }
 
 // updateSndBufferUsage is called by the protocol goroutine when room opens up
