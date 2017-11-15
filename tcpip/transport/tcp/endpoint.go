@@ -140,10 +140,11 @@ type endpoint struct {
 	// protocol goroutine is signaled via sndWaker.
 	//
 	// When the send side is closed, the protocol goroutine is notified via
-	// sndCloseWaker, and sndBufSize is set to -1.
+	// sndCloseWaker, and sndClosed is set to true.
 	sndBufMu      sync.Mutex
 	sndBufSize    int
 	sndBufUsed    int
+	sndClosed     bool
 	sndBufInQueue seqnum.Size
 	sndQueue      segmentList
 	sndWaker      sleep.Waker
@@ -190,12 +191,12 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 
 	var ss SendBufferSizeOption
 	if err := stack.TransportProtocolOption(ProtocolNumber, &ss); err == nil {
-		e.sndBufSize = int(ss)
+		e.sndBufSize = ss.Default
 	}
 
 	var rs ReceiveBufferSizeOption
 	if err := stack.TransportProtocolOption(ProtocolNumber, &rs); err == nil {
-		e.rcvBufSize = int(rs)
+		e.rcvBufSize = rs.Default
 	}
 
 	e.segmentQueue.setLimit(2 * e.rcvBufSize)
@@ -233,7 +234,7 @@ func (e *endpoint) Readiness(mask waiter.EventMask) waiter.EventMask {
 		// Determine if the endpoint is writable if requested.
 		if (mask & waiter.EventOut) != 0 {
 			e.sndBufMu.Lock()
-			if e.sndBufSize < 0 || e.sndBufUsed < e.sndBufSize {
+			if e.sndClosed || e.sndBufUsed < e.sndBufSize {
 				result |= waiter.EventOut
 			}
 			e.sndBufMu.Unlock()
@@ -421,7 +422,7 @@ func (e *endpoint) Write(v buffer.View, opts tcpip.WriteOptions) (uintptr, *tcpi
 	e.sndBufMu.Lock()
 
 	// Check if the connection has already been closed for sends.
-	if e.sndBufSize < 0 {
+	if e.sndClosed {
 		e.sndBufMu.Unlock()
 		return 0, tcpip.ErrClosedForSend
 	}
@@ -548,6 +549,19 @@ func (e *endpoint) SetSockOpt(opt interface{}) *tcpip.Error {
 		return nil
 
 	case tcpip.ReceiveBufferSizeOption:
+		// Make sure the receive buffer size is within the min and max
+		// allowed.
+		var rs ReceiveBufferSizeOption
+		size := int(v)
+		if err := e.stack.TransportProtocolOption(ProtocolNumber, &rs); err == nil {
+			if size < rs.Min {
+				size = rs.Min
+			}
+			if size > rs.Max {
+				size = rs.Max
+			}
+		}
+
 		mask := uint32(notifyReceiveWindowChanged)
 
 		e.rcvListMu.Lock()
@@ -558,25 +572,45 @@ func (e *endpoint) SetSockOpt(opt interface{}) *tcpip.Error {
 		if e.rcv != nil {
 			scale = e.rcv.rcvWndScale
 		}
-		if v>>scale == 0 {
-			v = 1 << scale
+		if size>>scale == 0 {
+			size = 1 << scale
 		}
 
-		// Make sure 2*v doesn't overflow.
-		if int(v) > math.MaxInt32/2 {
-			v = math.MaxInt32 / 2
+		// Make sure 2*size doesn't overflow.
+		if size > math.MaxInt32/2 {
+			size = math.MaxInt32 / 2
 		}
 
 		wasZero := e.zeroReceiveWindow(scale)
-		e.rcvBufSize = int(v)
+		e.rcvBufSize = size
 		if wasZero && !e.zeroReceiveWindow(scale) {
 			mask |= notifyNonZeroReceiveWindow
 		}
 		e.rcvListMu.Unlock()
 
-		e.segmentQueue.setLimit(2 * int(v))
+		e.segmentQueue.setLimit(2 * size)
 
 		e.notifyProtocolGoroutine(mask)
+		return nil
+
+	case tcpip.SendBufferSizeOption:
+		// Make sure the send buffer size is within the min and max
+		// allowed.
+		size := int(v)
+		var ss SendBufferSizeOption
+		if err := e.stack.TransportProtocolOption(ProtocolNumber, &ss); err == nil {
+			if size < ss.Min {
+				size = ss.Min
+			}
+			if size > ss.Max {
+				size = ss.Max
+			}
+		}
+
+		e.sndBufMu.Lock()
+		e.sndBufSize = size
+		e.sndBufMu.Unlock()
+
 		return nil
 
 	case tcpip.V6OnlyOption:
@@ -831,7 +865,7 @@ func (e *endpoint) Shutdown(flags tcpip.ShutdownFlags) *tcpip.Error {
 		if (flags & tcpip.ShutdownWrite) != 0 {
 			e.sndBufMu.Lock()
 
-			if e.sndBufSize < 0 {
+			if e.sndClosed {
 				// Already closed.
 				e.sndBufMu.Unlock()
 				break
@@ -843,7 +877,7 @@ func (e *endpoint) Shutdown(flags tcpip.ShutdownFlags) *tcpip.Error {
 			e.sndBufInQueue++
 
 			// Mark endpoint as closed.
-			e.sndBufSize = -1
+			e.sndClosed = true
 
 			e.sndBufMu.Unlock()
 

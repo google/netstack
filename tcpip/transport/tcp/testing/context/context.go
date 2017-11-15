@@ -131,6 +131,15 @@ type Context struct {
 func New(t *testing.T, mtu uint32) *Context {
 	s := stack.New([]string{ipv4.ProtocolName, ipv6.ProtocolName}, []string{tcp.ProtocolName})
 
+	// Allow minimum send/receive buffer sizes to be 1 during tests.
+	if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, tcp.SendBufferSizeOption{1, tcp.DefaultBufferSize, tcp.DefaultBufferSize * 10}); err != nil {
+		t.Fatalf("SetTransportProtocolOption failed: %v", err)
+	}
+
+	if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, tcp.ReceiveBufferSizeOption{1, tcp.DefaultBufferSize, tcp.DefaultBufferSize * 10}); err != nil {
+		t.Fatalf("SetTransportProtocolOption failed: %v", err)
+	}
+
 	// Some of the congestion control tests send up to 640 packets, we so
 	// set the channel size to 1000.
 	id, linkEP := channel.New(1000, mtu, "")

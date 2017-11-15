@@ -12,7 +12,6 @@ package tcp
 
 import (
 	"sync"
-	"sync/atomic"
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
@@ -37,20 +36,27 @@ const (
 // protocol. See: https://tools.ietf.org/html/rfc2018.
 type SACKEnabled bool
 
-// SendBufferSizeOption allows the default send buffer size for TCP  endpoints
-// to be queried or configured.
-type SendBufferSizeOption int
+// SendBufferSizeOption allows the default, min and max send buffer sizes for
+// TCP endpoints to be queried or configured.
+type SendBufferSizeOption struct {
+	Min     int
+	Default int
+	Max     int
+}
 
-// ReceiveBufferSizeOption allows the default receive buffer size for TCP
-// endpoints to be queried or configured.
-type ReceiveBufferSizeOption int
+// ReceiveBufferSizeOption allows the default, min and max receive buffer size
+// for TCP endpoints to be queried or configured.
+type ReceiveBufferSizeOption struct {
+	Min     int
+	Default int
+	Max     int
+}
 
 type protocol struct {
-	sendBufferSize int64
-	recvBufferSize int64
-
-	mu          sync.Mutex
-	sackEnabled bool
+	mu             sync.Mutex
+	sackEnabled    bool
+	sendBufferSize SendBufferSizeOption
+	recvBufferSize ReceiveBufferSizeOption
 }
 
 // Number returns the tcp protocol number.
@@ -122,17 +128,21 @@ func (p *protocol) SetOption(option interface{}) *tcpip.Error {
 		return nil
 
 	case SendBufferSizeOption:
-		if v <= 0 {
+		if v.Min <= 0 || v.Default < v.Min || v.Default > v.Max {
 			return tcpip.ErrInvalidOptionValue
 		}
-		atomic.StoreInt64(&p.sendBufferSize, int64(v))
+		p.mu.Lock()
+		p.sendBufferSize = v
+		p.mu.Unlock()
 		return nil
 
 	case ReceiveBufferSizeOption:
-		if v <= 0 {
+		if v.Min <= 0 || v.Default < v.Min || v.Default > v.Max {
 			return tcpip.ErrInvalidOptionValue
 		}
-		atomic.StoreInt64(&p.recvBufferSize, int64(v))
+		p.mu.Lock()
+		p.recvBufferSize = v
+		p.mu.Unlock()
 		return nil
 
 	default:
@@ -150,11 +160,15 @@ func (p *protocol) Option(option interface{}) *tcpip.Error {
 		return nil
 
 	case *SendBufferSizeOption:
-		*v = SendBufferSizeOption(atomic.LoadInt64(&p.sendBufferSize))
+		p.mu.Lock()
+		*v = p.sendBufferSize
+		p.mu.Unlock()
 		return nil
 
 	case *ReceiveBufferSizeOption:
-		*v = ReceiveBufferSizeOption(atomic.LoadInt64(&p.recvBufferSize))
+		p.mu.Lock()
+		*v = p.recvBufferSize
+		p.mu.Unlock()
 		return nil
 
 	default:
@@ -165,8 +179,8 @@ func (p *protocol) Option(option interface{}) *tcpip.Error {
 func init() {
 	stack.RegisterTransportProtocolFactory(ProtocolName, func() stack.TransportProtocol {
 		return &protocol{
-			sendBufferSize: DefaultBufferSize,
-			recvBufferSize: DefaultBufferSize,
+			sendBufferSize: SendBufferSizeOption{4096, DefaultBufferSize, 4194304},
+			recvBufferSize: ReceiveBufferSizeOption{4096, DefaultBufferSize, 6291456},
 		}
 	})
 }

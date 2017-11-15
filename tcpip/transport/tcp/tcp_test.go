@@ -2406,7 +2406,7 @@ func TestDefaultBufferSizes(t *testing.T) {
 	checkRecvBufferSize(t, ep, tcp.DefaultBufferSize)
 
 	// Change the default send buffer size.
-	if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, tcp.SendBufferSizeOption(tcp.DefaultBufferSize*2)); err != nil {
+	if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, tcp.SendBufferSizeOption{1, tcp.DefaultBufferSize * 2, tcp.DefaultBufferSize * 20}); err != nil {
 		t.Fatalf("SetTransportProtocolOption failed: %v", err)
 	}
 
@@ -2420,7 +2420,7 @@ func TestDefaultBufferSizes(t *testing.T) {
 	checkRecvBufferSize(t, ep, tcp.DefaultBufferSize)
 
 	// Change the default receive buffer size.
-	if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, tcp.ReceiveBufferSizeOption(tcp.DefaultBufferSize*3)); err != nil {
+	if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, tcp.ReceiveBufferSizeOption{1, tcp.DefaultBufferSize * 3, tcp.DefaultBufferSize * 30}); err != nil {
 		t.Fatalf("SetTransportProtocolOption failed: %v", err)
 	}
 
@@ -2432,4 +2432,50 @@ func TestDefaultBufferSizes(t *testing.T) {
 
 	checkSendBufferSize(t, ep, tcp.DefaultBufferSize*2)
 	checkRecvBufferSize(t, ep, tcp.DefaultBufferSize*3)
+}
+
+func TestMinMaxBufferSizes(t *testing.T) {
+	s := stack.New([]string{ipv4.ProtocolName}, []string{tcp.ProtocolName})
+
+	// Check the default values.
+	ep, err := s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &waiter.Queue{})
+	if err != nil {
+		t.Fatalf("NewEndpoint failed; %v", err)
+	}
+	defer ep.Close()
+
+	// Change the min/max values for send/receive
+	if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, tcp.ReceiveBufferSizeOption{200, tcp.DefaultBufferSize * 2, tcp.DefaultBufferSize * 20}); err != nil {
+		t.Fatalf("SetTransportProtocolOption failed: %v", err)
+	}
+
+	if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, tcp.SendBufferSizeOption{300, tcp.DefaultBufferSize * 3, tcp.DefaultBufferSize * 30}); err != nil {
+		t.Fatalf("SetTransportProtocolOption failed: %v", err)
+	}
+
+	// Set values below the min.
+	if err := ep.SetSockOpt(tcpip.ReceiveBufferSizeOption(199)); err != nil {
+		t.Fatalf("GetSockOpt failed: %v", err)
+	}
+
+	checkRecvBufferSize(t, ep, 200)
+
+	if err := ep.SetSockOpt(tcpip.SendBufferSizeOption(299)); err != nil {
+		t.Fatalf("GetSockOpt failed: %v", err)
+	}
+
+	checkSendBufferSize(t, ep, 300)
+
+	// Set values above the max.
+	if err := ep.SetSockOpt(tcpip.ReceiveBufferSizeOption(1 + tcp.DefaultBufferSize*20)); err != nil {
+		t.Fatalf("GetSockOpt failed: %v", err)
+	}
+
+	checkRecvBufferSize(t, ep, tcp.DefaultBufferSize*20)
+
+	if err := ep.SetSockOpt(tcpip.SendBufferSizeOption(1 + tcp.DefaultBufferSize*30)); err != nil {
+		t.Fatalf("GetSockOpt failed: %v", err)
+	}
+
+	checkSendBufferSize(t, ep, tcp.DefaultBufferSize*30)
 }
