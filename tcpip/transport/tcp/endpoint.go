@@ -810,8 +810,15 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) *tcpip.Error {
 		}
 	} else {
 		// The endpoint doesn't have a local port yet, so try to get
-		// one.
+		// one. Make sure that it isn't one that will result in the same
+		// address/port for both local and remote (otherwise this
+		// endpoint would be trying to connect to itself).
+		sameAddr := e.id.LocalAddress == e.id.RemoteAddress
 		_, err := e.stack.PickEphemeralPort(func(p uint16) (bool, *tcpip.Error) {
+			if sameAddr && p == e.id.RemotePort {
+				return false, nil
+			}
+
 			e.id.LocalPort = p
 			err := e.stack.RegisterTransportEndpoint(nicid, netProtos, ProtocolNumber, e.id, e)
 			switch err {

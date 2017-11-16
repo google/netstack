@@ -13,6 +13,8 @@ import (
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/checker"
 	"github.com/google/netstack/tcpip/header"
+	"github.com/google/netstack/tcpip/link/loopback"
+	"github.com/google/netstack/tcpip/link/sniffer"
 	"github.com/google/netstack/tcpip/network/ipv4"
 	"github.com/google/netstack/tcpip/seqnum"
 	"github.com/google/netstack/tcpip/stack"
@@ -39,7 +41,7 @@ func TestGiveUpConnect(t *testing.T) {
 	var wq waiter.Queue
 	ep, err := c.Stack().NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &wq)
 	if err != nil {
-		t.Fatalf("NeEndpoint failed: %v", err)
+		t.Fatalf("NewEndpoint failed: %v", err)
 	}
 
 	// Register for notification, then start connection attempt.
@@ -2478,4 +2480,88 @@ func TestMinMaxBufferSizes(t *testing.T) {
 	}
 
 	checkSendBufferSize(t, ep, tcp.DefaultBufferSize*30)
+}
+
+func TestSelfConnect(t *testing.T) {
+	// This test ensures that intentional self-connects work. In particular,
+	// it checks that if an endpoint binds to say 127.0.0.1:1000 then
+	// connects to 127.0.0.1:1000, then it will be connected to itself, and
+	// is able to send and receive data through the same endpoint.
+	s := stack.New([]string{ipv4.ProtocolName}, []string{tcp.ProtocolName})
+
+	id := loopback.New()
+	if testing.Verbose() {
+		id = sniffer.New(id)
+	}
+
+	if err := s.CreateNIC(1, id); err != nil {
+		t.Fatalf("CreateNIC failed: %v", err)
+	}
+
+	if err := s.AddAddress(1, ipv4.ProtocolNumber, context.StackAddr); err != nil {
+		t.Fatalf("AddAddress failed: %v", err)
+	}
+
+	s.SetRouteTable([]tcpip.Route{
+		{
+			Destination: "\x00\x00\x00\x00",
+			Mask:        "\x00\x00\x00\x00",
+			Gateway:     "",
+			NIC:         1,
+		},
+	})
+
+	var wq waiter.Queue
+	ep, err := s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &wq)
+	if err != nil {
+		t.Fatalf("NewEndpoint failed: %v", err)
+	}
+	defer ep.Close()
+
+	if err := ep.Bind(tcpip.FullAddress{Port: context.StackPort}, nil); err != nil {
+		t.Fatalf("Bind failed: %v", err)
+	}
+
+	// Register for notification, then start connection attempt.
+	waitEntry, notifyCh := waiter.NewChannelEntry(nil)
+	wq.EventRegister(&waitEntry, waiter.EventOut)
+	defer wq.EventUnregister(&waitEntry)
+
+	err = ep.Connect(tcpip.FullAddress{Addr: context.StackAddr, Port: context.StackPort})
+	if err != tcpip.ErrConnectStarted {
+		t.Fatalf("Unexpected return value from Connect: %v", err)
+	}
+
+	<-notifyCh
+	err = ep.GetSockOpt(tcpip.ErrorOption{})
+	if err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	// Write something.
+	data := []byte{1, 2, 3}
+	view := buffer.NewView(len(data))
+	copy(view, data)
+	if _, err = ep.Write(view, tcpip.WriteOptions{}); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Read back what was written.
+	wq.EventUnregister(&waitEntry)
+	wq.EventRegister(&waitEntry, waiter.EventIn)
+	rd, err := ep.Read(nil)
+	if err != nil {
+		if err != tcpip.ErrWouldBlock {
+			t.Fatalf("Read failed: %v", err)
+		}
+		<-notifyCh
+		rd, err = ep.Read(nil)
+		if err != nil {
+			t.Fatalf("Read failed: %v", err)
+		}
+	}
+
+	if bytes.Compare(data, rd) != 0 {
+		t.Fatalf("Data is different: want=%v, got=%v", data, rd)
+	}
 }
