@@ -108,6 +108,44 @@ func TestCloseWaits(t *testing.T) {
 	<-done
 }
 
+func TestMultipleSerialCloses(t *testing.T) {
+	var g gate.Gate
+
+	// Enter 10 times.
+	for i := 0; i < 10; i++ {
+		if !g.Enter() {
+			t.Fatalf("Failed to enter when it should be allowed")
+		}
+	}
+
+	// Launch closer. Check that it doesn't complete.
+	done := make(chan struct{})
+	go closeFunc(&g, done)
+
+	for i := 0; i < 10; i++ {
+		select {
+		case <-done:
+			t.Fatalf("Close function completed too soon")
+		case <-time.After(100 * time.Millisecond):
+		}
+
+		g.Leave()
+	}
+
+	// Now the closer must complete.
+	<-done
+
+	// Close again should not block.
+	done = make(chan struct{})
+	go closeFunc(&g, done)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Second Close is blocking")
+	}
+}
+
 func worker(g *gate.Gate, done *sync.WaitGroup) {
 	for {
 		if !g.Enter() {

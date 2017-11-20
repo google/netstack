@@ -101,17 +101,17 @@ func (g *Gate) Leave() {
 }
 
 // Close closes the gate for entering, and waits until all goroutines [that are
-// currently inside the gate] to leave before returning.
+// currently inside the gate] leave before returning.
 //
 // Only one goroutine can call this function.
 func (g *Gate) Close() {
 	for {
 		v := atomic.LoadUint32(&g.userCount)
-		if v != 0 && g.done == nil {
+		if v&^gateClosed != 0 && g.done == nil {
 			g.done = make(chan struct{})
 		}
 		if atomic.CompareAndSwapUint32(&g.userCount, v, v|gateClosed) {
-			if v != 0 {
+			if v&^gateClosed != 0 {
 				<-g.done
 			}
 			return
