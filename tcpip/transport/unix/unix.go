@@ -28,6 +28,8 @@ const (
 	SockStream SockType = 1
 	// SockDgram corresponds to syscall.SOCK_DGRAM.
 	SockDgram SockType = 2
+	// SockRaw corresponds to syscall.SOCK_RAW.
+	SockRaw SockType = 3
 	// SockSeqpacket corresponds to syscall.SOCK_SEQPACKET.
 	SockSeqpacket SockType = 5
 )
