@@ -19,6 +19,7 @@ import (
 type NIC struct {
 	stack  *Stack
 	id     tcpip.NICID
+	name   string
 	linkEP LinkEndpoint
 
 	demux *transportDemuxer
@@ -31,10 +32,11 @@ type NIC struct {
 	subnets     []tcpip.Subnet
 }
 
-func newNIC(stack *Stack, id tcpip.NICID, ep LinkEndpoint) *NIC {
+func newNIC(stack *Stack, id tcpip.NICID, name string, ep LinkEndpoint) *NIC {
 	return &NIC{
 		stack:     stack,
 		id:        id,
+		name:      name,
 		linkEP:    ep,
 		demux:     newTransportDemuxer(stack),
 		primary:   make(map[tcpip.NetworkProtocolNumber]*ilist.List),
@@ -159,6 +161,20 @@ func (n *NIC) AddAddress(protocol tcpip.NetworkProtocolNumber, addr tcpip.Addres
 	n.mu.Unlock()
 
 	return err
+}
+
+// Addresses returns the addresses associated with this NIC.
+func (n *NIC) Addresses() []tcpip.ProtocolAddress {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	addrs := make([]tcpip.ProtocolAddress, 0, len(n.endpoints))
+	for nid, ep := range n.endpoints {
+		addrs = append(addrs, tcpip.ProtocolAddress{
+			Protocol: ep.protocol,
+			Address:  nid.LocalAddress,
+		})
+	}
+	return addrs
 }
 
 // AddSubnet adds a new subnet to n, so that it starts accepting packets

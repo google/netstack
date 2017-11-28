@@ -215,7 +215,7 @@ func (s *Stack) NewEndpoint(transport tcpip.TransportProtocolNumber, network tcp
 
 // createNIC creates a NIC with the provided id and link-layer endpoint, and
 // optionally enable it.
-func (s *Stack) createNIC(id tcpip.NICID, linkEP tcpip.LinkEndpointID, enabled bool) *tcpip.Error {
+func (s *Stack) createNIC(id tcpip.NICID, name string, linkEP tcpip.LinkEndpointID, enabled bool) *tcpip.Error {
 	ep := FindLinkEndpoint(linkEP)
 	if ep == nil {
 		return tcpip.ErrBadLinkEndpoint
@@ -229,7 +229,7 @@ func (s *Stack) createNIC(id tcpip.NICID, linkEP tcpip.LinkEndpointID, enabled b
 		return tcpip.ErrDuplicateNICID
 	}
 
-	n := newNIC(s, id, ep)
+	n := newNIC(s, id, name, ep)
 
 	s.nics[id] = n
 	if enabled {
@@ -241,14 +241,20 @@ func (s *Stack) createNIC(id tcpip.NICID, linkEP tcpip.LinkEndpointID, enabled b
 
 // CreateNIC creates a NIC with the provided id and link-layer endpoint.
 func (s *Stack) CreateNIC(id tcpip.NICID, linkEP tcpip.LinkEndpointID) *tcpip.Error {
-	return s.createNIC(id, linkEP, true)
+	return s.createNIC(id, "", linkEP, true)
+}
+
+// CreateNamedNIC creates a NIC with the provided id and link-layer endpoint,
+// and a human-readable name.
+func (s *Stack) CreateNamedNIC(id tcpip.NICID, name string, linkEP tcpip.LinkEndpointID) *tcpip.Error {
+	return s.createNIC(id, name, linkEP, true)
 }
 
 // CreateDisabledNIC creates a NIC with the provided id and link-layer endpoint,
 // but leave it disable. Stack.EnableNIC must be called before the link-layer
 // endpoint starts delivering packets to it.
 func (s *Stack) CreateDisabledNIC(id tcpip.NICID, linkEP tcpip.LinkEndpointID) *tcpip.Error {
-	return s.createNIC(id, linkEP, false)
+	return s.createNIC(id, "", linkEP, false)
 }
 
 // EnableNIC enables the given NIC so that the link-layer endpoint can start
@@ -276,6 +282,32 @@ func (s *Stack) NICSubnets() map[tcpip.NICID][]tcpip.Subnet {
 
 	for id, nic := range s.nics {
 		nics[id] = append(nics[id], nic.Subnets()...)
+	}
+	return nics
+}
+
+// NICAddresses returns a map of NICIDs to their associated addresses.
+func (s *Stack) NICAddresses() map[tcpip.NICID][]tcpip.ProtocolAddress {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	nics := map[tcpip.NICID][]tcpip.ProtocolAddress{}
+
+	for id, nic := range s.nics {
+		nics[id] = append(nics[id], nic.Addresses()...)
+	}
+	return nics
+}
+
+// NICNames returns a map of NICIDs to their name.
+func (s *Stack) NICNames() map[tcpip.NICID]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	nics := map[tcpip.NICID]string{}
+
+	for id, nic := range s.nics {
+		nics[id] = nic.name
 	}
 	return nics
 }

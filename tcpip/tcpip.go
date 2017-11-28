@@ -425,3 +425,13 @@ func (a LinkAddress) String() string {
 		return fmt.Sprintf("%x", []byte(a))
 	}
 }
+
+// ProtocolAddress is an address and the network protocol it is associated
+// with.
+type ProtocolAddress struct {
+	// Protocol is the protocol of the address.
+	Protocol NetworkProtocolNumber
+
+	// Address is a network address.
+	Address Address
+}
