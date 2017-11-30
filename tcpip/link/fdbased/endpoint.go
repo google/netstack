@@ -16,7 +16,6 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"github.com/google/netstack/gate"
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
@@ -211,7 +210,6 @@ func (e *endpoint) dispatchLoop(d stack.NetworkDispatcher) *tcpip.Error {
 type InjectableEndpoint struct {
 	endpoint
 
-	gate       gate.Gate
 	dispatcher stack.NetworkDispatcher
 }
 
@@ -224,25 +222,6 @@ func (e *InjectableEndpoint) Attach(dispatcher stack.NetworkDispatcher) {
 // Inject injects an inbound packet.
 func (e *InjectableEndpoint) Inject(protocol tcpip.NetworkProtocolNumber, vv *buffer.VectorisedView) {
 	e.dispatcher.DeliverNetworkPacket(e, "", protocol, vv)
-}
-
-// WritePacket writes packets to the underlying file descriptor as long as
-// Wait() hasn't been called.
-func (e *InjectableEndpoint) WritePacket(r *stack.Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.NetworkProtocolNumber) *tcpip.Error {
-	if !e.gate.Enter() {
-		return nil
-	}
-
-	err := e.endpoint.WritePacket(r, hdr, payload, protocol)
-	e.gate.Leave()
-	return err
-}
-
-// Wait waits for all inflight WritePacket calls to finish and prevent new ones
-// from starting. It guarantees that the endpoint won't use the underlying
-// file descriptor anymore.
-func (e *InjectableEndpoint) Wait() {
-	e.gate.Close()
 }
 
 // NewInjectable creates a new fd-based InjectableEndpoint.
