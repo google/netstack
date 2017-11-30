@@ -209,11 +209,11 @@ type Endpoint interface {
 	//
 	// There are three classes of return values:
 	//	nil -- the attempt to connect succeeded.
-	//	ErrConnectStarted -- the connect attempt started but hasn't
-	//		completed yet. In this case, the actual result will
-	//		become available via GetSockOpt(ErrorOption) when
-	//		the endpoint becomes writable. (This mimics the
-	//		connect(2) syscall behavior.)
+	//	ErrConnectStarted/ErrAlreadyConnecting -- the connect attempt started
+	//		but hasn't completed yet. In this case, the caller must call Connect
+	//		or GetSockOpt(ErrorOption) when the endpoint becomes writable to
+	//		get the actual result. The first call to Connect after the socket has
+	//		connected returns nil. Calling connect again results in ErrAlreadyConnected.
 	//	Anything else -- the attempt to connect failed.
 	Connect(address FullAddress) *Error
 

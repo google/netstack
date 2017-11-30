@@ -67,7 +67,7 @@ type endpoint struct {
 	// protocol goroutine adds ready-for-delivery segments to rcvList,
 	// which are returned by Read() calls to users.
 	//
-	// Once the peer has closed the its send side, rcvClosed is set to true
+	// Once the peer has closed its send side, rcvClosed is set to true
 	// to indicate to users that no more data is coming.
 	rcvListMu  sync.Mutex
 	rcvList    segmentList
@@ -76,14 +76,15 @@ type endpoint struct {
 	rcvBufUsed int
 
 	// The following fields are protected by the mutex.
-	mu             sync.RWMutex
-	id             stack.TransportEndpointID
-	state          endpointState
-	isPortReserved bool
-	isRegistered   bool
-	boundNICID     tcpip.NICID
-	route          stack.Route
-	v6only         bool
+	mu                sync.RWMutex
+	id                stack.TransportEndpointID
+	state             endpointState
+	isPortReserved    bool
+	isRegistered      bool
+	boundNICID        tcpip.NICID
+	route             stack.Route
+	v6only            bool
+	isConnectNotified bool
 
 	// effectiveNetProtos contains the network protocols actually in use. In
 	// most cases it will only contain "netProto", but in cases like IPv6
@@ -781,8 +782,16 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) *tcpip.Error {
 		return tcpip.ErrAlreadyConnecting
 
 	case stateConnected:
-		// The endpoint is already connected.
+		// The endpoint is already connected. If caller hasn't been notified yet, return success.
+		if !e.isConnectNotified {
+			e.isConnectNotified = true
+			return nil
+		}
+		// Otherwise return that it's already connected.
 		return tcpip.ErrAlreadyConnected
+
+	case stateError:
+		return e.hardError
 
 	default:
 		return tcpip.ErrInvalidEndpointState
