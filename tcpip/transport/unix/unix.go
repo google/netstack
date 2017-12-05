@@ -114,7 +114,12 @@ type Endpoint interface {
 	// If peek is true, no data should be consumed from the Endpoint. Any and
 	// all data returned from a peek should be available in the next call to
 	// RecvMsg.
-	RecvMsg(data [][]byte, creds bool, numRights uintptr, peek bool, addr *tcpip.FullAddress) (uintptr, ControlMessages, *tcpip.Error)
+	//
+	// recvLen is the number of bytes copied into data.
+	//
+	// msgLen is the length of the read message consumed for datagram Endpoints.
+	// msgLen is always the same as recvLen for stream Endpoints.
+	RecvMsg(data [][]byte, creds bool, numRights uintptr, peek bool, addr *tcpip.FullAddress) (recvLen, msgLen uintptr, cm ControlMessages, err *tcpip.Error)
 
 	// SendMsg writes data and a control message to the endpoint's peer.
 	// This method does not block if the data cannot be written.
@@ -258,7 +263,7 @@ type Receiver interface {
 	// See Endpoint.RecvMsg for documentation on shared arguments.
 	//
 	// notify indicates if RecvNotify should be called.
-	Recv(data [][]byte, creds bool, numRights uintptr, peek bool) (n uintptr, cm ControlMessages, source tcpip.FullAddress, notify bool, err *tcpip.Error)
+	Recv(data [][]byte, creds bool, numRights uintptr, peek bool) (recvLen, msgLen uintptr, cm ControlMessages, source tcpip.FullAddress, notify bool, err *tcpip.Error)
 
 	// RecvNotify notifies the Receiver of a successful Recv. This must not be
 	// called while holding any endpoint locks.
@@ -296,7 +301,7 @@ type queueReceiver struct {
 }
 
 // Recv implements Receiver.Recv.
-func (q *queueReceiver) Recv(data [][]byte, creds bool, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, bool, *tcpip.Error) {
+func (q *queueReceiver) Recv(data [][]byte, creds bool, numRights uintptr, peek bool) (uintptr, uintptr, ControlMessages, tcpip.FullAddress, bool, *tcpip.Error) {
 	var m queue.Entry
 	var notify bool
 	var err *tcpip.Error
@@ -306,7 +311,7 @@ func (q *queueReceiver) Recv(data [][]byte, creds bool, numRights uintptr, peek 
 		m, notify, err = q.readQueue.Dequeue()
 	}
 	if err != nil {
-		return 0, ControlMessages{}, tcpip.FullAddress{}, false, err
+		return 0, 0, ControlMessages{}, tcpip.FullAddress{}, false, err
 	}
 	msg := m.(*message)
 	src := []byte(msg.Data)
@@ -316,7 +321,7 @@ func (q *queueReceiver) Recv(data [][]byte, creds bool, numRights uintptr, peek 
 		copied += uintptr(n)
 		src = src[n:]
 	}
-	return copied, msg.Control, msg.Address, notify, nil
+	return copied, uintptr(len(msg.Data)), msg.Control, msg.Address, notify, nil
 }
 
 // RecvNotify implements Receiver.RecvNotify.
@@ -378,7 +383,7 @@ func vecCopy(data [][]byte, buf []byte) (uintptr, [][]byte, []byte) {
 }
 
 // Recv implements Receiver.Recv.
-func (q *streamQueueReceiver) Recv(data [][]byte, wantCreds bool, numRights uintptr, peek bool) (uintptr, ControlMessages, tcpip.FullAddress, bool, *tcpip.Error) {
+func (q *streamQueueReceiver) Recv(data [][]byte, wantCreds bool, numRights uintptr, peek bool) (uintptr, uintptr, ControlMessages, tcpip.FullAddress, bool, *tcpip.Error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -391,7 +396,7 @@ func (q *streamQueueReceiver) Recv(data [][]byte, wantCreds bool, numRights uint
 		// the next time Recv() is called.
 		m, n, err := q.readQueue.Dequeue()
 		if err != nil {
-			return 0, ControlMessages{}, tcpip.FullAddress{}, false, err
+			return 0, 0, ControlMessages{}, tcpip.FullAddress{}, false, err
 		}
 		notify = n
 		msg := m.(*message)
@@ -408,7 +413,7 @@ func (q *streamQueueReceiver) Recv(data [][]byte, wantCreds bool, numRights uint
 		// Don't consume data since we are peeking.
 		copied, data, _ = vecCopy(data, q.buffer)
 
-		return copied, c, q.addr, notify, nil
+		return copied, copied, c, q.addr, notify, nil
 	}
 
 	// Consume data and control message since we are not peeking.
@@ -486,7 +491,7 @@ func (q *streamQueueReceiver) Recv(data [][]byte, wantCreds bool, numRights uint
 			q.control.Rights = nil
 		}
 	}
-	return copied, c, q.addr, notify, nil
+	return copied, copied, c, q.addr, notify, nil
 }
 
 // A ConnectedEndpoint is an Endpoint that can be used to send Messages.
@@ -697,18 +702,18 @@ func (e *baseEndpoint) Connected() bool {
 }
 
 // RecvMsg reads data and a control message from the endpoint.
-func (e *baseEndpoint) RecvMsg(data [][]byte, creds bool, numRights uintptr, peek bool, addr *tcpip.FullAddress) (uintptr, ControlMessages, *tcpip.Error) {
+func (e *baseEndpoint) RecvMsg(data [][]byte, creds bool, numRights uintptr, peek bool, addr *tcpip.FullAddress) (uintptr, uintptr, ControlMessages, *tcpip.Error) {
 	e.Lock()
 
 	if e.receiver == nil {
 		e.Unlock()
-		return 0, ControlMessages{}, tcpip.ErrNotConnected
+		return 0, 0, ControlMessages{}, tcpip.ErrNotConnected
 	}
 
-	n, cms, a, notify, err := e.receiver.Recv(data, creds, numRights, peek)
+	recvLen, msgLen, cms, a, notify, err := e.receiver.Recv(data, creds, numRights, peek)
 	e.Unlock()
 	if err != nil {
-		return 0, ControlMessages{}, err
+		return 0, 0, ControlMessages{}, err
 	}
 
 	if notify {
@@ -718,7 +723,7 @@ func (e *baseEndpoint) RecvMsg(data [][]byte, creds bool, numRights uintptr, pee
 	if addr != nil {
 		*addr = a
 	}
-	return n, cms, nil
+	return recvLen, msgLen, cms, nil
 }
 
 // SendMsg writes data and a control message to the endpoint's peer.
