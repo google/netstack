@@ -796,6 +796,16 @@ func (e *endpoint) protocolMainLoop(passive bool) *tcpip.Error {
 					e.rcv.pendingBufSize = seqnum.Size(e.receiveBufferSize())
 				}
 
+				if n&notifyMTUChanged != 0 {
+					e.sndBufMu.Lock()
+					count := e.packetTooBigCount
+					e.packetTooBigCount = 0
+					mtu := e.sndMTU
+					e.sndBufMu.Unlock()
+
+					e.snd.updateMaxPayloadSize(mtu, count)
+				}
+
 				if n&notifyClose != 0 && closeTimer == nil {
 					// Reset the connection 3 seconds after the
 					// endpoint has been closed.

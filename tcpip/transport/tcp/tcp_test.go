@@ -2565,3 +2565,62 @@ func TestSelfConnect(t *testing.T) {
 		t.Fatalf("Data is different: want=%v, got=%v", data, rd)
 	}
 }
+
+func TestPathMTUDiscovery(t *testing.T) {
+	// This test verifies the stack retransmits packets after it receives an
+	// ICMP packet indicating that the path MTU has been exceeded.
+	c := context.New(t, 1500)
+	defer c.Cleanup()
+
+	// Create new connection with MSS of 1460.
+	const maxPayload = 1500 - header.TCPMinimumSize - header.IPv4MinimumSize
+	c.CreateConnectedWithRawOptions(789, 30000, nil, []byte{
+		header.TCPOptionMSS, 4, byte(maxPayload / 256), byte(maxPayload % 256),
+	})
+
+	// Send 3200 bytes of data.
+	const writeSize = 3200
+	data := buffer.NewView(writeSize)
+	for i := range data {
+		data[i] = byte(i)
+	}
+
+	if _, err := c.EP.Write(data, tcpip.WriteOptions{}); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	receivePackets := func(c *context.Context, sizes []int, which int, seqNum uint32) []byte {
+		var ret []byte
+		for i, size := range sizes {
+			p := c.GetPacket()
+			if i == which {
+				ret = p
+			}
+			checker.IPv4(t, p,
+				checker.PayloadLen(size+header.TCPMinimumSize),
+				checker.TCP(
+					checker.DstPort(context.TestPort),
+					checker.SeqNum(seqNum),
+					checker.AckNum(790),
+					checker.TCPFlagsMatch(header.TCPFlagAck, ^uint8(header.TCPFlagPsh)),
+				),
+			)
+			seqNum += uint32(size)
+		}
+		return ret
+	}
+
+	// Receive three packets.
+	sizes := []int{maxPayload, maxPayload, writeSize - 2*maxPayload}
+	first := receivePackets(c, sizes, 0, uint32(c.IRS)+1)
+
+	// Send "packet too big" messages back to netstack.
+	const newMTU = 1200
+	const newMaxPayload = newMTU - header.IPv4MinimumSize - header.TCPMinimumSize
+	mtu := []byte{0, 0, newMTU / 256, newMTU % 256}
+	c.SendICMPPacket(header.ICMPv4DstUnreachable, header.ICMPv4FragmentationNeeded, mtu, first, newMTU)
+
+	// See retransmitted packets. None exceeding the new max.
+	sizes = []int{newMaxPayload, maxPayload - newMaxPayload, newMaxPayload, maxPayload - newMaxPayload, writeSize - 2*maxPayload}
+	receivePackets(c, sizes, -1, uint32(c.IRS)+1)
+}

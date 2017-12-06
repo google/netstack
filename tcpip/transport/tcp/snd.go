@@ -139,18 +139,62 @@ func newSender(ep *endpoint, iss, irs seqnum.Value, sndWnd seqnum.Size, mss uint
 		s.sndWndScale = uint8(sndWndScale)
 	}
 
-	m := int(ep.route.MTU()) - header.TCPMinimumSize
-	// Adjust the maxPayloadsize to account for the timestamp option.
-	if ep.sendTSOk {
-		m -= header.TCPTimeStampOptionSize
-	}
-	if m < s.maxPayloadSize {
-		s.maxPayloadSize = m
-	}
+	s.updateMaxPayloadSize(int(ep.route.MTU()), 0)
 
 	s.resendTimer.init(&s.resendWaker)
 
 	return s
+}
+
+// updateMaxPayloadSize updates the maximum payload size based on the given
+// MTU. If this is in response to "packet too big" control packets (indicated
+// by the count argument), it also reduces the number of oustanding packets and
+// attempts to retransmit the first packet above the MTU size.
+func (s *sender) updateMaxPayloadSize(mtu, count int) {
+	m := mtu - header.TCPMinimumSize
+
+	// Adjust the maxPayloadsize to account for the timestamp option.
+	if s.ep.sendTSOk {
+		m -= header.TCPTimeStampOptionSize
+	}
+
+	// We don't adjust up for now.
+	if m >= s.maxPayloadSize {
+		return
+	}
+
+	// Make sure we can transmit at least one byte.
+	if m <= 0 {
+		m = 1
+	}
+
+	s.maxPayloadSize = m
+
+	s.outstanding -= count
+	if s.outstanding < 0 {
+		s.outstanding = 0
+	}
+
+	// Rewind writeNext to the first segment exceeding the MTU. Do nothing
+	// if it is already before such a packet.
+	for seg := s.writeList.Front(); seg != nil; seg = seg.Next() {
+		if seg == s.writeNext {
+			// We got to writeNext before we could find a segment
+			// exceeding the MTU.
+			break
+		}
+
+		if seg.data.Size() > m {
+			// We found a segment exceeding the MTU. Rewind
+			// writeNext and try to retransmit it.
+			s.writeNext = seg
+			break
+		}
+	}
+
+	// Since we likely reduced the number of outstanding packets, we may be
+	// ready to send some more.
+	s.sendData()
 }
 
 // sendAck sends an ACK segment.

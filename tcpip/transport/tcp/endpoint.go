@@ -38,6 +38,7 @@ const (
 	notifyNonZeroReceiveWindow = 1 << iota
 	notifyReceiveWindowChanged
 	notifyClose
+	notifyMTUChanged
 )
 
 // endpoint represents a TCP endpoint. This struct serves as the interface
@@ -151,6 +152,14 @@ type endpoint struct {
 	sndWaker      sleep.Waker
 	sndCloseWaker sleep.Waker
 
+	// The following are used when a "packet too big" control packet is
+	// received. They are protected by sndBufMu. They are used to
+	// communicate to the main protocol goroutine how many such control
+	// messages have been received since the last notification was processed
+	// and what was the smallest MTU seen.
+	packetTooBigCount int
+	sndMTU            int
+
 	// rstWaker is used to immediately stop the main protocol goroutine. It
 	// is useful when work is performed by another goroutine (by acquiring
 	// workMu) that ends up resetting the connection.
@@ -186,6 +195,7 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 		waiterQueue: waiterQueue,
 		rcvBufSize:  DefaultBufferSize,
 		sndBufSize:  DefaultBufferSize,
+		sndMTU:      int(math.MaxInt32),
 		noDelay:     true,
 		reuseAddr:   true,
 	}
@@ -1130,6 +1140,17 @@ func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv
 
 // HandleControlPacket implements stack.TransportEndpoint.HandleControlPacket.
 func (e *endpoint) HandleControlPacket(id stack.TransportEndpointID, typ stack.ControlType, extra uint32, vv *buffer.VectorisedView) {
+	switch typ {
+	case stack.ControlPacketTooBig:
+		e.sndBufMu.Lock()
+		e.packetTooBigCount++
+		if v := int(extra); v < e.sndMTU {
+			e.sndMTU = v
+		}
+		e.sndBufMu.Unlock()
+
+		e.notifyProtocolGoroutine(notifyMTUChanged)
+	}
 }
 
 // updateSndBufferUsage is called by the protocol goroutine when room opens up

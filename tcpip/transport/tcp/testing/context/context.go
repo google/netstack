@@ -232,6 +232,38 @@ func (c *Context) GetPacket() []byte {
 	return nil
 }
 
+// SendICMPPacket builds and sends an ICMPv4 packet via the link layer endpoint.
+func (c *Context) SendICMPPacket(typ header.ICMPv4Type, code uint8, p1, p2 []byte, maxTotalSize int) {
+	// Allocate a buffer data and headers.
+	buf := buffer.NewView(header.IPv4MinimumSize + header.ICMPv4MinimumSize + len(p1) + len(p2))
+	if len(buf) > maxTotalSize {
+		buf = buf[:maxTotalSize]
+	}
+
+	ip := header.IPv4(buf)
+	ip.Encode(&header.IPv4Fields{
+		IHL:         header.IPv4MinimumSize,
+		TotalLength: uint16(len(buf)),
+		TTL:         65,
+		Protocol:    uint8(header.ICMPv4ProtocolNumber),
+		SrcAddr:     TestAddr,
+		DstAddr:     StackAddr,
+	})
+	ip.SetChecksum(^ip.CalculateChecksum())
+
+	icmp := header.ICMPv4(buf[header.IPv4MinimumSize:])
+	icmp.SetType(typ)
+	icmp.SetCode(code)
+
+	copy(icmp[header.ICMPv4MinimumSize:], p1)
+	copy(icmp[header.ICMPv4MinimumSize+len(p1):], p2)
+
+	// Inject packet.
+	var views [1]buffer.View
+	vv := buf.ToVectorisedView(views)
+	c.linkEP.Inject(ipv4.ProtocolNumber, &vv)
+}
+
 // SendPacket builds and sends a TCP segment(with the provided payload & TCP
 // headers) in an IPv4 packet via the link layer endpoint.
 func (c *Context) SendPacket(payload []byte, h *Headers) {
