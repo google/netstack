@@ -24,11 +24,19 @@ const (
 	// neighbor solicitation packet.
 	ICMPv6NeighborSolicitMinimumSize = ICMPv6MinimumSize + 4 + 16
 
-	// ICMPv6NeighborSolicitMinimumSize is size of a neighbor advertisement.
+	// ICMPv6NeighborAdvertSize is size of a neighbor advertisement.
 	ICMPv6NeighborAdvertSize = 32
 
 	// ICMPv6EchoMinimumSize is the minimum size of a valid ICMP echo packet.
 	ICMPv6EchoMinimumSize = 8
+
+	// ICMPv6DstUnreachableMinimumSize is the minimum size of a valid ICMP
+	// destination unreachable packet.
+	ICMPv6DstUnreachableMinimumSize = ICMPv6MinimumSize + 4
+
+	// ICMPv6PacketTooBigMinimumSize is the minimum size of a valid ICMP
+	// packet-too-big packet.
+	ICMPv6PacketTooBigMinimumSize = ICMPv6MinimumSize + 4
 )
 
 // ICMPv6Type is the ICMP type field described in RFC 4443 and friends.
@@ -52,6 +60,11 @@ const (
 	ICMPv6RedirectMsg     ICMPv6Type = 137
 )
 
+// Values for ICMP code as defined in RFC 4443.
+const (
+	ICMPv6PortUnreachable = 4
+)
+
 // Type is the ICMP type field.
 func (b ICMPv6) Type() ICMPv6Type { return ICMPv6Type(b[0]) }
 
@@ -60,6 +73,9 @@ func (b ICMPv6) SetType(t ICMPv6Type) { b[0] = byte(t) }
 
 // Code is the ICMP code field. Its meaning depends on the value of Type.
 func (b ICMPv6) Code() byte { return b[1] }
+
+// SetCode sets the ICMP code field.
+func (b ICMPv6) SetCode(c byte) { b[1] = c }
 
 // SetChecksum calculates and sets the ICMP checksum field.
 func (b ICMPv6) SetChecksum(checksum uint16) {

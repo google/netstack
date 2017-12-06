@@ -30,6 +30,11 @@ type testObject struct {
 	srcAddr  tcpip.Address
 	dstAddr  tcpip.Address
 	v4       bool
+	typ      stack.ControlType
+	extra    uint32
+
+	dataCalls    int
+	controlCalls int
 }
 
 // checkValues verifies that the transport protocol, data contents, src & dst
@@ -65,6 +70,21 @@ func (t *testObject) checkValues(protocol tcpip.TransportProtocolNumber, vv *buf
 // parsing are expected.
 func (t *testObject) DeliverTransportPacket(r *stack.Route, protocol tcpip.TransportProtocolNumber, vv *buffer.VectorisedView) {
 	t.checkValues(protocol, vv, r.RemoteAddress, r.LocalAddress)
+	t.dataCalls++
+}
+
+// DeliverTransportControlPacket is called by network endpoints after parsing
+// incoming control (ICMP) packets. This is used by the test object to verify
+// that the results of the parsing are expected.
+func (t *testObject) DeliverTransportControlPacket(local, remote tcpip.Address, net tcpip.NetworkProtocolNumber, trans tcpip.TransportProtocolNumber, typ stack.ControlType, extra uint32, vv *buffer.VectorisedView) {
+	t.checkValues(trans, vv, remote, local)
+	if typ != t.typ {
+		t.t.Errorf("typ = %v, want %v", typ, t.typ)
+	}
+	if extra != t.extra {
+		t.t.Errorf("extra = %v, want %v", extra, t.extra)
+	}
+	t.controlCalls++
 }
 
 // Attach is only implemented to satisfy the LinkEndpoint interface.
@@ -187,6 +207,100 @@ func TestIPv4Receive(t *testing.T) {
 	var views [1]buffer.View
 	vv := view.ToVectorisedView(views)
 	ep.HandlePacket(&r, &vv)
+	if o.dataCalls != 1 {
+		t.Fatalf("Bad number of data calls: got %x, want 1", o.dataCalls)
+	}
+}
+
+func TestIPv4ReceiveControl(t *testing.T) {
+	const mtu = 0xbeef - header.IPv4MinimumSize
+	cases := []struct {
+		name           string
+		expectedCount  int
+		fragmentOffset uint16
+		code           uint8
+		expectedTyp    stack.ControlType
+		expectedExtra  uint32
+		trunc          int
+	}{
+		{"FragmentationNeeded", 1, 0, header.ICMPv4FragmentationNeeded, stack.ControlPacketTooBig, mtu, 0},
+		{"Truncated (10 bytes missing)", 0, 0, header.ICMPv4FragmentationNeeded, stack.ControlPacketTooBig, mtu, 10},
+		{"Truncated (missing IPv4 header)", 0, 0, header.ICMPv4FragmentationNeeded, stack.ControlPacketTooBig, mtu, header.IPv4MinimumSize + 8},
+		{"Truncated (missing 'extra info')", 0, 0, header.ICMPv4FragmentationNeeded, stack.ControlPacketTooBig, mtu, 4 + header.IPv4MinimumSize + 8},
+		{"Truncated (missing ICMP header)", 0, 0, header.ICMPv4FragmentationNeeded, stack.ControlPacketTooBig, mtu, header.ICMPv4DstUnreachableMinimumSize + header.IPv4MinimumSize + 8},
+		{"Port unreachable", 1, 0, header.ICMPv4PortUnreachable, stack.ControlPortUnreachable, 0, 0},
+		{"Non-zero fragment offset", 0, 100, header.ICMPv4PortUnreachable, stack.ControlPortUnreachable, 0, 0},
+		{"Zero-length packet", 0, 0, header.ICMPv4PortUnreachable, stack.ControlPortUnreachable, 0, 2*header.IPv4MinimumSize + header.ICMPv4DstUnreachableMinimumSize + 8},
+	}
+	r := stack.Route{
+		LocalAddress:  "\x0a\x00\x00\x01",
+		RemoteAddress: "\x0a\x00\x00\xbb",
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var views [1]buffer.View
+			o := testObject{t: t}
+			proto := ipv4.NewProtocol()
+			ep, err := proto.NewEndpoint(1, "\x0a\x00\x00\x01", nil, &o, nil)
+			if err != nil {
+				t.Fatalf("NewEndpoint failed: %v", err)
+			}
+			defer ep.Close()
+
+			const dataOffset = header.IPv4MinimumSize*2 + header.ICMPv4MinimumSize + 4
+			view := buffer.NewView(dataOffset + 8)
+
+			// Create the outer IPv4 header.
+			ip := header.IPv4(view)
+			ip.Encode(&header.IPv4Fields{
+				IHL:         header.IPv4MinimumSize,
+				TotalLength: uint16(len(view) - c.trunc),
+				TTL:         20,
+				Protocol:    uint8(header.ICMPv4ProtocolNumber),
+				SrcAddr:     "\x0a\x00\x00\xbb",
+				DstAddr:     "\x0a\x00\x00\x01",
+			})
+
+			// Create the ICMP header.
+			icmp := header.ICMPv4(view[header.IPv4MinimumSize:])
+			icmp.SetType(header.ICMPv4DstUnreachable)
+			icmp.SetCode(c.code)
+			copy(view[header.IPv4MinimumSize+header.ICMPv4MinimumSize:], []byte{0xde, 0xad, 0xbe, 0xef})
+
+			// Create the inner IPv4 header.
+			ip = header.IPv4(view[header.IPv4MinimumSize+header.ICMPv4MinimumSize+4:])
+			ip.Encode(&header.IPv4Fields{
+				IHL:            header.IPv4MinimumSize,
+				TotalLength:    100,
+				TTL:            20,
+				Protocol:       10,
+				FragmentOffset: c.fragmentOffset,
+				SrcAddr:        "\x0a\x00\x00\x01",
+				DstAddr:        "\x0a\x00\x00\x02",
+			})
+
+			// Make payload be non-zero.
+			for i := dataOffset; i < len(view); i++ {
+				view[i] = uint8(i)
+			}
+
+			// Give packet to IPv4 endpoint, dispatcher will validate that
+			// it's ok.
+			o.protocol = 10
+			o.srcAddr = "\x0a\x00\x00\x02"
+			o.dstAddr = "\x0a\x00\x00\x01"
+			o.contents = view[dataOffset:]
+			o.typ = c.expectedTyp
+			o.extra = c.expectedExtra
+
+			vv := view.ToVectorisedView(views)
+			vv.CapLength(len(view) - c.trunc)
+			ep.HandlePacket(&r, &vv)
+			if want := c.expectedCount; o.controlCalls != want {
+				t.Fatalf("Bad number of control calls for %q case: got %v, want %v", c.name, o.controlCalls, want)
+			}
+		})
+	}
 }
 
 func TestIPv4FragmentationReceive(t *testing.T) {
@@ -247,11 +361,18 @@ func TestIPv4FragmentationReceive(t *testing.T) {
 	var views1 [1]buffer.View
 	vv1 := frag1.ToVectorisedView(views1)
 	ep.HandlePacket(&r, &vv1)
+	if o.dataCalls != 0 {
+		t.Fatalf("Bad number of data calls: got %x, want 0", o.dataCalls)
+	}
 
 	// Send second segment.
 	var views2 [1]buffer.View
 	vv2 := frag2.ToVectorisedView(views2)
 	ep.HandlePacket(&r, &vv2)
+
+	if o.dataCalls != 1 {
+		t.Fatalf("Bad number of data calls: got %x, want 1", o.dataCalls)
+	}
 }
 
 func TestIPv6Send(t *testing.T) {
@@ -323,4 +444,117 @@ func TestIPv6Receive(t *testing.T) {
 	var views [1]buffer.View
 	vv := view.ToVectorisedView(views)
 	ep.HandlePacket(&r, &vv)
+
+	if o.dataCalls != 1 {
+		t.Fatalf("Bad number of data calls: got %x, want 1", o.dataCalls)
+	}
+}
+
+func TestIPv6ReceiveControl(t *testing.T) {
+	newUint16 := func(v uint16) *uint16 { return &v }
+
+	const mtu = 0xffff
+	cases := []struct {
+		name           string
+		expectedCount  int
+		fragmentOffset *uint16
+		typ            header.ICMPv6Type
+		code           uint8
+		expectedTyp    stack.ControlType
+		expectedExtra  uint32
+		trunc          int
+	}{
+		{"PacketTooBig", 1, nil, header.ICMPv6PacketTooBig, 0, stack.ControlPacketTooBig, mtu, 0},
+		{"Truncated (10 bytes missing)", 0, nil, header.ICMPv6PacketTooBig, 0, stack.ControlPacketTooBig, mtu, 10},
+		{"Truncated (missing IPv6 header)", 0, nil, header.ICMPv6PacketTooBig, 0, stack.ControlPacketTooBig, mtu, header.IPv6MinimumSize + 8},
+		{"Truncated PacketTooBig (missing 'extra info')", 0, nil, header.ICMPv6PacketTooBig, 0, stack.ControlPacketTooBig, mtu, 4 + header.IPv6MinimumSize + 8},
+		{"Truncated (missing ICMP header)", 0, nil, header.ICMPv6PacketTooBig, 0, stack.ControlPacketTooBig, mtu, header.ICMPv6PacketTooBigMinimumSize + header.IPv6MinimumSize + 8},
+		{"Port unreachable", 1, nil, header.ICMPv6DstUnreachable, header.ICMPv6PortUnreachable, stack.ControlPortUnreachable, 0, 0},
+		{"Truncated DstUnreachable (missing 'extra info')", 0, nil, header.ICMPv6DstUnreachable, header.ICMPv6PortUnreachable, stack.ControlPortUnreachable, 0, 4 + header.IPv6MinimumSize + 8},
+		{"Fragmented, zero offset", 1, newUint16(0), header.ICMPv6DstUnreachable, header.ICMPv6PortUnreachable, stack.ControlPortUnreachable, 0, 0},
+		{"Non-zero fragment offset", 0, newUint16(100), header.ICMPv6DstUnreachable, header.ICMPv6PortUnreachable, stack.ControlPortUnreachable, 0, 0},
+		{"Zero-length packet", 0, nil, header.ICMPv6DstUnreachable, header.ICMPv6PortUnreachable, stack.ControlPortUnreachable, 0, 2*header.IPv6MinimumSize + header.ICMPv6DstUnreachableMinimumSize + 8},
+	}
+	r := stack.Route{
+		LocalAddress:  "\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01",
+		RemoteAddress: "\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xaa",
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var views [1]buffer.View
+			o := testObject{t: t}
+			proto := ipv6.NewProtocol()
+			ep, err := proto.NewEndpoint(1, "\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01", nil, &o, nil)
+			if err != nil {
+				t.Fatalf("NewEndpoint failed: %v", err)
+			}
+
+			defer ep.Close()
+
+			dataOffset := header.IPv6MinimumSize*2 + header.ICMPv6MinimumSize + 4
+			if c.fragmentOffset != nil {
+				dataOffset += header.IPv6FragmentHeaderSize
+			}
+			view := buffer.NewView(dataOffset + 8)
+
+			// Create the outer IPv6 header.
+			ip := header.IPv6(view)
+			ip.Encode(&header.IPv6Fields{
+				PayloadLength: uint16(len(view) - header.IPv6MinimumSize - c.trunc),
+				NextHeader:    uint8(header.ICMPv6ProtocolNumber),
+				HopLimit:      20,
+				SrcAddr:       "\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xaa",
+				DstAddr:       "\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01",
+			})
+
+			// Create the ICMP header.
+			icmp := header.ICMPv6(view[header.IPv6MinimumSize:])
+			icmp.SetType(c.typ)
+			icmp.SetCode(c.code)
+			copy(view[header.IPv6MinimumSize+header.ICMPv6MinimumSize:], []byte{0xde, 0xad, 0xbe, 0xef})
+
+			// Create the inner IPv6 header.
+			ip = header.IPv6(view[header.IPv6MinimumSize+header.ICMPv6MinimumSize+4:])
+			ip.Encode(&header.IPv6Fields{
+				PayloadLength: 100,
+				NextHeader:    10,
+				HopLimit:      20,
+				SrcAddr:       "\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01",
+				DstAddr:       "\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02",
+			})
+
+			// Build the fragmentation header if needed.
+			if c.fragmentOffset != nil {
+				ip.SetNextHeader(header.IPv6FragmentHeader)
+				frag := header.IPv6Fragment(view[2*header.IPv6MinimumSize+header.ICMPv6MinimumSize+4:])
+				frag.Encode(&header.IPv6FragmentFields{
+					NextHeader:     10,
+					FragmentOffset: *c.fragmentOffset,
+					M:              true,
+					Identification: 0x12345678,
+				})
+			}
+
+			// Make payload be non-zero.
+			for i := dataOffset; i < len(view); i++ {
+				view[i] = uint8(i)
+			}
+
+			// Give packet to IPv6 endpoint, dispatcher will validate that
+			// it's ok.
+			o.protocol = 10
+			o.srcAddr = "\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02"
+			o.dstAddr = "\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01"
+			o.contents = view[dataOffset:]
+			o.typ = c.expectedTyp
+			o.extra = c.expectedExtra
+
+			vv := view.ToVectorisedView(views)
+			vv.CapLength(len(view) - c.trunc)
+			ep.HandlePacket(&r, &vv)
+			if want := c.expectedCount; o.controlCalls != want {
+				t.Fatalf("Bad number of control calls for %q case: got %v, want %v", c.name, o.controlCalls, want)
+			}
+		})
+	}
 }

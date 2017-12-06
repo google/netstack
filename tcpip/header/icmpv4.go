@@ -20,6 +20,10 @@ const (
 	// ICMPv4EchoMinimumSize is the minimum size of a valid ICMP echo packet.
 	ICMPv4EchoMinimumSize = 6
 
+	// ICMPv4DstUnreachableMinimumSize is the minimum size of a valid ICMP
+	// destination unreachable packet.
+	ICMPv4DstUnreachableMinimumSize = ICMPv4MinimumSize + 4
+
 	// ICMPv4ProtocolNumber is the ICMP transport protocol number.
 	ICMPv4ProtocolNumber tcpip.TransportProtocolNumber = 1
 )
@@ -40,6 +44,12 @@ const (
 	ICMPv4TimestampReply ICMPv4Type = 14
 	ICMPv4InfoRequest    ICMPv4Type = 15
 	ICMPv4InfoReply      ICMPv4Type = 16
+)
+
+// Values for ICMP code as defined in RFC 792.
+const (
+	ICMPv4PortUnreachable     = 3
+	ICMPv4FragmentationNeeded = 4
 )
 
 // Type is the ICMP type field.

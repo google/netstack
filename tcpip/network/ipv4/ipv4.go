@@ -67,11 +67,7 @@ func newEndpoint(nicid tcpip.NICID, addr tcpip.Address, dispatcher stack.Transpo
 // MTU implements stack.NetworkEndpoint.MTU. It returns the link-layer MTU minus
 // the network layer max header length.
 func (e *endpoint) MTU() uint32 {
-	lmtu := e.linkEP.MTU()
-	if lmtu > maxTotalSize {
-		lmtu = maxTotalSize
-	}
-	return lmtu - uint32(e.MaxHeaderLength())
+	return calculateMTU(e.linkEP.MTU())
 }
 
 // Capabilities implements stack.NetworkEndpoint.Capabilities.
@@ -142,7 +138,7 @@ func (e *endpoint) HandlePacket(r *stack.Route, vv *buffer.VectorisedView) {
 		}
 		vv = &tt
 	}
-	p := tcpip.TransportProtocolNumber(h.Protocol())
+	p := h.TransportProtocol()
 	if p == header.ICMPv4ProtocolNumber {
 		e.handleICMP(r, vv)
 		return
@@ -194,6 +190,15 @@ func (p *protocol) SetOption(option interface{}) *tcpip.Error {
 // Option implements NetworkProtocol.Option.
 func (p *protocol) Option(option interface{}) *tcpip.Error {
 	return tcpip.ErrUnknownProtocolOption
+}
+
+// calculateMTU calculates the network-layer payload MTU based on the link-layer
+// payload mtu.
+func calculateMTU(mtu uint32) uint32 {
+	if mtu > maxTotalSize {
+		mtu = maxTotalSize
+	}
+	return mtu - header.IPv4MinimumSize
 }
 
 // hashRoute calculates a hash value for the given route. It uses the source &

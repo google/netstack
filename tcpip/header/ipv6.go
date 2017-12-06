@@ -139,6 +139,11 @@ func (b IPv6) SetDestinationAddress(addr tcpip.Address) {
 	copy(b[v6DstAddr:v6DstAddr+IPv6AddressSize], addr)
 }
 
+// SetNextHeader sets the value of the "next header" field of the ipv6 header.
+func (b IPv6) SetNextHeader(v uint8) {
+	b[nextHdr] = v
+}
+
 // SetChecksum implements Network.SetChecksum. Given that IPv6 doesn't have a
 // checksum, it is empty.
 func (IPv6) SetChecksum(uint16) {

@@ -25,6 +25,38 @@ const PingProtocolName = "icmpv4ping"
 // number is used as a port number for multiplexing.
 const pingProtocolNumber tcpip.TransportProtocolNumber = 256 + 11
 
+// handleControl handles the case when an ICMP packet contains the headers of
+// the original packet that caused the ICMP one to be sent. This information is
+// used to find out which transport endpoint must be notified about the ICMP
+// packet.
+func (e *endpoint) handleControl(typ stack.ControlType, extra uint32, vv *buffer.VectorisedView) {
+	h := header.IPv4(vv.First())
+
+	// We don't use IsValid() here because ICMP only requires that the IP
+	// header plus 8 bytes of the transport header be included. So it's
+	// likely that it is truncated, which would cause IsValid to return
+	// false.
+	//
+	// Drop packet if it doesn't have the basic IPv4 header or if the
+	// original source address doesn't match the endpoint's address.
+	if len(h) < header.IPv4MinimumSize || h.SourceAddress() != e.id.LocalAddress {
+		return
+	}
+
+	hlen := int(h.HeaderLength())
+	if vv.Size() < hlen || h.FragmentOffset() != 0 {
+		// We won't be able to handle this if it doesn't contain the
+		// full IPv4 header, or if it's a fragment not at offset 0
+		// (because it won't have the transport header).
+		return
+	}
+
+	// Skip the ip header, then deliver control message.
+	vv.TrimFront(hlen)
+	p := h.TransportProtocol()
+	e.dispatcher.DeliverTransportControlPacket(e.id.LocalAddress, h.DestinationAddress(), ProtocolNumber, p, typ, extra, vv)
+}
+
 func (e *endpoint) handleICMP(r *stack.Route, vv *buffer.VectorisedView) {
 	v := vv.First()
 	if len(v) < header.ICMPv4MinimumSize {
@@ -44,8 +76,23 @@ func (e *endpoint) handleICMP(r *stack.Route, vv *buffer.VectorisedView) {
 		default:
 			req.r.Release()
 		}
+
 	case header.ICMPv4EchoReply:
 		e.dispatcher.DeliverTransportPacket(r, pingProtocolNumber, vv)
+
+	case header.ICMPv4DstUnreachable:
+		if len(v) < header.ICMPv4DstUnreachableMinimumSize {
+			return
+		}
+		vv.TrimFront(header.ICMPv4DstUnreachableMinimumSize)
+		switch h.Code() {
+		case header.ICMPv4PortUnreachable:
+			e.handleControl(stack.ControlPortUnreachable, 0, vv)
+
+		case header.ICMPv4FragmentationNeeded:
+			mtu := uint32(binary.BigEndian.Uint16(v[header.ICMPv4DstUnreachableMinimumSize-2:]))
+			e.handleControl(stack.ControlPacketTooBig, calculateMTU(mtu), vv)
+		}
 	}
 	// TODO(crawshaw): Handle other ICMP types.
 }
@@ -228,4 +275,8 @@ func (e *pingEndpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID
 	case e.pktCh <- vv.ToView():
 	default:
 	}
+}
+
+// HandleControlPacket implements stack.TransportEndpoint.HandleControlPacket.
+func (e *pingEndpoint) HandleControlPacket(id stack.TransportEndpointID, typ stack.ControlType, extra uint32, vv *buffer.VectorisedView) {
 }

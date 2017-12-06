@@ -110,7 +110,7 @@ func (d *transportDemuxer) deliverPacket(r *Route, protocol tcpip.TransportProto
 
 	// Try to find the endpoint.
 	eps.mu.RLock()
-	m := d.findEndpointLocked(r, eps, vv, id)
+	m := d.findEndpointLocked(eps, vv, id)
 	eps.mu.RUnlock()
 
 	// Fail if we didn't find one or if its gate has been closed.
@@ -126,7 +126,33 @@ func (d *transportDemuxer) deliverPacket(r *Route, protocol tcpip.TransportProto
 	return true
 }
 
-func (d *transportDemuxer) findEndpointLocked(r *Route, eps *transportEndpoints, vv *buffer.VectorisedView, id TransportEndpointID) *mappedEndpoint {
+// deliverControlPacket attempts to deliver the given control packet. Returns
+// true if it found an endpoint, false otherwise.
+func (d *transportDemuxer) deliverControlPacket(net tcpip.NetworkProtocolNumber, trans tcpip.TransportProtocolNumber, typ ControlType, extra uint32, vv *buffer.VectorisedView, id TransportEndpointID) bool {
+	eps, ok := d.protocol[protocolIDs{net, trans}]
+	if !ok {
+		return false
+	}
+
+	// Try to find the endpoint.
+	eps.mu.RLock()
+	m := d.findEndpointLocked(eps, vv, id)
+	eps.mu.RUnlock()
+
+	// Fail if we didn't find one or if its gate has been closed.
+	if m == nil || !m.gate.Enter() {
+		return false
+	}
+
+	// Deliver the packet, then leave the gate so that removers will know
+	// that it's now safe to proceed.
+	m.ep.HandleControlPacket(id, typ, extra, vv)
+	m.gate.Leave()
+
+	return true
+}
+
+func (d *transportDemuxer) findEndpointLocked(eps *transportEndpoints, vv *buffer.VectorisedView, id TransportEndpointID) *mappedEndpoint {
 	// Try to find a match with the id as provided.
 	if ep := eps.endpoints[id]; ep != nil {
 		return ep

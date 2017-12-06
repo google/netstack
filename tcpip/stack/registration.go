@@ -36,12 +36,26 @@ type TransportEndpointID struct {
 	RemoteAddress tcpip.Address
 }
 
+// ControlType is the type of network control message.
+type ControlType int
+
+// The following are the allowed values for ControlType values.
+const (
+	ControlPacketTooBig ControlType = iota
+	ControlPortUnreachable
+	ControlUnknown
+)
+
 // TransportEndpoint is the interface that needs to be implemented by transport
 // protocol (e.g., tcp, udp) endpoints that can handle packets.
 type TransportEndpoint interface {
 	// HandlePacket is called by the stack when new packets arrive to
 	// this transport endpoint.
 	HandlePacket(r *Route, id TransportEndpointID, vv *buffer.VectorisedView)
+
+	// HandleControlPacket is called by the stack when new control (e.g.,
+	// ICMP) packets arrive to this transport endpoint.
+	HandleControlPacket(id TransportEndpointID, typ ControlType, extra uint32, vv *buffer.VectorisedView)
 }
 
 // TransportProtocol is the interface that needs to be implemented by transport
@@ -85,9 +99,13 @@ type TransportProtocol interface {
 // packets to the appropriate transport endpoint after it has been handled by
 // the network layer.
 type TransportDispatcher interface {
-	// DeliverTransportPacket delivers the packets to the appropriate
+	// DeliverTransportPacket delivers packets to the appropriate
 	// transport protocol endpoint.
 	DeliverTransportPacket(r *Route, protocol tcpip.TransportProtocolNumber, vv *buffer.VectorisedView)
+
+	// DeliverTransportControlPacket delivers control packets to the
+	// appropriate transport protocol endpoint.
+	DeliverTransportControlPacket(local, remote tcpip.Address, net tcpip.NetworkProtocolNumber, trans tcpip.TransportProtocolNumber, typ ControlType, extra uint32, vv *buffer.VectorisedView)
 }
 
 // NetworkEndpoint is the interface that needs to be implemented by endpoints

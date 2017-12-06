@@ -354,6 +354,37 @@ func (n *NIC) DeliverTransportPacket(r *Route, protocol tcpip.TransportProtocolN
 	}
 }
 
+// DeliverTransportControlPacket delivers control packets to the appropriate
+// transport protocol endpoint.
+func (n *NIC) DeliverTransportControlPacket(local, remote tcpip.Address, net tcpip.NetworkProtocolNumber, trans tcpip.TransportProtocolNumber, typ ControlType, extra uint32, vv *buffer.VectorisedView) {
+	state, ok := n.stack.transportProtocols[trans]
+	if !ok {
+		return
+	}
+
+	transProto := state.proto
+
+	// ICMPv4 only guarantees that 8 bytes of the transport protocol will
+	// be present in the payload. We know that the ports are within the
+	// first 8 bytes for all known transport protocols.
+	if len(vv.First()) < 8 {
+		return
+	}
+
+	srcPort, dstPort, err := transProto.ParsePorts(vv.First())
+	if err != nil {
+		return
+	}
+
+	id := TransportEndpointID{srcPort, local, dstPort, remote}
+	if n.demux.deliverControlPacket(net, trans, typ, extra, vv, id) {
+		return
+	}
+	if n.stack.demux.deliverControlPacket(net, trans, typ, extra, vv, id) {
+		return
+	}
+}
+
 // ID returns the identifier of n.
 func (n *NIC) ID() tcpip.NICID {
 	return n.id

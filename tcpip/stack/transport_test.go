@@ -140,6 +140,11 @@ func (f *fakeTransportEndpoint) HandlePacket(*stack.Route, stack.TransportEndpoi
 	f.proto.packetCount++
 }
 
+func (f *fakeTransportEndpoint) HandleControlPacket(stack.TransportEndpointID, stack.ControlType, uint32, *buffer.VectorisedView) {
+	// Increment the number of received control packets.
+	f.proto.controlCount++
+}
+
 type fakeTransportGoodOption bool
 
 type fakeTransportBadOption bool
@@ -153,8 +158,9 @@ type fakeTransportProtocolOptions struct {
 // fakeTransportProtocol is a transport-layer protocol descriptor. It
 // aggregates the number of packets received via endpoints of this protocol.
 type fakeTransportProtocol struct {
-	packetCount int
-	opts        fakeTransportProtocolOptions
+	packetCount  int
+	controlCount int
+	opts         fakeTransportProtocolOptions
 }
 
 func (*fakeTransportProtocol) Number() tcpip.TransportProtocolNumber {
@@ -256,6 +262,72 @@ func TestTransportReceive(t *testing.T) {
 	linkEP.Inject(fakeNetNumber, &vv)
 	if fakeTrans.packetCount != 1 {
 		t.Errorf("packetCount = %d, want %d", fakeTrans.packetCount, 1)
+	}
+}
+
+func TestTransportControlReceive(t *testing.T) {
+	id, linkEP := channel.New(10, defaultMTU, "")
+	s := stack.New([]string{"fakeNet"}, []string{"fakeTrans"})
+	if err := s.CreateNIC(1, id); err != nil {
+		t.Fatalf("CreateNIC failed: %v", err)
+	}
+
+	s.SetRouteTable([]tcpip.Route{{"\x00", "\x00", "\x00", 1}})
+
+	if err := s.AddAddress(1, fakeNetNumber, "\x01"); err != nil {
+		t.Fatalf("AddAddress failed: %v", err)
+	}
+
+	// Create endpoint and connect to remote address.
+	wq := waiter.Queue{}
+	ep, err := s.NewEndpoint(fakeTransNumber, fakeNetNumber, &wq)
+	if err != nil {
+		t.Fatalf("NewEndpoint failed: %v", err)
+	}
+
+	if err := ep.Connect(tcpip.FullAddress{0, "\x02", 0}); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+
+	fakeTrans := s.TransportProtocolInstance(fakeTransNumber).(*fakeTransportProtocol)
+
+	var views [1]buffer.View
+	// Create buffer that will hold the control packet.
+	buf := buffer.NewView(2*fakeNetHeaderLen + 30)
+
+	// Outer packet contains the control protocol number.
+	buf[0] = 1
+	buf[1] = 0xfe
+	buf[2] = uint8(fakeControlProtocol)
+
+	// Make sure packet with wrong protocol is not delivered.
+	buf[fakeNetHeaderLen+0] = 0
+	buf[fakeNetHeaderLen+1] = 1
+	buf[fakeNetHeaderLen+2] = 0
+	vv := buf.ToVectorisedView(views)
+	linkEP.Inject(fakeNetNumber, &vv)
+	if fakeTrans.controlCount != 0 {
+		t.Errorf("controlCount = %d, want %d", fakeTrans.controlCount, 0)
+	}
+
+	// Make sure packet from the wrong source is not delivered.
+	buf[fakeNetHeaderLen+0] = 3
+	buf[fakeNetHeaderLen+1] = 1
+	buf[fakeNetHeaderLen+2] = byte(fakeTransNumber)
+	vv = buf.ToVectorisedView(views)
+	linkEP.Inject(fakeNetNumber, &vv)
+	if fakeTrans.controlCount != 0 {
+		t.Errorf("controlCount = %d, want %d", fakeTrans.controlCount, 0)
+	}
+
+	// Make sure packet is delivered.
+	buf[fakeNetHeaderLen+0] = 2
+	buf[fakeNetHeaderLen+1] = 1
+	buf[fakeNetHeaderLen+2] = byte(fakeTransNumber)
+	vv = buf.ToVectorisedView(views)
+	linkEP.Inject(fakeNetNumber, &vv)
+	if fakeTrans.controlCount != 1 {
+		t.Errorf("controlCount = %d, want %d", fakeTrans.controlCount, 1)
 	}
 }
 
