@@ -374,6 +374,14 @@ func (e *endpoint) protocolListenLoop(rcvWnd seqnum.Size) *tcpip.Error {
 			if n&notifyClose != 0 {
 				return nil
 			}
+			if n&notifyDrain != 0 {
+				for s := e.segmentQueue.dequeue(); s != nil; s = e.segmentQueue.dequeue() {
+					e.handleListenSegment(ctx, s)
+					s.decRef()
+				}
+				e.drainDone <- struct{}{}
+				return nil
+			}
 
 		case wakerForNewSegment:
 			// Process at most maxSegmentsPerWake segments.

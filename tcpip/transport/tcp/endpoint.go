@@ -39,6 +39,7 @@ const (
 	notifyReceiveWindowChanged
 	notifyClose
 	notifyMTUChanged
+	notifyDrain
 )
 
 // endpoint represents a TCP endpoint. This struct serves as the interface
@@ -186,6 +187,9 @@ type endpoint struct {
 	// therefore don't need locks to protect them.
 	rcv *receiver
 	snd *sender
+
+	// The goroutine drain completion notification channel.
+	drainDone chan struct{}
 }
 
 func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waiterQueue *waiter.Queue) *endpoint {
@@ -961,7 +965,9 @@ func (e *endpoint) Listen(backlog int) *tcpip.Error {
 
 	e.isRegistered = true
 	e.state = stateListen
-	e.acceptedChan = make(chan *endpoint, backlog)
+	if e.acceptedChan == nil {
+		e.acceptedChan = make(chan *endpoint, backlog)
+	}
 	e.workerRunning = true
 
 	go e.protocolListenLoop(seqnum.Size(e.receiveBufferAvailable()))
