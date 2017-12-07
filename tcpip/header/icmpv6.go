@@ -42,7 +42,7 @@ const (
 // ICMPv6Type is the ICMP type field described in RFC 4443 and friends.
 type ICMPv6Type byte
 
-// Typical values of ICMPv6Type defined in RFC 792.
+// Typical values of ICMPv6Type defined in RFC 4443.
 const (
 	ICMPv6DstUnreachable ICMPv6Type = 1
 	ICMPv6PacketTooBig   ICMPv6Type = 2
