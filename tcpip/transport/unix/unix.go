@@ -350,7 +350,7 @@ func (q *queueReceiver) RecvQueuedSize() int64 {
 	return q.readQueue.QueuedSize()
 }
 
-// RecvMaxQueueSize implements ConnectedEndpoint.RecvMaxQueueSize.
+// RecvMaxQueueSize implements Receiver.RecvMaxQueueSize.
 func (q *queueReceiver) RecvMaxQueueSize() int64 {
 	return q.readQueue.MaxQueueSize()
 }
@@ -380,6 +380,25 @@ func vecCopy(data [][]byte, buf []byte) (uintptr, [][]byte, []byte) {
 		}
 	}
 	return copied, data, buf
+}
+
+// Readable implements Receiver.Readable.
+func (q *streamQueueReceiver) Readable() bool {
+	// We're readable if we have data in our buffer or if the queue receiver is
+	// readable.
+	return len(q.buffer) > 0 || q.readQueue.IsReadable()
+}
+
+// RecvQueuedSize implements Receiver.RecvQueuedSize.
+func (q *streamQueueReceiver) RecvQueuedSize() int64 {
+	return int64(len(q.buffer)) + q.readQueue.QueuedSize()
+}
+
+// RecvMaxQueueSize implements Receiver.RecvMaxQueueSize.
+func (q *streamQueueReceiver) RecvMaxQueueSize() int64 {
+	// The RecvMaxQueueSize() is the readQueue's MaxQueueSize() plus the largest
+	// message we can buffer which is also the largest message we can receive.
+	return 2 * q.readQueue.MaxQueueSize()
 }
 
 // Recv implements Receiver.Recv.
