@@ -200,7 +200,7 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 		rcvBufSize:  DefaultBufferSize,
 		sndBufSize:  DefaultBufferSize,
 		sndMTU:      int(math.MaxInt32),
-		noDelay:     true,
+		noDelay:     false,
 		reuseAddr:   true,
 	}
 
