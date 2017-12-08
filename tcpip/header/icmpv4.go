@@ -64,7 +64,35 @@ func (b ICMPv4) Code() byte { return b[1] }
 // SetCode sets the ICMP code field.
 func (b ICMPv4) SetCode(c byte) { b[1] = c }
 
+// Checksum is the ICMP checksum field.
+func (b ICMPv4) Checksum() uint16 {
+	return binary.BigEndian.Uint16(b[2:])
+}
+
 // SetChecksum sets the ICMP checksum field.
 func (b ICMPv4) SetChecksum(checksum uint16) {
 	binary.BigEndian.PutUint16(b[2:], checksum)
+}
+
+// SourcePort implements Transport.SourcePort.
+func (ICMPv4) SourcePort() uint16 {
+	return 0
+}
+
+// DestinationPort implements Transport.DestinationPort.
+func (ICMPv4) DestinationPort() uint16 {
+	return 0
+}
+
+// SetSourcePort implements Transport.SetSourcePort.
+func (ICMPv4) SetSourcePort(uint16) {
+}
+
+// SetDestinationPort implements Transport.SetDestinationPort.
+func (ICMPv4) SetDestinationPort(uint16) {
+}
+
+// Payload implements Transport.Payload.
+func (b ICMPv4) Payload() []byte {
+	return b[ICMPv4MinimumSize:]
 }
