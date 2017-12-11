@@ -12,6 +12,16 @@ import (
 // Open opens the specified TUN device, sets it to non-blocking mode, and
 // returns its file descriptor.
 func Open(name string) (int, error) {
+	return open(name, syscall.IFF_TUN|syscall.IFF_NO_PI)
+}
+
+// OpenTAP opens the specified TAP device, sets it to non-blocking mode, and
+// returns its file descriptor.
+func OpenTAP(name string) (int, error) {
+	return open(name, syscall.IFF_TAP|syscall.IFF_NO_PI)
+}
+
+func open(name string, flags uint16) (int, error) {
 	fd, err := syscall.Open("/dev/net/tun", syscall.O_RDWR, 0)
 	if err != nil {
 		return -1, err
@@ -24,7 +34,7 @@ func Open(name string) (int, error) {
 	}
 
 	copy(ifr.name[:], name)
-	ifr.flags = syscall.IFF_TUN | syscall.IFF_NO_PI
+	ifr.flags = flags
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), syscall.TUNSETIFF, uintptr(unsafe.Pointer(&ifr)))
 	if errno != 0 {
 		syscall.Close(fd)

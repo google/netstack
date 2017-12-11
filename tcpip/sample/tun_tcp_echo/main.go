@@ -8,6 +8,7 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"math/rand"
 	"net"
@@ -20,12 +21,16 @@ import (
 	"github.com/google/netstack/tcpip/link/fdbased"
 	"github.com/google/netstack/tcpip/link/rawfile"
 	"github.com/google/netstack/tcpip/link/tun"
+	"github.com/google/netstack/tcpip/network/arp"
 	"github.com/google/netstack/tcpip/network/ipv4"
 	"github.com/google/netstack/tcpip/network/ipv6"
 	"github.com/google/netstack/tcpip/stack"
 	"github.com/google/netstack/tcpip/transport/tcp"
 	"github.com/google/netstack/waiter"
 )
+
+var tap = flag.Bool("tap", false, "use tap istead of tun")
+var mac = flag.String("mac", "aa:00:01:01:01:01", "mac address to use in tap device")
 
 func echo(wq *waiter.Queue, ep tcpip.Endpoint) {
 	defer ep.Close()
@@ -52,15 +57,22 @@ func echo(wq *waiter.Queue, ep tcpip.Endpoint) {
 }
 
 func main() {
-	if len(os.Args) != 4 {
+	flag.Parse()
+	if len(flag.Args()) != 3 {
 		log.Fatal("Usage: ", os.Args[0], " <tun-device> <local-address> <local-port>")
 	}
 
-	tunName := os.Args[1]
-	addrName := os.Args[2]
-	portName := os.Args[3]
+	tunName := flag.Arg(0)
+	addrName := flag.Arg(1)
+	portName := flag.Arg(2)
 
 	rand.Seed(time.Now().UnixNano())
+
+	// Parse the mac address.
+	maddr, err := net.ParseMAC(*mac)
+	if err != nil {
+		log.Fatalf("Bad MAC address: %v", *mac)
+	}
 
 	// Parse the IP address. Support both ipv4 and ipv6.
 	parsedAddr := net.ParseIP(addrName)
@@ -87,24 +99,38 @@ func main() {
 
 	// Create the stack with ip and tcp protocols, then add a tun-based
 	// NIC and address.
-	s := stack.New([]string{ipv4.ProtocolName, ipv6.ProtocolName}, []string{tcp.ProtocolName})
+	s := stack.New([]string{ipv4.ProtocolName, ipv6.ProtocolName, arp.ProtocolName}, []string{tcp.ProtocolName})
 
 	mtu, err := rawfile.GetMTU(tunName)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fd, err := tun.Open(tunName)
+	var fd int
+	if *tap {
+		fd, err = tun.OpenTAP(tunName)
+	} else {
+		fd, err = tun.Open(tunName)
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	linkID := fdbased.New(fd, mtu, false, nil)
+	linkID := fdbased.New(&fdbased.Options{
+		FD:             fd,
+		MTU:            mtu,
+		EthernetHeader: *tap,
+		Address:        tcpip.LinkAddress(maddr),
+	})
 	if err := s.CreateNIC(1, linkID); err != nil {
 		log.Fatal(err)
 	}
 
 	if err := s.AddAddress(1, proto, addr); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := s.AddAddress(1, arp.ProtocolNumber, arp.ProtocolAddress); err != nil {
 		log.Fatal(err)
 	}
 

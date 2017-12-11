@@ -33,6 +33,13 @@ type endpoint struct {
 	// mtu (maximum transmission unit) is the maximum size of a packet.
 	mtu uint32
 
+	// hdrSize specifies the link-layer header size. If set to 0, no header
+	// is added/removed; otherwise an ethernet header is used.
+	hdrSize int
+
+	// addr is the address of the endpoint.
+	addr tcpip.LinkAddress
+
 	// caps holds the endpoint capabilities.
 	caps stack.LinkEndpointCapabilities
 
@@ -48,20 +55,37 @@ type endpoint struct {
 	readerCh chan struct{}
 }
 
+// Options specify the details about the fd-based endpoint to be created.
+type Options struct {
+	FD              int
+	MTU             uint32
+	EthernetHeader  bool
+	ChecksumOffload bool
+	ClosedFunc      func(*tcpip.Error)
+	Address         tcpip.LinkAddress
+}
+
 // New creates a new fd-based endpoint.
-func New(fd int, mtu uint32, checksumOffload bool, closed func(*tcpip.Error)) tcpip.LinkEndpointID {
-	syscall.SetNonblock(fd, true)
+func New(opts *Options) tcpip.LinkEndpointID {
+	syscall.SetNonblock(opts.FD, true)
 
 	caps := stack.LinkEndpointCapabilities(0)
-	if checksumOffload {
+	if opts.ChecksumOffload {
 		caps |= stack.CapabilityChecksumOffload
 	}
 
+	hdrSize := 0
+	if opts.EthernetHeader {
+		hdrSize = header.EthernetMinimumSize
+	}
+
 	e := &endpoint{
-		fd:       fd,
-		mtu:      mtu,
+		fd:       opts.FD,
+		mtu:      opts.MTU,
 		caps:     caps,
-		closed:   closed,
+		closed:   opts.ClosedFunc,
+		addr:     opts.Address,
+		hdrSize:  hdrSize,
 		readerCh: make(chan struct{}, 1),
 	}
 	return stack.RegisterLinkEndpoint(e)
@@ -92,21 +116,30 @@ func (e *endpoint) Capabilities() stack.LinkEndpointCapabilities {
 	return e.caps
 }
 
-// MaxHeaderLength returns the maximum size of the header. Given that it
-// doesn't have a header, it just returns 0.
-func (*endpoint) MaxHeaderLength() uint16 {
-	return 0
+// MaxHeaderLength returns the maximum size of the link-layer header.
+func (e *endpoint) MaxHeaderLength() uint16 {
+	return uint16(e.hdrSize)
 }
 
 // LinkAddress returns the link address of this endpoint.
-func (*endpoint) LinkAddress() tcpip.LinkAddress {
-	return ""
+func (e *endpoint) LinkAddress() tcpip.LinkAddress {
+	return e.addr
 }
 
 // WritePacket writes outbound packets to the file descriptor. If it is not
 // currently writable, the packet is dropped.
-func (e *endpoint) WritePacket(_ *stack.Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.NetworkProtocolNumber) *tcpip.Error {
-	if payload == nil {
+func (e *endpoint) WritePacket(r *stack.Route, hdr *buffer.Prependable, payload buffer.View, protocol tcpip.NetworkProtocolNumber) *tcpip.Error {
+	if e.hdrSize > 0 {
+		// Add ethernet header if needed.
+		eth := header.Ethernet(hdr.Prepend(header.EthernetMinimumSize))
+		eth.Encode(&header.EthernetFields{
+			DstAddr: r.RemoteLinkAddress,
+			SrcAddr: e.addr,
+			Type:    protocol,
+		})
+	}
+
+	if len(payload) == 0 {
 		return rawfile.NonBlockingWrite(e.fd, hdr.UsedBytes())
 
 	}
@@ -152,27 +185,35 @@ func (e *endpoint) dispatch(d stack.NetworkDispatcher, vv *buffer.VectorisedView
 		return false, err
 	}
 
-	if n <= 0 {
+	if n <= e.hdrSize {
 		return false, nil
 	}
 
-	// We don't get any indication of what the packet is, so try to guess
-	// if it's an IPv4 or IPv6 packet.
 	var p tcpip.NetworkProtocolNumber
-	switch header.IPVersion(views[0]) {
-	case header.IPv4Version:
-		p = header.IPv4ProtocolNumber
-	case header.IPv6Version:
-		p = header.IPv6ProtocolNumber
-	default:
-		return true, nil
+	var addr tcpip.LinkAddress
+	if e.hdrSize > 0 {
+		eth := header.Ethernet(views[0])
+		p = eth.Type()
+		addr = eth.SourceAddress()
+	} else {
+		// We don't get any indication of what the packet is, so try to guess
+		// if it's an IPv4 or IPv6 packet.
+		switch header.IPVersion(views[0]) {
+		case header.IPv4Version:
+			p = header.IPv4ProtocolNumber
+		case header.IPv6Version:
+			p = header.IPv6ProtocolNumber
+		default:
+			return true, nil
+		}
 	}
 
 	used := capViews(n, BufConfig, views)
 	vv.SetViews(views[:used])
 	vv.SetSize(n)
+	vv.TrimFront(e.hdrSize)
 
-	d.DeliverNetworkPacket(e, "", p, vv)
+	d.DeliverNetworkPacket(e, addr, p, vv)
 
 	// Prepare e.views for another packet: release used views.
 	for i := 0; i < used; i++ {
