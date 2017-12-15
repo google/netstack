@@ -66,6 +66,9 @@ type Options struct {
 }
 
 // New creates a new fd-based endpoint.
+//
+// Makes fd non-blocking, but does not take ownership of fd, which must remain
+// open for the lifetime of the returned endpoint.
 func New(opts *Options) tcpip.LinkEndpointID {
 	syscall.SetNonblock(opts.FD, true)
 
