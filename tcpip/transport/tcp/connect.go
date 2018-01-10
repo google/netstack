@@ -182,8 +182,11 @@ func (h *handshake) synSentState(s *segment) *tcpip.Error {
 	// Parse the SYN options.
 	rcvSynOpts := parseSynSegmentOptions(s)
 
-	// Remember if the Timetstamp option was negotiated.
+	// Remember if the Timestamp option was negotiated.
 	h.ep.maybeEnableTimestamp(&rcvSynOpts)
+
+	// Remember if the SACKPermitted option was negotiated.
+	h.ep.maybeEnableSACKPermitted(&rcvSynOpts)
 
 	// Remember the sequence we'll ack from now on.
 	h.ackNum = s.sequenceNumber + 1
@@ -412,29 +415,27 @@ func sendSynTCP(r *stack.Route, id stack.TransportEndpointID, flags byte, seq, a
 	// calculation. So we just do it here and ignore the MSS value passed in
 	// the opts.
 	mss := r.MTU() - header.TCPMinimumSize
-	options := []byte{
-		// Initialize the MSS option.
-		header.TCPOptionMSS, 4, byte(mss >> 8), byte(mss),
-	}
+
+	options := make([]byte, 40)
+	offset := header.EncodeMSSOption(mss, options)
 
 	if opts.TS {
-		tsOpt := header.EncodeTSOption(opts.TSVal, opts.TSEcr)
-		options = append(options, tsOpt[:]...)
+		offset += header.EncodeTSOption(opts.TSVal, opts.TSEcr, options[offset:])
 	}
 
 	// NOTE: a WS of zero is a valid value and it indicates a scale of 1.
 	if opts.WS >= 0 {
 		// Initialize the WS option.
-		options = append(options,
-			header.TCPOptionWS, 3, uint8(opts.WS), header.TCPOptionNOP)
+		offset += header.EncodeWSOption(opts.WS, options[offset:])
 	}
 
 	if opts.SACKPermitted {
-		sackPermitted := header.EncodeSACKPermittedOption()
-		options = append(options, sackPermitted[:]...)
+		offset += header.EncodeSACKPermittedOption(options[offset:])
 	}
 
-	return sendTCPWithOptions(r, id, nil, flags, seq, ack, rcvWnd, options)
+	offset += header.AddTCPOptionPadding(options, offset)
+
+	return sendTCPWithOptions(r, id, nil, flags, seq, ack, rcvWnd, options[:offset])
 }
 
 // sendTCPWithOptions sends a TCP segment with the provided options via the
@@ -515,6 +516,8 @@ func sendTCP(r *stack.Route, id stack.TransportEndpointID, data buffer.View, fla
 
 // sendRaw sends a TCP segment to the endpoint's peer.
 func (e *endpoint) sendRaw(data buffer.View, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size) *tcpip.Error {
+	options := make([]byte, 40)
+	offset := 0
 	if e.sendTSOk {
 		// Embed the timestamp if timestamp has been enabled.
 		//
@@ -528,8 +531,18 @@ func (e *endpoint) sendRaw(data buffer.View, flags byte, seq, ack seqnum.Value, 
 		// timestamp clock.
 		//
 		// Ref: https://tools.ietf.org/html/rfc7323#section-5.4.
-		options := header.EncodeTSOption(e.timestamp(), uint32(e.recentTS))
-		return sendTCPWithOptions(&e.route, e.id, data, flags, seq, ack, rcvWnd, options[:])
+		offset += header.EncodeTSOption(e.timestamp(), uint32(e.recentTS), options[offset:])
+	}
+	if e.sack.NumBlocks > 0 {
+		if e.sackPermitted && e.state == stateConnected && e.rcv.pendingBufSize > 0 && (flags&flagAck != 0) {
+			offset += header.EncodeSACKBlocks(e.sack.Blocks[:e.sack.NumBlocks], options[offset:])
+		}
+	}
+	if offset != 0 {
+		// Now add any padding bytes that might be required to quad
+		// align the options.
+		offset += header.AddTCPOptionPadding(options, offset)
+		return sendTCPWithOptions(&e.route, e.id, data, flags, seq, ack, rcvWnd, options[:offset])
 	}
 	return sendTCP(&e.route, e.id, data, flags, seq, ack, rcvWnd)
 }

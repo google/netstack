@@ -158,6 +158,11 @@ func (s *sender) updateMaxPayloadSize(mtu, count int) {
 		m -= header.TCPTimeStampOptionSize
 	}
 
+	// Adjust the maxPayloadSize to account for the SACK option.
+	if s.ep.sackPermitted {
+		m -= header.TCPMaxSACKOptionSize
+	}
+
 	// We don't adjust up for now.
 	if m >= s.maxPayloadSize {
 		return

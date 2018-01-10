@@ -959,8 +959,9 @@ func testBrokenUpWrite(t *testing.T, c *context.Context, maxPayload int) {
 			// If timestamp option is enabled, echo back the timestamp and increment
 			// the TSEcr value included in the packet and send that back as the TSVal.
 			parsedOpts := tcp.ParsedOptions()
-			tsOpt := header.EncodeTSOption(parsedOpts.TSEcr+1, parsedOpts.TSVal)
-			options = append(options, tsOpt[:]...)
+			tsOpt := [12]byte{header.TCPOptionNOP, header.TCPOptionNOP}
+			header.EncodeTSOption(parsedOpts.TSEcr+1, parsedOpts.TSVal, tsOpt[2:])
+			options = tsOpt[:]
 		}
 		// Acknowledge the data.
 		c.SendPacket(nil, &context.Headers{

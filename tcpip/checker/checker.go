@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/header"
+	"github.com/google/netstack/tcpip/seqnum"
 )
 
 // NetworkChecker is a function to check a property of a network packet.
@@ -234,6 +235,7 @@ func SeqNum(seq uint32) TransportChecker {
 // AckNum creates a checker that checks the ack number.
 func AckNum(seq uint32) TransportChecker {
 	return func(t *testing.T, h header.Transport) {
+		t.Helper()
 		tcp, ok := h.(header.TCP)
 		if !ok {
 			return
@@ -330,7 +332,7 @@ func TCPSynOptions(wantOpts header.TCPSynOptions) TransportChecker {
 				foundWS = true
 				i += 3
 			case header.TCPOptionTS:
-				if i+9 > limit {
+				if i+9 >= limit {
 					t.Fatalf("TS Option truncated , option is only: %d bytes, want 10", limit-i)
 				}
 				if opts[i+1] != 10 {
@@ -346,7 +348,7 @@ func TCPSynOptions(wantOpts header.TCPSynOptions) TransportChecker {
 				foundTS = true
 				i += 10
 			case header.TCPOptionSACKPermitted:
-				if i+1 > limit {
+				if i+1 >= limit {
 					t.Fatalf("SACKPermitted option truncated, option is only : %d bytes, want 2", limit-i)
 				}
 				if opts[i+1] != 2 {
@@ -406,7 +408,7 @@ func TCPTimestampChecker(wantTS bool, wantTSVal uint32, wantTSEcr uint32) Transp
 			case header.TCPOptionNOP:
 				i++
 			case header.TCPOptionTS:
-				if i+9 > limit {
+				if i+9 >= limit {
 					t.Fatalf("TS option found, but option is truncated, option length: %d, want 10 bytes", limit-i)
 				}
 				if opts[i+1] != 10 {
@@ -442,13 +444,22 @@ func TCPTimestampChecker(wantTS bool, wantTSVal uint32, wantTSEcr uint32) Transp
 }
 
 // TCPNoSACKBlockChecker creates a checker that verifies that the segment does not
-// contain a SACK block in the TCP options.
+// contain any SACK blocks in the TCP options.
 func TCPNoSACKBlockChecker() TransportChecker {
+	return TCPSACKBlockChecker(nil)
+}
+
+// TCPSACKBlockChecker creates a checker that verifies that the segment does
+// contain the specified SACK blocks in the TCP options.
+func TCPSACKBlockChecker(sackBlocks []header.SACKBlock) TransportChecker {
 	return func(t *testing.T, h header.Transport) {
+		t.Helper()
 		tcp, ok := h.(header.TCP)
 		if !ok {
 			return
 		}
+		var gotSACKBlocks []header.SACKBlock
+
 		opts := []byte(tcp.Options())
 		limit := len(opts)
 		for i := 0; i < limit; {
@@ -458,7 +469,25 @@ func TCPNoSACKBlockChecker() TransportChecker {
 			case header.TCPOptionNOP:
 				i++
 			case header.TCPOptionSACK:
-				t.Fatalf("Found a SACK block where none was expected, options: %d", opts)
+				if i+2 > limit {
+					// Malformed SACK block.
+					t.Fatalf("malformed SACK option in options: %v", opts)
+				}
+				sackOptionLen := int(opts[i+1])
+				if i+sackOptionLen > limit || (sackOptionLen-2)%8 != 0 {
+					// Malformed SACK block.
+					t.Fatalf("malformed SACK option length in options: %v", opts)
+				}
+				numBlocks := sackOptionLen / 8
+				for j := 0; j < numBlocks; j++ {
+					start := binary.BigEndian.Uint32(opts[i+2+j*8:])
+					end := binary.BigEndian.Uint32(opts[i+2+j*8+4:])
+					gotSACKBlocks = append(gotSACKBlocks, header.SACKBlock{
+						Start: seqnum.Value(start),
+						End:   seqnum.Value(end),
+					})
+				}
+				i += sackOptionLen
 			default:
 				// We don't recognize this option, just skip over it.
 				if i+2 > limit {
@@ -470,6 +499,10 @@ func TCPNoSACKBlockChecker() TransportChecker {
 				}
 				i += l
 			}
+		}
+
+		if !reflect.DeepEqual(gotSACKBlocks, sackBlocks) {
+			t.Fatalf("SACKBlocks are not equal, got: %v, want: %v", gotSACKBlocks, sackBlocks)
 		}
 	}
 }

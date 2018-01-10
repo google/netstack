@@ -42,6 +42,17 @@ const (
 	notifyDrain
 )
 
+// SACKInfo holds TCP SACK related information for a given endpoint.
+type SACKInfo struct {
+	// Blocks is the maximum number of SACK blocks we track
+	// per endpoint.
+	Blocks [MaxSACKBlocks]header.SACKBlock
+
+	// NumBlocks is the number of valid SACK blocks stored in the
+	// blocks array above.
+	NumBlocks int
+}
+
 // endpoint represents a TCP endpoint. This struct serves as the interface
 // between users of the endpoint and the protocol implementation; it is legal to
 // have concurrent goroutines make calls into the endpoint, they are properly
@@ -126,6 +137,9 @@ type endpoint struct {
 	// sackPermitted is set to true if the peer sends the TCPSACKPermitted
 	// option in the SYN/SYN-ACK.
 	sackPermitted bool
+
+	// sack holds TCP SACK related information for this endpoint.
+	sack SACKInfo
 
 	// The options below aren't implemented, but we remember the user
 	// settings because applications expect to be able to set/query these

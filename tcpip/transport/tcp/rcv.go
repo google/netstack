@@ -116,6 +116,11 @@ func (r *receiver) consumeSegment(s *segment, segSeq seqnum.Value, segLen seqnum
 
 	// Update the segment that we're expecting to consume.
 	r.rcvNxt = segSeq.Add(segLen)
+
+	// Trim SACK Blocks to remove any SACK information that covers
+	// sequence numbers that have been consumed.
+	TrimSACKBlockList(&r.ep.sack, r.rcvNxt)
+
 	if s.flagIsSet(flagFin) {
 		r.rcvNxt++
 
@@ -172,6 +177,8 @@ func (r *receiver) handleRcvdSegment(s *segment) {
 				s.incRef()
 				heap.Push(&r.pendingRcvdSegments, s)
 			}
+
+			UpdateSACKBlocks(&r.ep.sack, segSeq, segSeq.Add(segLen), r.rcvNxt)
 
 			// Immediately send an ack so that the peer knows it may
 			// have to retransmit.
