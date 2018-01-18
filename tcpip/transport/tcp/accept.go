@@ -319,7 +319,7 @@ func (e *endpoint) handleListenSegment(ctx *listenContext, s *segment) {
 				WS: -1,
 			}
 			// When syn cookies are in use we enable timestamp only
-			// if the ack specifies the timestmap option assuming
+			// if the ack specifies the timestamp option assuming
 			// that the other end did in fact negotiate the
 			// timestamp option in the original SYN.
 			if s.parsedOptions.TS {

@@ -463,10 +463,8 @@ func TestConcurrentReaderWriter(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		runtime.Gosched()
-		total := 0
 		for i := 0; i < count; i++ {
 			n := 1 + tr.Intn(80)
-			total += n
 			wb := tx.Push(uint64(n))
 			for wb == nil {
 				wb = tx.Push(uint64(n))

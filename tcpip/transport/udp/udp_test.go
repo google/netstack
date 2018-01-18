@@ -322,7 +322,7 @@ func TestV4ReadOnBoundToV4Mapped(t *testing.T) {
 
 	c.createV6Endpoint(false)
 
-	// Bind to local adress.
+	// Bind to local address.
 	if err := c.ep.Bind(tcpip.FullAddress{Addr: stackV4MappedAddr, Port: stackPort}, nil); err != nil {
 		c.t.Fatalf("Bind failed: %v", err)
 	}

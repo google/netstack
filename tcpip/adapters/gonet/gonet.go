@@ -195,7 +195,7 @@ type Conn struct {
 	//
 	// Lock ordering:
 	// If both readMu and deadlineTimer.mu are to be used in a single
-	// request, readMu must be aquired before deadlineTimer.mu.
+	// request, readMu must be acquired before deadlineTimer.mu.
 	readMu sync.Mutex
 
 	// read contains bytes that have been read from the endpoint,

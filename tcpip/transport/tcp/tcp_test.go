@@ -49,8 +49,7 @@ func TestGiveUpConnect(t *testing.T) {
 	wq.EventRegister(&waitEntry, waiter.EventOut)
 	defer wq.EventUnregister(&waitEntry)
 
-	err = ep.Connect(tcpip.FullAddress{Addr: context.TestAddr, Port: context.TestPort})
-	if err != tcpip.ErrConnectStarted {
+	if err := ep.Connect(tcpip.FullAddress{Addr: context.TestAddr, Port: context.TestPort}); err != tcpip.ErrConnectStarted {
 		t.Fatalf("Unexpected return value from Connect: %v", err)
 	}
 
@@ -59,7 +58,9 @@ func TestGiveUpConnect(t *testing.T) {
 
 	// Wait for ep to become writable.
 	<-notifyCh
-	err = ep.GetSockOpt(tcpip.ErrorOption{})
+	if err := ep.GetSockOpt(tcpip.ErrorOption{}); err != tcpip.ErrAborted {
+		t.Fatalf("got ep.GetSockOpt(tcpip.ErrorOption{}) = %v, want = %v", err, tcpip.ErrAborted)
+	}
 }
 
 func TestActiveHandshake(t *testing.T) {

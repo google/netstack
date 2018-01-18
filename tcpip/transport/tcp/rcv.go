@@ -83,7 +83,7 @@ func (r *receiver) nonZeroWindow() {
 	r.ep.snd.sendAck()
 }
 
-// consumeSegment attemps to consume a segment that was received by r. The
+// consumeSegment attempts to consume a segment that was received by r. The
 // segment may have just been received or may have been received earlier but
 // wasn't ready to be consumed then.
 //

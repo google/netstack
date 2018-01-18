@@ -112,7 +112,7 @@ func (t *timer) disable() {
 	}
 }
 
-// enabled returns true if the timer is currenlty enabled, false otherwise.
+// enabled returns true if the timer is currently enabled, false otherwise.
 func (t *timer) enabled() bool {
 	return t.state == timerStateEnabled
 }

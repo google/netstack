@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	// minRTO is the minimium allowed value for the retransmit timeout.
+	// minRTO is the minimum allowed value for the retransmit timeout.
 	minRTO = 200 * time.Millisecond
 
 	// InitialCwnd is the initial congestion window.
@@ -271,7 +271,7 @@ func (s *sender) retransmitTimerExpired() bool {
 	s.rto *= 2
 
 	if s.fr.active {
-		// We were attempting fast recovery but were not successfull.
+		// We were attempting fast recovery but were not successful.
 		// Leave the state. We don't need to update ssthresh because it
 		// has already been updated when entered fast-recovery.
 		s.leaveFastRecovery()
@@ -386,7 +386,7 @@ func (s *sender) enterFastRecovery() {
 func (s *sender) leaveFastRecovery() {
 	s.fr.active = false
 
-	// Deflate cwnd. It had been artifically inflated when new dups arrived.
+	// Deflate cwnd. It had been artificially inflated when new dups arrived.
 	s.sndCwnd = s.sndSsthresh
 }
 
@@ -402,7 +402,7 @@ func (s *sender) checkDuplicateAck(seg *segment) bool {
 			return false
 		}
 
-		// Leave fast recovery if it acknowleges all the data covered by
+		// Leave fast recovery if it acknowledges all the data covered by
 		// this fast recovery session.
 		if s.fr.last.LessThan(ack) {
 			s.leaveFastRecovery()

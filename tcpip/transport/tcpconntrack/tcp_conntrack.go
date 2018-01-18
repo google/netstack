@@ -56,7 +56,7 @@ type TCB struct {
 	state Result
 }
 
-// Init initalizes the state of the TCB according to the initial SYN.
+// Init initializes the state of the TCB according to the initial SYN.
 func (t *TCB) Init(initialSyn header.TCP) {
 	t.handlerInbound = synSentStateInbound
 	t.handlerOutbound = synSentStateOutbound
