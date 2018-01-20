@@ -40,6 +40,7 @@ const (
 	wakerForNotification = iota
 	wakerForNewSegment
 	wakerForResend
+	wakerForResolution
 )
 
 // handshake holds the state used during a TCP 3-way handshake.
@@ -332,8 +333,46 @@ func (h *handshake) processSegments() *tcpip.Error {
 	return nil
 }
 
+func (h *handshake) resolveRoute() *tcpip.Error {
+	// Set up the wakers.
+	s := sleep.Sleeper{}
+	resolutionWaker := &sleep.Waker{}
+	s.AddWaker(resolutionWaker, wakerForResolution)
+	s.AddWaker(&h.ep.notificationWaker, wakerForNotification)
+	defer s.Done()
+
+	// Initial action is to resolve route.
+	index := wakerForResolution
+	for {
+		switch index {
+		case wakerForResolution:
+			if err := h.ep.route.Resolve(resolutionWaker); err != tcpip.ErrWouldBlock {
+				// Either success (err == nil) or failure.
+				return err
+			}
+			// Resolution not completed. Keep trying...
+
+		case wakerForNotification:
+			n := h.ep.fetchNotifications()
+			if n&notifyClose != 0 {
+				h.ep.route.RemoveWaker(resolutionWaker)
+				return tcpip.ErrAborted
+			}
+		}
+
+		// Wait for notification.
+		index, _ = s.Fetch(true)
+	}
+}
+
 // execute executes the TCP 3-way handshake.
 func (h *handshake) execute() *tcpip.Error {
+	if h.ep.route.IsResolutionRequired() {
+		if err := h.resolveRoute(); err != nil {
+			return err
+		}
+	}
+
 	// Initialize the resend timer.
 	resendWaker := sleep.Waker{}
 	timeOut := time.Duration(time.Second)

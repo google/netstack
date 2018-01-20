@@ -19,10 +19,20 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/netstack/sleep"
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/ports"
 	"github.com/google/netstack/waiter"
+)
+
+const (
+	// ageLimit is set to the same cache stale time used in Linux.
+	ageLimit = 1 * time.Minute
+	// resolutionTimeout is set to the same ARP timeout used in Linux.
+	resolutionTimeout = 1 * time.Second
+	// resolutionAttempts is set to the same ARP retries used in Linux.
+	resolutionAttempts = 3
 )
 
 type transportProtocolState struct {
@@ -62,13 +72,12 @@ type Stack struct {
 // stack. Please refer to individual protocol implementations as to what options
 // are supported.
 func New(network []string, transport []string) *Stack {
-
 	s := &Stack{
 		transportProtocols: make(map[tcpip.TransportProtocolNumber]*transportProtocolState),
 		networkProtocols:   make(map[tcpip.NetworkProtocolNumber]NetworkProtocol),
 		linkAddrResolvers:  make(map[tcpip.NetworkProtocolNumber]LinkAddressResolver),
 		nics:               make(map[tcpip.NICID]*NIC),
-		linkAddrCache:      newLinkAddrCache(1 * time.Minute),
+		linkAddrCache:      newLinkAddrCache(ageLimit, resolutionTimeout, resolutionAttempts),
 		PortManager:        ports.NewPortManager(),
 	}
 
@@ -381,7 +390,6 @@ func (s *Stack) FindRoute(id tcpip.NICID, localAddr, remoteAddr tcpip.Address, n
 		}
 
 		r := makeRoute(netProto, ref.ep.ID().LocalAddress, remoteAddr, ref)
-		r.RemoteLinkAddress = s.linkAddrCache.get(tcpip.FullAddress{NIC: nic.ID(), Addr: remoteAddr})
 		r.NextHop = s.routeTable[i].Gateway
 		return r, nil
 	}
@@ -470,6 +478,32 @@ func (s *Stack) AddLinkAddress(nicid tcpip.NICID, addr tcpip.Address, linkAddr t
 	// TODO(crawshaw): provide a way for a
 	// transport endpoint to receive a signal that AddLinkAddress
 	// for a particular address has been called.
+}
+
+// GetLinkAddress implements LinkAddressCache.GetLinkAddress.
+func (s *Stack) GetLinkAddress(nicid tcpip.NICID, addr, localAddr tcpip.Address, protocol tcpip.NetworkProtocolNumber, waker *sleep.Waker) (tcpip.LinkAddress, *tcpip.Error) {
+	s.mu.RLock()
+	nic := s.nics[nicid]
+	if nic == nil {
+		s.mu.RUnlock()
+		return "", tcpip.ErrUnknownNICID
+	}
+	s.mu.RUnlock()
+
+	fullAddr := tcpip.FullAddress{NIC: nicid, Addr: addr}
+	linkRes := s.linkAddrResolvers[protocol]
+	return s.linkAddrCache.get(fullAddr, linkRes, localAddr, nic.linkEP, waker)
+}
+
+// RemoveWaker implements LinkAddressCache.RemoveWaker.
+func (s *Stack) RemoveWaker(nicid tcpip.NICID, addr tcpip.Address, waker *sleep.Waker) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if nic := s.nics[nicid]; nic == nil {
+		fullAddr := tcpip.FullAddress{NIC: nicid, Addr: addr}
+		s.linkAddrCache.removeWaker(fullAddr, waker)
+	}
 }
 
 // RegisterTransportEndpoint registers the given endpoint with the stack

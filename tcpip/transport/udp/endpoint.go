@@ -7,6 +7,7 @@ package udp
 import (
 	"sync"
 
+	"github.com/google/netstack/sleep"
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
@@ -223,9 +224,27 @@ func (e *endpoint) Write(v buffer.View, opts tcpip.WriteOptions) (uintptr, *tcpi
 		}
 	}
 
-	route := &e.route
-	dstPort := e.dstPort
-	if to != nil {
+	var route *stack.Route
+	var dstPort uint16
+	if to == nil {
+		route = &e.route
+		dstPort = e.dstPort
+
+		if route.IsResolutionRequired() {
+			// Promote lock to exclusive if using a shared route, given that it may need to
+			// change in Route.Resolve() call below.
+			e.mu.RUnlock()
+			defer e.mu.RLock()
+
+			e.mu.Lock()
+			defer e.mu.Unlock()
+
+			// Recheck state after lock was re-acquired.
+			if e.state != stateConnected {
+				return 0, tcpip.ErrInvalidEndpointState
+			}
+		}
+	} else {
 		// Reject destination address if it goes through a different
 		// NIC than the endpoint was bound to.
 		nicid := to.NIC
@@ -253,6 +272,22 @@ func (e *endpoint) Write(v buffer.View, opts tcpip.WriteOptions) (uintptr, *tcpi
 
 		route = &r
 		dstPort = to.Port
+	}
+
+	if route.IsResolutionRequired() {
+		waker := &sleep.Waker{}
+		if err := route.Resolve(waker); err != nil {
+			if err == tcpip.ErrWouldBlock {
+				// Link address needs to be resolved. Resolution was triggered the background.
+				// Better luck next time.
+				//
+				// TODO: queue up the request and send after link address
+				// is resolved.
+				route.RemoveWaker(waker)
+				return 0, tcpip.ErrNoLinkAddress
+			}
+			return 0, err
+		}
 	}
 
 	sendUDP(route, v, e.id.LocalPort, dstPort)

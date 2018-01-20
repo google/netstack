@@ -80,6 +80,7 @@ func New(opts *Options) tcpip.LinkEndpointID {
 	hdrSize := 0
 	if opts.EthernetHeader {
 		hdrSize = header.EthernetMinimumSize
+		caps |= stack.CapabilityResolutionRequired
 	}
 
 	e := &endpoint{

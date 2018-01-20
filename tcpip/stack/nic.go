@@ -137,7 +137,20 @@ func (n *NIC) addAddressLocked(protocol tcpip.NetworkProtocolNumber, addr tcpip.
 		n.removeEndpointLocked(ref)
 	}
 
-	ref := newReferencedNetworkEndpoint(ep, protocol, n)
+	ref := &referencedNetworkEndpoint{
+		refs:           1,
+		ep:             ep,
+		nic:            n,
+		protocol:       protocol,
+		holdsInsertRef: true,
+	}
+
+	// Set up cache if link address resolution exists for this protocol.
+	if n.linkEP.Capabilities()&CapabilityResolutionRequired != 0 {
+		if linkRes := n.stack.linkAddrResolvers[protocol]; linkRes != nil {
+			ref.linkCache = n.stack
+		}
+	}
 
 	n.endpoints[id] = ref
 
@@ -397,21 +410,15 @@ type referencedNetworkEndpoint struct {
 	nic      *NIC
 	protocol tcpip.NetworkProtocolNumber
 
+	// linkCache is set if link address resolution is enabled for this
+	// protocol. Set to nil otherwise.
+	linkCache LinkAddressCache
+
 	// holdsInsertRef is protected by the NIC's mutex. It indicates whether
 	// the reference count is biased by 1 due to the insertion of the
 	// endpoint. It is reset to false when RemoveAddress is called on the
 	// NIC.
 	holdsInsertRef bool
-}
-
-func newReferencedNetworkEndpoint(ep NetworkEndpoint, protocol tcpip.NetworkProtocolNumber, nic *NIC) *referencedNetworkEndpoint {
-	return &referencedNetworkEndpoint{
-		refs:           1,
-		ep:             ep,
-		nic:            nic,
-		protocol:       protocol,
-		holdsInsertRef: true,
-	}
 }
 
 // decRef decrements the ref count and cleans up the endpoint once it reaches

@@ -7,6 +7,7 @@ package stack
 import (
 	"sync"
 
+	"github.com/google/netstack/sleep"
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/waiter"
@@ -189,6 +190,7 @@ type LinkEndpointCapabilities uint
 // The following are the supported link endpoint capabilities.
 const (
 	CapabilityChecksumOffload LinkEndpointCapabilities = 1 << iota
+	CapabilityResolutionRequired
 )
 
 // LinkEndpoint is the interface implemented by data link layer protocols (e.g.,
@@ -234,6 +236,13 @@ type LinkAddressResolver interface {
 	// endpoint to call AddLinkAddress.
 	LinkAddressRequest(addr, localAddr tcpip.Address, linkEP LinkEndpoint) *tcpip.Error
 
+	// ResolveStaticAddress attempts to resolve address without sending
+	// requests. It either resolves the name immediately or returns the
+	// empty LinkAddress.
+	//
+	// It can be used to resolve broadcast addresses for example.
+	ResolveStaticAddress(addr tcpip.Address) (tcpip.LinkAddress, bool)
+
 	// LinkAddressProtocol returns the network protocol of the
 	// addresses this this resolver can resolve.
 	LinkAddressProtocol() tcpip.NetworkProtocolNumber
@@ -242,12 +251,21 @@ type LinkAddressResolver interface {
 // A LinkAddressCache caches link addresses.
 type LinkAddressCache interface {
 	// CheckLocalAddress determines if the given local address exists, and if it
-	// does, returns the id of the NIC it's bound to. Returns 0 if the address
 	// does not exist.
 	CheckLocalAddress(nicid tcpip.NICID, protocol tcpip.NetworkProtocolNumber, addr tcpip.Address) tcpip.NICID
 
 	// AddLinkAddress adds a link address to the cache.
 	AddLinkAddress(nicid tcpip.NICID, addr tcpip.Address, linkAddr tcpip.LinkAddress)
+
+	// GetLinkAddress looks up the cache to translate address to link address (e.g. IP -> MAC).
+	// If the LinkEndpoint requests address resolution and there is a LinkAddressResolver
+	// registered with the network protocol, the cache attempts to resolve the address
+	// and returns ErrWouldBlock. Waker is notified when address resolution is
+	// complete (success or not).
+	GetLinkAddress(nicid tcpip.NICID, addr, localAddr tcpip.Address, protocol tcpip.NetworkProtocolNumber, w *sleep.Waker) (tcpip.LinkAddress, *tcpip.Error)
+
+	// RemoveWaker removes a waker that has been added in GetLinkAddress().
+	RemoveWaker(nicid tcpip.NICID, addr tcpip.Address, waker *sleep.Waker)
 }
 
 // TransportProtocolFactory functions are used by the stack to instantiate

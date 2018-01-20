@@ -68,6 +68,7 @@ var (
 	ErrConnectionAborted     = &Error{"connection aborted"}
 	ErrNoSuchFile            = &Error{"no such file"}
 	ErrInvalidOptionValue    = &Error{"invalid option value specified"}
+	ErrNoLinkAddress         = &Error{"no remote link address"}
 )
 
 // Errors related to Subnet

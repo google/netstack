@@ -121,10 +121,12 @@ func (p *protocol) NewEndpoint(nicid tcpip.NICID, addr tcpip.Address, linkAddrCa
 	}, nil
 }
 
+// LinkAddressProtocol implements stack.LinkAddressResolver.
 func (*protocol) LinkAddressProtocol() tcpip.NetworkProtocolNumber {
 	return header.IPv4ProtocolNumber
 }
 
+// LinkAddressRequest implements stack.LinkAddressResolver.
 func (*protocol) LinkAddressRequest(addr, localAddr tcpip.Address, linkEP stack.LinkEndpoint) *tcpip.Error {
 	r := &stack.Route{
 		RemoteLinkAddress: broadcastMAC,
@@ -141,12 +143,20 @@ func (*protocol) LinkAddressRequest(addr, localAddr tcpip.Address, linkEP stack.
 	return linkEP.WritePacket(r, &hdr, nil, ProtocolNumber)
 }
 
-// SetOption implements NetworkProtocol.SetOption.
+// ResolveStaticAddress implements stack.LinkAddressResolver.
+func (*protocol) ResolveStaticAddress(addr tcpip.Address) (tcpip.LinkAddress, bool) {
+	if addr == "\xff\xff\xff\xff" {
+		return broadcastMAC, true
+	}
+	return "", false
+}
+
+// SetOption implements NetworkProtocol.
 func (p *protocol) SetOption(option interface{}) *tcpip.Error {
 	return tcpip.ErrUnknownProtocolOption
 }
 
-// Option implements NetworkProtocol.Option.
+// Option implements NetworkProtocol.
 func (p *protocol) Option(option interface{}) *tcpip.Error {
 	return tcpip.ErrUnknownProtocolOption
 }

@@ -5,6 +5,7 @@
 package stack
 
 import (
+	"github.com/google/netstack/sleep"
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
@@ -67,6 +68,43 @@ func (r *Route) PseudoHeaderChecksum(protocol tcpip.TransportProtocolNumber) uin
 // Capabilities returns the link-layer capabilities of the route.
 func (r *Route) Capabilities() LinkEndpointCapabilities {
 	return r.ref.ep.Capabilities()
+}
+
+// Resolve attempts to resolve the link address if necessary. Returns ErrWouldBlock in
+// case address resolution requires blocking, e.g. wait for ARP reply. Waker is
+// notified when address resolution is complete (success or not).
+func (r *Route) Resolve(waker *sleep.Waker) *tcpip.Error {
+	if !r.IsResolutionRequired() {
+		// Nothing to do if there is no cache (which does the resolution on cache miss) or
+		// link address is already known.
+		return nil
+	}
+
+	nextAddr := r.NextHop
+	if nextAddr == "" {
+		nextAddr = r.RemoteAddress
+	}
+	linkAddr, err := r.ref.linkCache.GetLinkAddress(r.ref.nic.ID(), nextAddr, r.LocalAddress, r.NetProto, waker)
+	if err != nil {
+		return err
+	}
+	r.RemoteLinkAddress = linkAddr
+	return nil
+}
+
+// RemoveWaker removes a waker that has been added in Resolve().
+func (r *Route) RemoveWaker(waker *sleep.Waker) {
+	nextAddr := r.NextHop
+	if nextAddr == "" {
+		nextAddr = r.RemoteAddress
+	}
+	r.ref.linkCache.RemoveWaker(r.ref.nic.ID(), nextAddr, waker)
+}
+
+// IsResolutionRequired returns true if Resolve() must be called to resolve
+// the link address before the this route can be written to.
+func (r *Route) IsResolutionRequired() bool {
+	return r.ref.linkCache != nil && r.RemoteLinkAddress == ""
 }
 
 // WritePacket writes the packet through the given route.
