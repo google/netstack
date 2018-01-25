@@ -312,6 +312,11 @@ type ReuseAddressOption int
 // Only supported on Unix sockets.
 type PasscredOption int
 
+// TCPInfoOption is used by GetSockOpt to expose TCP statistics.
+//
+// TODO: Add and populate stat fields.
+type TCPInfoOption struct{}
+
 // Route is a row in the routing table. It specifies through which NIC (and
 // gateway) sets of packets should be routed. A row is considered viable if the
 // masked target address matches the destination adddress in the row.

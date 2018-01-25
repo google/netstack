@@ -746,6 +746,10 @@ func (e *endpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 			*o = 1
 		}
 		return nil
+
+	case *tcpip.TCPInfoOption:
+		*o = tcpip.TCPInfoOption{}
+		return nil
 	}
 
 	return tcpip.ErrUnknownProtocolOption
