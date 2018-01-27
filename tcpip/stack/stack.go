@@ -528,15 +528,6 @@ func (s *Stack) RegisterTransportEndpoint(nicID tcpip.NICID, netProtos []tcpip.N
 
 // UnregisterTransportEndpoint removes the endpoint with the given id from the
 // stack transport dispatcher.
-//
-// Once this function returns, it is guaranteed that no packets are being or
-// will be delivered to the endpoint (via this registration). To offer this
-// guarantee, this function will wait for any inflight deliveries to complete
-// (i.e., for HandlePacket to return) before returning.
-//
-// Protocol implementations must be careful not to call this function while
-// holding locks that may prevent progress in HandlePacket, as this would
-// potentially cause deadlocks.
 func (s *Stack) UnregisterTransportEndpoint(nicID tcpip.NICID, netProtos []tcpip.NetworkProtocolNumber, protocol tcpip.TransportProtocolNumber, id TransportEndpointID) {
 	if nicID == 0 {
 		s.demux.unregisterEndpoint(netProtos, protocol, id)

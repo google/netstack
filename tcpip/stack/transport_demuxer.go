@@ -7,7 +7,6 @@ package stack
 import (
 	"sync"
 
-	"github.com/google/netstack/gate"
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 )
@@ -17,16 +16,11 @@ type protocolIDs struct {
 	transport tcpip.TransportProtocolNumber
 }
 
-type mappedEndpoint struct {
-	ep   TransportEndpoint
-	gate gate.Gate
-}
-
 // transportEndpoints manages all endpoints of a given protocol. It has its own
 // mutex so as to reduce interference between protocols.
 type transportEndpoints struct {
 	mu        sync.RWMutex
-	endpoints map[TransportEndpointID]*mappedEndpoint
+	endpoints map[TransportEndpointID]TransportEndpoint
 }
 
 // transportDemuxer demultiplexes packets targeted at a transport endpoint
@@ -43,7 +37,7 @@ func newTransportDemuxer(stack *Stack) *transportDemuxer {
 	// Add each network and and transport pair to the demuxer.
 	for netProto := range stack.networkProtocols {
 		for proto := range stack.transportProtocols {
-			d.protocol[protocolIDs{netProto, proto}] = &transportEndpoints{endpoints: make(map[TransportEndpointID]*mappedEndpoint)}
+			d.protocol[protocolIDs{netProto, proto}] = &transportEndpoints{endpoints: make(map[TransportEndpointID]TransportEndpoint)}
 		}
 	}
 
@@ -76,7 +70,7 @@ func (d *transportDemuxer) singleRegisterEndpoint(netProto tcpip.NetworkProtocol
 		return tcpip.ErrPortInUse
 	}
 
-	eps.endpoints[id] = &mappedEndpoint{ep: ep}
+	eps.endpoints[id] = ep
 
 	return nil
 }
@@ -87,15 +81,8 @@ func (d *transportDemuxer) unregisterEndpoint(netProtos []tcpip.NetworkProtocolN
 	for _, n := range netProtos {
 		if eps, ok := d.protocol[protocolIDs{n, protocol}]; ok {
 			eps.mu.Lock()
-			m := eps.endpoints[id]
 			delete(eps.endpoints, id)
 			eps.mu.Unlock()
-
-			// Close the gate, which will cause us to wait until
-			// all inflight packets complete.
-			if m != nil {
-				m.gate.Close()
-			}
 		}
 	}
 }
@@ -108,20 +95,17 @@ func (d *transportDemuxer) deliverPacket(r *Route, protocol tcpip.TransportProto
 		return false
 	}
 
-	// Try to find the endpoint.
 	eps.mu.RLock()
-	m := d.findEndpointLocked(eps, vv, id)
+	ep := d.findEndpointLocked(eps, vv, id)
 	eps.mu.RUnlock()
 
-	// Fail if we didn't find one or if its gate has been closed.
-	if m == nil || !m.gate.Enter() {
+	// Fail if we didn't find one.
+	if ep == nil {
 		return false
 	}
 
-	// Deliver the packet, then leave the gate so that removers will know
-	// that it's now safe to proceed.
-	m.ep.HandlePacket(r, id, vv)
-	m.gate.Leave()
+	// Deliver the packet.
+	ep.HandlePacket(r, id, vv)
 
 	return true
 }
@@ -136,23 +120,21 @@ func (d *transportDemuxer) deliverControlPacket(net tcpip.NetworkProtocolNumber,
 
 	// Try to find the endpoint.
 	eps.mu.RLock()
-	m := d.findEndpointLocked(eps, vv, id)
+	ep := d.findEndpointLocked(eps, vv, id)
 	eps.mu.RUnlock()
 
-	// Fail if we didn't find one or if its gate has been closed.
-	if m == nil || !m.gate.Enter() {
+	// Fail if we didn't find one.
+	if ep == nil {
 		return false
 	}
 
-	// Deliver the packet, then leave the gate so that removers will know
-	// that it's now safe to proceed.
-	m.ep.HandleControlPacket(id, typ, extra, vv)
-	m.gate.Leave()
+	// Deliver the packet.
+	ep.HandleControlPacket(id, typ, extra, vv)
 
 	return true
 }
 
-func (d *transportDemuxer) findEndpointLocked(eps *transportEndpoints, vv *buffer.VectorisedView, id TransportEndpointID) *mappedEndpoint {
+func (d *transportDemuxer) findEndpointLocked(eps *transportEndpoints, vv *buffer.VectorisedView, id TransportEndpointID) TransportEndpoint {
 	// Try to find a match with the id as provided.
 	if ep := eps.endpoints[id]; ep != nil {
 		return ep
