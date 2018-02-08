@@ -445,24 +445,19 @@ func (e *endpoint) Write(v buffer.View, opts tcpip.WriteOptions) (uintptr, *tcpi
 		return 0, tcpip.ErrClosedForSend
 	}
 
-	// Check if we're already over the limit.
+	// Check against the limit.
 	avail := e.sndBufSize - e.sndBufUsed
 	if avail <= 0 {
 		e.sndBufMu.Unlock()
 		return 0, tcpip.ErrWouldBlock
 	}
-
-	// If writing would put us over the size limit, create a smaller view
-	// with the maximum available size and copy into it. We also return
-	// ErrWouldBlock in this case.
-	sizedView := v
 	var err *tcpip.Error
-	if len(sizedView) > avail {
-		sizedView = buffer.NewViewFromBytes(v[:avail])
+	if len(v) > avail {
+		v = v[:avail]
 		err = tcpip.ErrWouldBlock
 	}
-	l := len(sizedView)
-	s := newSegmentFromView(&e.route, e.id, sizedView)
+	l := len(v)
+	s := newSegmentFromView(&e.route, e.id, v)
 
 	// Add data to the send queue.
 	e.sndBufUsed += l

@@ -196,6 +196,11 @@ type Endpoint interface {
 	// Write writes data to the endpoint's peer. This method does not block if
 	// the data cannot be written.
 	//
+	// Unlike io.Writer.Write, Endpoint.Write transfers ownership of any bytes
+	// successfully written to the Endpoint. That is, if a call to Write(data)
+	// returns (n, err), it may retain data[:n], and the caller should not use
+	// data[:n] after Write returns.
+	//
 	// Note that unlike io.Writer.Write, it is not an error for Write to
 	// perform a partial write.
 	Write(buffer.View, WriteOptions) (uintptr, *Error)
