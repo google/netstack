@@ -14,8 +14,8 @@ import (
 	"github.com/google/netstack/tcpip/buffer"
 )
 
-// DefaultReassembleTimeout is based on the reassembling timeout suggest in RFC 791 (4.25 minutes).
-const DefaultReassembleTimeout = 5 * time.Minute
+// DefaultReassembleTimeout is based on the linux stack: net.ipv4.ipfrag_time.
+const DefaultReassembleTimeout = 30 * time.Second
 
 // MemoryLimit is a suggested value for the limit on the memory used to reassemble packets.
 const MemoryLimit = 8 * 1024 * 1024 // 8MB
