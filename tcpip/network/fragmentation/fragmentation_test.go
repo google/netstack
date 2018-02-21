@@ -85,6 +85,16 @@ func TestFragmentationProcess(t *testing.T) {
 			if done != c.out[i].done {
 				t.Errorf("Test \"%s\" Process() returned a wrong done. Got %t. Want %t", c.comment, done, c.out[i].done)
 			}
+			if c.out[i].done {
+				if _, ok := f.reassemblers[in.id]; ok {
+					t.Errorf("Test \"%s\" Process() didn't remove buffer from reassemblers.", c.comment)
+				}
+				for n := f.rList.Front(); n != nil; n = n.Next() {
+					if n.id == in.id {
+						t.Errorf("Test \"%s\" Process() didn't remove buffer from rList.", c.comment)
+					}
+				}
+			}
 		}
 	}
 }

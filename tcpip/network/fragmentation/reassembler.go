@@ -93,7 +93,6 @@ func (r *reassembler) process(first, last uint16, more bool, vv *buffer.Vectoris
 	if err != nil {
 		panic(fmt.Sprintf("reassemble failed with: %v. There is probably a bug in the code handling the holes.", err))
 	}
-	r.done = true
 	return res, true, consumed
 }
 
