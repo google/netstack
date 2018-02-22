@@ -27,10 +27,6 @@ func setStackSACKPermitted(t *testing.T, c *context.Context, enable bool) {
 
 // TestSackPermittedConnect establishes a connection with the SACK option
 // enabled.
-//
-// TODO: Once Netstack can process received SACK blocks then update
-// this test to check that SACK blocks are correctly processed and
-// retransmissions of SACKed segments is done only when an RTO expires.
 func TestSackPermittedConnect(t *testing.T) {
 	for _, sackEnabled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("stack.sackEnabled: %v", sackEnabled), func(t *testing.T) {
@@ -115,10 +111,6 @@ func TestSackDisabledConnect(t *testing.T) {
 // SACKPermitted option enabled if the connection request specifies the
 // SACKPermitted option. In case of SYN cookies SACK should be disabled as we
 // don't encode the SACK information in the cookie.
-//
-// TODO: Once Netstack can process received SACK blocks then update
-// this test to check that SACK blocks are correctly processed and
-// retransmissions of SACKed segments is done only when an RTO expires.
 func TestSackPermittedAccept(t *testing.T) {
 	type testCase struct {
 		cookieEnabled bool
