@@ -76,7 +76,7 @@ var processTestCases = []struct {
 
 func TestFragmentationProcess(t *testing.T) {
 	for _, c := range processTestCases {
-		f := NewFragmentation(1024, DefaultReassembleTimeout)
+		f := NewFragmentation(1024, 512, DefaultReassembleTimeout)
 		for i, in := range c.in {
 			vv, done := f.Process(in.id, in.first, in.last, in.more, in.vv)
 			if !reflect.DeepEqual(vv, *(c.out[i].vv)) {
@@ -101,7 +101,7 @@ func TestFragmentationProcess(t *testing.T) {
 
 func TestReassemblingTimeout(t *testing.T) {
 	timeout := time.Millisecond
-	f := NewFragmentation(1024, timeout)
+	f := NewFragmentation(1024, 512, timeout)
 	// Send first fragment with id = 0, first = 0, last = 0, and more = true.
 	f.Process(0, 0, 0, true, vv(1, "0"))
 	// Sleep more than the timeout.
@@ -115,22 +115,31 @@ func TestReassemblingTimeout(t *testing.T) {
 }
 
 func TestMemoryLimits(t *testing.T) {
-	f := NewFragmentation(1, DefaultReassembleTimeout)
+	f := NewFragmentation(3, 1, DefaultReassembleTimeout)
 	// Send first fragment with id = 0.
 	f.Process(0, 0, 0, true, vv(1, "0"))
-	// Send first fragment with id = 1. This should caused id = 0 to be evicted.
-	f.Process(1, 0, 0, true, vv(1, "0"))
+	// Send first fragment with id = 1.
+	f.Process(1, 0, 0, true, vv(1, "1"))
+	// Send first fragment with id = 2.
+	f.Process(2, 0, 0, true, vv(1, "2"))
+
+	// Send first fragment with id = 3. This should caused id = 0 and id = 1 to be
+	// evicted.
+	f.Process(3, 0, 0, true, vv(1, "3"))
 
 	if _, ok := f.reassemblers[0]; ok {
 		t.Errorf("Memory limits are not respected: id=0 has not been evicted.")
 	}
-	if _, ok := f.reassemblers[1]; !ok {
-		t.Errorf("Implementation of memory limits is wrong: id=1 is not present.")
+	if _, ok := f.reassemblers[1]; ok {
+		t.Errorf("Memory limits are not respected: id=1 has not been evicted.")
+	}
+	if _, ok := f.reassemblers[3]; !ok {
+		t.Errorf("Implementation of memory limits is wrong: id=3 is not present.")
 	}
 }
 
 func TestMemoryLimitsIgnoresDuplicates(t *testing.T) {
-	f := NewFragmentation(1, DefaultReassembleTimeout)
+	f := NewFragmentation(1, 0, DefaultReassembleTimeout)
 	// Send first fragment with id = 0.
 	f.Process(0, 0, 0, true, vv(1, "0"))
 	// Send the same packet again.
@@ -144,7 +153,7 @@ func TestMemoryLimitsIgnoresDuplicates(t *testing.T) {
 }
 
 func TestFragmentationViewsDoNotEscape(t *testing.T) {
-	f := NewFragmentation(1024, DefaultReassembleTimeout)
+	f := NewFragmentation(1024, 512, DefaultReassembleTimeout)
 	in := vv(2, "0", "1")
 	f.Process(0, 0, 1, true, in)
 	// Modify input view.

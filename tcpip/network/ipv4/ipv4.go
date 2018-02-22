@@ -45,7 +45,7 @@ type endpoint struct {
 	linkEP        stack.LinkEndpoint
 	dispatcher    stack.TransportDispatcher
 	echoRequests  chan echoRequest
-	fragmentation fragmentation.Fragmentation
+	fragmentation *fragmentation.Fragmentation
 }
 
 func newEndpoint(nicid tcpip.NICID, addr tcpip.Address, dispatcher stack.TransportDispatcher, linkEP stack.LinkEndpoint) *endpoint {
@@ -54,7 +54,7 @@ func newEndpoint(nicid tcpip.NICID, addr tcpip.Address, dispatcher stack.Transpo
 		linkEP:        linkEP,
 		dispatcher:    dispatcher,
 		echoRequests:  make(chan echoRequest, 10),
-		fragmentation: fragmentation.NewFragmentation(fragmentation.MemoryLimit, fragmentation.DefaultReassembleTimeout),
+		fragmentation: fragmentation.NewFragmentation(fragmentation.HighFragThreshold, fragmentation.LowFragThreshold, fragmentation.DefaultReassembleTimeout),
 	}
 	copy(e.address[:], addr)
 	e.id = stack.NetworkEndpointID{tcpip.Address(e.address[:])}

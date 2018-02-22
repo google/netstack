@@ -17,14 +17,24 @@ import (
 // DefaultReassembleTimeout is based on the linux stack: net.ipv4.ipfrag_time.
 const DefaultReassembleTimeout = 30 * time.Second
 
-// MemoryLimit is a suggested value for the limit on the memory used to reassemble packets.
-const MemoryLimit = 8 * 1024 * 1024 // 8MB
+// HighFragThreshold is the the threshold at which we start trimming old
+// fragmented packets. Linux uses a default value of 4 MB. See
+// net.ipv4.ipfrag_high_thresh for more information.
+const HighFragThreshold = 4 << 20 // 4MB
+
+// LowFragThreshold is the the threshold we reach to when we start dropping
+// older fragmented packets. It's important that we keep enough room for newer
+// packets to be re-assembled. Hence, this needs to be lower than
+// HighFragThreshold enough. Linux uses a default value of 3 MB. See
+// net.ipv4.ipfrag_low_thresh for more information.
+const LowFragThreshold = 3 << 20 // 3MB
 
 // Fragmentation is the main structure that other modules
 // of the stack should use to implement IP Fragmentation.
 type Fragmentation struct {
 	mu           sync.Mutex
-	limit        int
+	highLimit    int
+	lowLimit     int
 	reassemblers map[uint32]*reassembler
 	rList        reassemblerList
 	size         int
@@ -33,17 +43,29 @@ type Fragmentation struct {
 
 // NewFragmentation creates a new Fragmentation.
 //
-// memoryLimit specifies the limit on the memory consumed
+// highMemoryLimit specifies the limit on the memory consumed
 // by the fragments stored by Fragmentation (overhead of internal data-structures
 // is not accounted). Fragments are dropped when the limit is reached.
+//
+// lowMemoryLimit specifies the limit on which we will reach by dropping
+// fragments after reaching highMemoryLimit.
 //
 // reassemblingTimeout specifes the maximum time allowed to reassemble a packet.
 // Fragments are lazily evicted only when a new a packet with an
 // already existing fragmentation-id arrives after the timeout.
-func NewFragmentation(memoryLimit int, reassemblingTimeout time.Duration) Fragmentation {
-	return Fragmentation{
+func NewFragmentation(highMemoryLimit, lowMemoryLimit int, reassemblingTimeout time.Duration) *Fragmentation {
+	if lowMemoryLimit >= highMemoryLimit {
+		lowMemoryLimit = highMemoryLimit
+	}
+
+	if lowMemoryLimit < 0 {
+		lowMemoryLimit = 0
+	}
+
+	return &Fragmentation{
 		reassemblers: make(map[uint32]*reassembler),
-		limit:        memoryLimit,
+		highLimit:    highMemoryLimit,
+		lowLimit:     lowMemoryLimit,
 		timeout:      reassemblingTimeout,
 	}
 }
@@ -72,9 +94,14 @@ func (f *Fragmentation) Process(id uint32, first, last uint16, more bool, vv *bu
 	if done {
 		f.release(r)
 	}
-	// Evict reassemblers if we are consuming more memory than the limit.
-	for f.size > f.limit {
-		f.release(f.rList.Back())
+	// Evict reassemblers if we are consuming more memory than highLimit until
+	// we reach lowLimit.
+	if f.size > f.highLimit {
+		tail := f.rList.Back()
+		for f.size > f.lowLimit && tail != nil {
+			f.release(tail)
+			tail = tail.Prev()
+		}
 	}
 	f.mu.Unlock()
 	return res, done
