@@ -469,7 +469,7 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) *tcpip.Error {
 		LocalAddress:  r.LocalAddress,
 		LocalPort:     localPort,
 		RemotePort:    addr.Port,
-		RemoteAddress: addr.Addr,
+		RemoteAddress: r.RemoteAddress,
 	}
 
 	// Even if we're connected, this endpoint can still be used to send

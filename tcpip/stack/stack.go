@@ -369,7 +369,7 @@ func (s *Stack) FindRoute(id tcpip.NICID, localAddr, remoteAddr tcpip.Address, n
 	defer s.mu.RUnlock()
 
 	for i := range s.routeTable {
-		if id != 0 && id != s.routeTable[i].NIC || !s.routeTable[i].Match(remoteAddr) {
+		if (id != 0 && id != s.routeTable[i].NIC) || (len(remoteAddr) != 0 && !s.routeTable[i].Match(remoteAddr)) {
 			continue
 		}
 
@@ -384,9 +384,14 @@ func (s *Stack) FindRoute(id tcpip.NICID, localAddr, remoteAddr tcpip.Address, n
 		} else {
 			ref = nic.primaryEndpoint(netProto)
 		}
-
 		if ref == nil {
 			continue
+		}
+
+		if len(remoteAddr) == 0 {
+			// If no remote address was provided, then the route
+			// provided will refer to the link local address.
+			remoteAddr = ref.ep.ID().LocalAddress
 		}
 
 		r := makeRoute(netProto, ref.ep.ID().LocalAddress, remoteAddr, ref)

@@ -756,7 +756,7 @@ func (e *endpoint) checkV4Mapped(addr *tcpip.FullAddress) (tcpip.NetworkProtocol
 
 	// Fail if we're bound to an address length different from the one we're
 	// checking.
-	if l := len(e.id.LocalAddress); l != 0 && l != len(addr.Addr) {
+	if l := len(e.id.LocalAddress); l != 0 && len(addr.Addr) != 0 && l != len(addr.Addr) {
 		return 0, tcpip.ErrInvalidEndpointState
 	}
 
@@ -824,7 +824,7 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) *tcpip.Error {
 
 	netProtos := []tcpip.NetworkProtocolNumber{netProto}
 	e.id.LocalAddress = r.LocalAddress
-	e.id.RemoteAddress = addr.Addr
+	e.id.RemoteAddress = r.RemoteAddress
 	e.id.RemotePort = addr.Port
 
 	if e.id.LocalPort != 0 {
