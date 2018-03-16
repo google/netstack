@@ -28,8 +28,14 @@ const (
 	// ProtocolNumber is the tcp protocol number.
 	ProtocolNumber = header.TCPProtocolNumber
 
+	// MinBufferSize is the smallest size of a receive or send buffer.
+	minBufferSize = 4 << 10 // 4096 bytes.
+
 	// DefaultBufferSize is the default size of the receive and send buffers.
-	DefaultBufferSize = 208 * 1024
+	DefaultBufferSize = 1 << 20 // 1MB
+
+	// MaxBufferSize is the largest size a receive and send buffer can grow to.
+	maxBufferSize = 4 << 20 // 4MB
 )
 
 // SACKEnabled option can be used to enable SACK support in the TCP
@@ -179,8 +185,8 @@ func (p *protocol) Option(option interface{}) *tcpip.Error {
 func init() {
 	stack.RegisterTransportProtocolFactory(ProtocolName, func() stack.TransportProtocol {
 		return &protocol{
-			sendBufferSize: SendBufferSizeOption{4096, DefaultBufferSize, 4194304},
-			recvBufferSize: ReceiveBufferSizeOption{4096, DefaultBufferSize, 6291456},
+			sendBufferSize: SendBufferSizeOption{minBufferSize, DefaultBufferSize, maxBufferSize},
+			recvBufferSize: ReceiveBufferSizeOption{minBufferSize, DefaultBufferSize, maxBufferSize},
 		}
 	})
 }

@@ -121,8 +121,8 @@ func TestSackPermittedAccept(t *testing.T) {
 
 	testCases := []testCase{
 		// When cookie is used window scaling is disabled.
-		{true, false, -1, 0xffff},
-		{false, true, 2, 0xd000},
+		{true, false, -1, 0xffff}, // When cookie is used window scaling is disabled.
+		{false, true, 5, 0x8000},  // 0x8000 * 2^5 = 1<<20 = 1MB window (the default).
 	}
 	savedSynCountThreshold := tcp.SynRcvdCountThreshold
 	defer func() {
@@ -194,8 +194,8 @@ func TestSackDisabledAccept(t *testing.T) {
 
 	testCases := []testCase{
 		// When cookie is used window scaling is disabled.
-		{true, -1, 0xffff},
-		{false, 2, 0xd000},
+		{true, -1, 0xffff}, // When cookie is used window scaling is disabled.
+		{false, 5, 0x8000}, // 0x8000 * 2^5 = 1<<20 = 1MB window (the default).
 	}
 	savedSynCountThreshold := tcp.SynRcvdCountThreshold
 	defer func() {
