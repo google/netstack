@@ -350,6 +350,58 @@ func TestOutOfOrderFlood(t *testing.T) {
 	)
 }
 
+func TestRstOnCloseWithUnreadData(t *testing.T) {
+	c := context.New(t, defaultMTU)
+	defer c.Cleanup()
+
+	c.CreateConnected(789, 30000, nil)
+
+	we, ch := waiter.NewChannelEntry(nil)
+	c.WQ.EventRegister(&we, waiter.EventIn)
+	defer c.WQ.EventUnregister(&we)
+
+	if _, err := c.EP.Read(nil); err != tcpip.ErrWouldBlock {
+		t.Fatalf("Unexpected error from Read: %v", err)
+	}
+
+	data := []byte{1, 2, 3}
+	c.SendPacket(data, &context.Headers{
+		SrcPort: context.TestPort,
+		DstPort: c.Port,
+		Flags:   header.TCPFlagAck,
+		SeqNum:  790,
+		AckNum:  c.IRS.Add(1),
+		RcvWnd:  30000,
+	})
+
+	// Wait for receive to be notified.
+	select {
+	case <-ch:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("Timed out waiting for data to arrive")
+	}
+
+	// Check that ACK is received, this happens regardless of the read.
+	checker.IPv4(t, c.GetPacket(),
+		checker.TCP(
+			checker.DstPort(context.TestPort),
+			checker.SeqNum(uint32(c.IRS)+1),
+			checker.AckNum(uint32(790+len(data))),
+			checker.TCPFlags(header.TCPFlagAck),
+		),
+	)
+
+	// Now that we know we have unread data, let's just close the connection
+	// and verify that netstack sends an RST rather than a FIN.
+	c.EP.Close()
+
+	checker.IPv4(t, c.GetPacket(),
+		checker.TCP(
+			checker.DstPort(context.TestPort),
+			checker.TCPFlags(header.TCPFlagAck|header.TCPFlagRst),
+		))
+}
+
 func TestFullWindowReceive(t *testing.T) {
 	c := context.New(t, defaultMTU)
 	defer c.Cleanup()

@@ -328,8 +328,23 @@ func (s *sender) sendData() {
 
 		var segEnd seqnum.Value
 		if seg.data.Size() == 0 {
-			// We're sending a FIN.
-			seg.flags = flagAck | flagFin
+			seg.flags = flagAck
+
+			s.ep.rcvListMu.Lock()
+			rcvBufUsed := s.ep.rcvBufUsed
+			s.ep.rcvListMu.Unlock()
+
+			s.ep.mu.Lock()
+			// We're sending a FIN by default
+			fl := flagFin
+			if (s.ep.shutdownFlags&tcpip.ShutdownRead) != 0 && rcvBufUsed > 0 {
+				// If there is unread data we must send a RST.
+				// For more information see RFC 2525 section 2.17.
+				fl = flagRst
+			}
+			s.ep.mu.Unlock()
+			seg.flags |= uint8(fl)
+
 			segEnd = seg.sequenceNumber.Add(1)
 		} else {
 			// We're sending a non-FIN segment.

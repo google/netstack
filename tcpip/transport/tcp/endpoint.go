@@ -134,6 +134,9 @@ type endpoint struct {
 	// TSVal field in the timestamp option.
 	tsOffset uint32
 
+	// shutdownFlags represent the current shutdown state of the endpoint.
+	shutdownFlags tcpip.ShutdownFlags
+
 	// sackPermitted is set to true if the peer sends the TCPSACKPermitted
 	// option in the SYN/SYN-ACK.
 	sackPermitted bool
@@ -890,6 +893,7 @@ func (*endpoint) ConnectEndpoint(tcpip.Endpoint) *tcpip.Error {
 func (e *endpoint) Shutdown(flags tcpip.ShutdownFlags) *tcpip.Error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.shutdownFlags |= flags
 
 	switch e.state {
 	case stateConnected:
