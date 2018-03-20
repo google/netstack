@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/google/netstack/tcpip"
-	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/network/ipv4"
 	"github.com/google/netstack/tcpip/stack"
 	"github.com/google/netstack/tcpip/transport/udp"
@@ -152,7 +151,7 @@ func (c *Client) Request(ctx context.Context, requestedAddr tcpip.Address) error
 	wopts := tcpip.WriteOptions{
 		To: serverAddr,
 	}
-	if _, err := ep.Write(buffer.View(h), wopts); err != nil {
+	if _, err := ep.Write(tcpip.SlicePayload(h), wopts); err != nil {
 		return fmt.Errorf("dhcp discovery write: %v", err)
 	}
 
@@ -210,7 +209,7 @@ func (c *Client) Request(ctx context.Context, requestedAddr tcpip.Address) error
 		{optReqIPAddr, []byte(addr)},
 		{optDHCPServer, h.siaddr()},
 	})
-	if _, err := ep.Write([]byte(h), wopts); err != nil {
+	if _, err := ep.Write(tcpip.SlicePayload(h), wopts); err != nil {
 		return fmt.Errorf("dhcp discovery write: %v", err)
 	}
 

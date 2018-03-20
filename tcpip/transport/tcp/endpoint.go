@@ -417,7 +417,7 @@ func (e *endpoint) readLocked() (buffer.View, *tcpip.Error) {
 }
 
 // Write writes data to the endpoint's peer.
-func (e *endpoint) Write(v buffer.View, opts tcpip.WriteOptions) (uintptr, *tcpip.Error) {
+func (e *endpoint) Write(p tcpip.Payload, opts tcpip.WriteOptions) (uintptr, *tcpip.Error) {
 	// Linux completely ignores any address passed to sendto(2) for TCP sockets
 	// (without the MSG_FASTOPEN flag). Corking is unimplemented, so opts.More
 	// and opts.EndOfRecord are also ignored.
@@ -436,7 +436,7 @@ func (e *endpoint) Write(v buffer.View, opts tcpip.WriteOptions) (uintptr, *tcpi
 	}
 
 	// Nothing to do if the buffer is empty.
-	if len(v) == 0 {
+	if p.Size() == 0 {
 		return 0, nil
 	}
 
@@ -454,9 +454,15 @@ func (e *endpoint) Write(v buffer.View, opts tcpip.WriteOptions) (uintptr, *tcpi
 		e.sndBufMu.Unlock()
 		return 0, tcpip.ErrWouldBlock
 	}
+
+	v, perr := p.Get(avail)
+	if perr != nil {
+		e.sndBufMu.Unlock()
+		return 0, perr
+	}
+
 	var err *tcpip.Error
-	if len(v) > avail {
-		v = v[:avail]
+	if p.Size() > avail {
 		err = tcpip.ErrWouldBlock
 	}
 	l := len(v)

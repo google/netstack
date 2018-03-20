@@ -585,7 +585,7 @@ func TestSimpleSend(t *testing.T) {
 	view := buffer.NewView(len(data))
 	copy(view, data)
 
-	if _, err := c.EP.Write(view, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -626,7 +626,7 @@ func TestZeroWindowSend(t *testing.T) {
 	view := buffer.NewView(len(data))
 	copy(view, data)
 
-	_, err := c.EP.Write(view, tcpip.WriteOptions{})
+	_, err := c.EP.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{})
 	if err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
@@ -687,7 +687,7 @@ func TestScaledWindowConnect(t *testing.T) {
 	view := buffer.NewView(len(data))
 	copy(view, data)
 
-	if _, err := c.EP.Write(view, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -720,7 +720,7 @@ func TestNonScaledWindowConnect(t *testing.T) {
 	view := buffer.NewView(len(data))
 	copy(view, data)
 
-	if _, err := c.EP.Write(view, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -793,7 +793,7 @@ func TestScaledWindowAccept(t *testing.T) {
 	view := buffer.NewView(len(data))
 	copy(view, data)
 
-	if _, err := c.EP.Write(view, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -866,7 +866,7 @@ func TestNonScaledWindowAccept(t *testing.T) {
 	view := buffer.NewView(len(data))
 	copy(view, data)
 
-	if _, err := c.EP.Write(view, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -981,7 +981,7 @@ func testBrokenUpWrite(t *testing.T, c *context.Context, maxPayload int) {
 	view := buffer.NewView(len(data))
 	copy(view, data)
 
-	if _, err := c.EP.Write(view, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -1373,7 +1373,7 @@ func TestSendOnResetConnection(t *testing.T) {
 
 	// Try to write.
 	view := buffer.NewView(10)
-	_, err := c.EP.Write(view, tcpip.WriteOptions{})
+	_, err := c.EP.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{})
 	if err != tcpip.ErrConnectionReset {
 		t.Fatalf("Unexpected error from Write: want %v, got %v", tcpip.ErrConnectionReset, err)
 	}
@@ -1484,7 +1484,7 @@ func TestFinWithNoPendingData(t *testing.T) {
 
 	// Write something out, and have it acknowledged.
 	view := buffer.NewView(10)
-	if _, err := c.EP.Write(view, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -1557,7 +1557,7 @@ func DisabledTestFinWithPendingDataCwndFull(t *testing.T) {
 	// any of them.
 	view := buffer.NewView(10)
 	for i := tcp.InitialCwnd; i > 0; i-- {
-		if _, err := c.EP.Write(view, tcpip.WriteOptions{}); err != nil {
+		if _, err := c.EP.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{}); err != nil {
 			t.Fatalf("Unexpected error from Write: %v", err)
 		}
 	}
@@ -1643,7 +1643,7 @@ func TestFinWithPendingData(t *testing.T) {
 
 	// Write something out, and acknowledge it to get cwnd to 2.
 	view := buffer.NewView(10)
-	if _, err := c.EP.Write(view, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -1669,7 +1669,7 @@ func TestFinWithPendingData(t *testing.T) {
 	})
 
 	// Write new data, but don't acknowledge it.
-	if _, err := c.EP.Write(view, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -1730,7 +1730,7 @@ func TestFinWithPartialAck(t *testing.T) {
 	// Write something out, and acknowledge it to get cwnd to 2. Also send
 	// FIN from the test side.
 	view := buffer.NewView(10)
-	if _, err := c.EP.Write(view, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -1767,7 +1767,7 @@ func TestFinWithPartialAck(t *testing.T) {
 	)
 
 	// Write new data, but don't acknowledge it.
-	if _, err := c.EP.Write(view, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -1837,7 +1837,7 @@ func DisabledTestExponentialIncreaseDuringSlowStart(t *testing.T) {
 
 	// Write all the data in one shot. Packets will only be written at the
 	// MTU size though.
-	if _, err := c.EP.Write(data, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(data), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -1879,7 +1879,7 @@ func DisabledTestCongestionAvoidance(t *testing.T) {
 
 	// Write all the data in one shot. Packets will only be written at the
 	// MTU size though.
-	if _, err := c.EP.Write(data, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(data), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -1968,7 +1968,7 @@ func DisabledTestFastRecovery(t *testing.T) {
 
 	// Write all the data in one shot. Packets will only be written at the
 	// MTU size though.
-	if _, err := c.EP.Write(data, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(data), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -2068,10 +2068,12 @@ func DisabledTestRetransmit(t *testing.T) {
 
 	// Write all the data in two shots. Packets will only be written at the
 	// MTU size though.
-	if _, err := c.EP.Write(data[:len(data)/2], tcpip.WriteOptions{}); err != nil {
+	half := data[:len(data)/2]
+	if _, err := c.EP.Write(tcpip.SlicePayload(half), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
-	if _, err := c.EP.Write(data[len(data)/2:], tcpip.WriteOptions{}); err != nil {
+	half = data[len(data)/2:]
+	if _, err := c.EP.Write(tcpip.SlicePayload(half), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -2169,7 +2171,7 @@ func scaledSendWindow(t *testing.T, scale uint8) {
 
 	// Send some data. Check that it's capped by the window size.
 	view := buffer.NewView(65535)
-	if _, err := c.EP.Write(view, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Unexpected error from Write: %v", err)
 	}
 
@@ -2596,7 +2598,7 @@ func TestSelfConnect(t *testing.T) {
 	data := []byte{1, 2, 3}
 	view := buffer.NewView(len(data))
 	copy(view, data)
-	if _, err = ep.Write(view, tcpip.WriteOptions{}); err != nil {
+	if _, err = ep.Write(tcpip.SlicePayload(view), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Write failed: %v", err)
 	}
 
@@ -2639,7 +2641,7 @@ func TestPathMTUDiscovery(t *testing.T) {
 		data[i] = byte(i)
 	}
 
-	if _, err := c.EP.Write(data, tcpip.WriteOptions{}); err != nil {
+	if _, err := c.EP.Write(tcpip.SlicePayload(data), tcpip.WriteOptions{}); err != nil {
 		t.Fatalf("Write failed: %v", err)
 	}
 

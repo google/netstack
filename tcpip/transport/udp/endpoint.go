@@ -201,7 +201,7 @@ func (e *endpoint) prepareForWrite(to *tcpip.FullAddress) (retry bool, err *tcpi
 
 // Write writes data to the endpoint's peer. This method does not block
 // if the data cannot be written.
-func (e *endpoint) Write(v buffer.View, opts tcpip.WriteOptions) (uintptr, *tcpip.Error) {
+func (e *endpoint) Write(p tcpip.Payload, opts tcpip.WriteOptions) (uintptr, *tcpip.Error) {
 	// MSG_MORE is unimplemented. (This also means that MSG_EOR is a no-op.)
 	if opts.More {
 		return 0, tcpip.ErrInvalidOptionValue
@@ -290,6 +290,10 @@ func (e *endpoint) Write(v buffer.View, opts tcpip.WriteOptions) (uintptr, *tcpi
 		}
 	}
 
+	v, err := p.Get(p.Size())
+	if err != nil {
+		return 0, err
+	}
 	sendUDP(route, v, e.id.LocalPort, dstPort)
 	return uintptr(len(v)), nil
 }

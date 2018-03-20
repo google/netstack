@@ -373,7 +373,7 @@ func (c *Conn) Write(b []byte) (int, error) {
 		}
 
 		var n uintptr
-		n, err = c.ep.Write(v, tcpip.WriteOptions{})
+		n, err = c.ep.Write(tcpip.SlicePayload(v), tcpip.WriteOptions{})
 		nbytes += int(n)
 		v.TrimFront(int(n))
 	}
@@ -551,7 +551,7 @@ func (c *PacketConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 	copy(v, b)
 
 	wopts := tcpip.WriteOptions{To: &fullAddr}
-	n, err := c.ep.Write(v, wopts)
+	n, err := c.ep.Write(tcpip.SlicePayload(v), wopts)
 
 	if err == tcpip.ErrWouldBlock {
 		// Create wait queue entry that notifies a channel.
@@ -559,7 +559,7 @@ func (c *PacketConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 		c.wq.EventRegister(&waitEntry, waiter.EventOut)
 		defer c.wq.EventUnregister(&waitEntry)
 		for {
-			n, err = c.ep.Write(v, wopts)
+			n, err = c.ep.Write(tcpip.SlicePayload(v), wopts)
 			if err != tcpip.ErrWouldBlock {
 				break
 			}

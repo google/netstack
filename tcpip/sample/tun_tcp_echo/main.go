@@ -52,7 +52,7 @@ func echo(wq *waiter.Queue, ep tcpip.Endpoint) {
 			return
 		}
 
-		ep.Write(v, tcpip.WriteOptions{})
+		ep.Write(tcpip.SlicePayload(v), tcpip.WriteOptions{})
 	}
 }
 

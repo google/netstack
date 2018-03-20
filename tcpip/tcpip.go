@@ -69,6 +69,7 @@ var (
 	ErrNoSuchFile            = &Error{"no such file"}
 	ErrInvalidOptionValue    = &Error{"invalid option value specified"}
 	ErrNoLinkAddress         = &Error{"no remote link address"}
+	ErrBadAddress            = &Error{"bad address"}
 )
 
 // Errors related to Subnet
@@ -180,6 +181,33 @@ type FullAddress struct {
 	Port uint16
 }
 
+// Payload provides an interface around data that is being sent to an endpoint.
+// This allows the endpoint to request the amount of data it needs based on
+// internal buffers without exposing them. 'p.Get(p.Size())' reads all the data.
+type Payload interface {
+	// Get returns a slice containing exactly 'min(size, p.Size())' bytes.
+	Get(size int) ([]byte, *Error)
+
+	// Size returns the payload size.
+	Size() int
+}
+
+// SlicePayload implements Payload on top of slices for convenience.
+type SlicePayload []byte
+
+// Get implements Payload.
+func (s SlicePayload) Get(size int) ([]byte, *Error) {
+	if size > s.Size() {
+		size = s.Size()
+	}
+	return s[:size], nil
+}
+
+// Size implements Payload.
+func (s SlicePayload) Size() int {
+	return len(s)
+}
+
 // Endpoint is the interface implemented by transport protocols (e.g., tcp, udp)
 // that exposes functionality like read, write, connect, etc. to users of the
 // networking stack.
@@ -197,13 +225,13 @@ type Endpoint interface {
 	// the data cannot be written.
 	//
 	// Unlike io.Writer.Write, Endpoint.Write transfers ownership of any bytes
-	// successfully written to the Endpoint. That is, if a call to Write(data)
-	// returns (n, err), it may retain data[:n], and the caller should not use
-	// data[:n] after Write returns.
+	// successfully written to the Endpoint. That is, if a call to
+	// Write(SlicePayload{data}) returns (n, err), it may retain data[:n], and
+	// the caller should not use data[:n] after Write returns.
 	//
 	// Note that unlike io.Writer.Write, it is not an error for Write to
 	// perform a partial write.
-	Write(buffer.View, WriteOptions) (uintptr, *Error)
+	Write(Payload, WriteOptions) (uintptr, *Error)
 
 	// Peek reads data without consuming it from the endpoint.
 	//
@@ -367,7 +395,7 @@ type NetworkProtocolNumber uint32
 
 // Stats holds statistics about the networking stack.
 type Stats struct {
-	// UnkownProtocolRcvdPackets is the number of packets received by the
+	// UnknownProtocolRcvdPackets is the number of packets received by the
 	// stack that were for an unknown or unsupported protocol.
 	UnknownProtocolRcvdPackets uint64
 
