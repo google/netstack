@@ -295,28 +295,25 @@ func (s *Stack) NICSubnets() map[tcpip.NICID][]tcpip.Subnet {
 	return nics
 }
 
-// NICAddresses returns a map of NICIDs to their associated addresses.
-func (s *Stack) NICAddresses() map[tcpip.NICID][]tcpip.ProtocolAddress {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	nics := map[tcpip.NICID][]tcpip.ProtocolAddress{}
-
-	for id, nic := range s.nics {
-		nics[id] = append(nics[id], nic.Addresses()...)
-	}
-	return nics
+// NICInfo captures the name and addresses assigned to a NIC.
+type NICInfo struct {
+	Name              string
+	LinkAddress       tcpip.LinkAddress
+	ProtocolAddresses []tcpip.ProtocolAddress
 }
 
-// NICNames returns a map of NICIDs to their name.
-func (s *Stack) NICNames() map[tcpip.NICID]string {
+// NICInfo returns a map of NICIDs to their associated information.
+func (s *Stack) NICInfo() map[tcpip.NICID]NICInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	nics := map[tcpip.NICID]string{}
-
+	nics := make(map[tcpip.NICID]NICInfo)
 	for id, nic := range s.nics {
-		nics[id] = nic.name
+		nics[id] = NICInfo{
+			Name:              nic.name,
+			LinkAddress:       nic.linkEP.LinkAddress(),
+			ProtocolAddresses: nic.Addresses(),
+		}
 	}
 	return nics
 }

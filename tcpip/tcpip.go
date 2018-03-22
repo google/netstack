@@ -21,6 +21,8 @@ package tcpip
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/waiter"
@@ -463,6 +465,27 @@ func (a LinkAddress) String() string {
 	default:
 		return fmt.Sprintf("%x", []byte(a))
 	}
+}
+
+// ParseMACAddress parses an IEEE 802 address.
+//
+// It must be in the format aa:bb:cc:dd:ee:ff or aa-bb-cc-dd-ee-ff.
+func ParseMACAddress(s string) (LinkAddress, error) {
+	parts := strings.FieldsFunc(s, func(c rune) bool {
+		return c == ':' || c == '-'
+	})
+	if len(parts) != 6 {
+		return "", fmt.Errorf("inconsistent parts: %s", s)
+	}
+	addr := make([]byte, 0, len(parts))
+	for _, part := range parts {
+		u, err := strconv.ParseUint(part, 16, 8)
+		if err != nil {
+			return "", fmt.Errorf("invalid hex digits: %s", s)
+		}
+		addr = append(addr, byte(u))
+	}
+	return LinkAddress(addr), nil
 }
 
 // ProtocolAddress is an address and the network protocol it is associated
