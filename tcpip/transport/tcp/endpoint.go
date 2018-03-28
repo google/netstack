@@ -1164,9 +1164,12 @@ func (e *endpoint) HandleControlPacket(id stack.TransportEndpointID, typ stack.C
 // in the send buffer. The number of newly available bytes is v.
 func (e *endpoint) updateSndBufferUsage(v int) {
 	e.sndBufMu.Lock()
-	notify := e.sndBufUsed >= e.sndBufSize
+	notify := e.sndBufUsed >= e.sndBufSize>>1
 	e.sndBufUsed -= v
-	notify = notify && e.sndBufUsed < e.sndBufSize
+	// We only notify when there is half the sndBufSize available after
+	// a full buffer event occurs. This ensures that we don't wake up
+	// writers to queue just 1-2 segments and go back to sleep.
+	notify = notify && e.sndBufUsed < e.sndBufSize>>1
 	e.sndBufMu.Unlock()
 
 	if notify {
