@@ -2680,3 +2680,48 @@ func TestPathMTUDiscovery(t *testing.T) {
 	sizes = []int{newMaxPayload, maxPayload - newMaxPayload, newMaxPayload, maxPayload - newMaxPayload, writeSize - 2*maxPayload}
 	receivePackets(c, sizes, -1, uint32(c.IRS)+1)
 }
+
+func TestTCPEndpointProbe(t *testing.T) {
+	c := context.New(t, 1500)
+	defer c.Cleanup()
+
+	invoked := make(chan struct{})
+	c.Stack().AddTCPProbe(func(state stack.TCPEndpointState) {
+		// Validate that the endpoint ID is what we expect.
+		//
+		// We don't do an extensive validation of every field but a
+		// basic sanity test.
+		if got, want := state.ID.LocalAddress, tcpip.Address(context.StackAddr); got != want {
+			t.Fatalf("unexpected LocalAddress got: %d, want: %d", got, want)
+		}
+		if got, want := state.ID.LocalPort, c.Port; got != want {
+			t.Fatalf("unexpected LocalPort got: %d, want: %d", got, want)
+		}
+		if got, want := state.ID.RemoteAddress, tcpip.Address(context.TestAddr); got != want {
+			t.Fatalf("unexpected RemoteAddress got: %d, want: %d", got, want)
+		}
+		if got, want := state.ID.RemotePort, uint16(context.TestPort); got != want {
+			t.Fatalf("unexpected RemotePort got: %d, want: %d", got, want)
+		}
+
+		invoked <- struct{}{}
+	})
+
+	c.CreateConnected(789, 30000, nil)
+
+	data := []byte{1, 2, 3}
+	c.SendPacket(data, &context.Headers{
+		SrcPort: context.TestPort,
+		DstPort: c.Port,
+		Flags:   header.TCPFlagAck,
+		SeqNum:  790,
+		AckNum:  c.IRS.Add(1),
+		RcvWnd:  30000,
+	})
+
+	select {
+	case <-invoked:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("TCP Probe function was not called")
+	}
+}

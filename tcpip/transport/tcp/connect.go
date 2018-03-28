@@ -659,6 +659,11 @@ func (e *endpoint) handleSegments() bool {
 			break
 		}
 
+		// Invoke the tcp probe if installed.
+		if e.probe != nil {
+			e.probe(e.completeState())
+		}
+
 		if s.flagIsSet(flagRst) {
 			if e.rcv.acceptable(s.sequenceNumber, 0) {
 				// RFC 793, page 37 states that "in all states

@@ -202,6 +202,10 @@ type endpoint struct {
 
 	// The goroutine drain completion notification channel.
 	drainDone chan struct{}
+
+	// probe if not nil is invoked on every received segment. It is passed
+	// a copy of the current state of the endpoint.
+	probe stack.TCPProbeFunc
 }
 
 func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waiterQueue *waiter.Queue) *endpoint {
@@ -224,6 +228,10 @@ func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waite
 	var rs ReceiveBufferSizeOption
 	if err := stack.TransportProtocolOption(ProtocolNumber, &rs); err == nil {
 		e.rcvBufSize = rs.Default
+	}
+
+	if p := stack.GetTCPProbe(); p != nil {
+		e.probe = p
 	}
 
 	e.segmentQueue.setLimit(2 * e.rcvBufSize)
@@ -1282,4 +1290,80 @@ func (e *endpoint) maybeEnableSACKPermitted(synOpts *header.TCPSynOptions) {
 	if bool(v) && synOpts.SACKPermitted {
 		e.sackPermitted = true
 	}
+}
+
+// completeState makes a full copy of the endpoint and returns it. This is used
+// before invoking the probe. The state returned may not be fully consistent if
+// there are intervening syscalls when the state is being copied.
+func (e *endpoint) completeState() stack.TCPEndpointState {
+	var s stack.TCPEndpointState
+	s.SegTime = time.Now()
+
+	// Copy EndpointID.
+	e.mu.Lock()
+	s.ID = stack.TCPEndpointID(e.id)
+	e.mu.Unlock()
+
+	// Copy endpoint rcv state.
+	e.rcvListMu.Lock()
+	s.RcvBufSize = e.rcvBufSize
+	s.RcvBufUsed = e.rcvBufUsed
+	s.RcvClosed = e.rcvClosed
+	e.rcvListMu.Unlock()
+
+	// Endpoint TCP Option state.
+	s.SendTSOk = e.sendTSOk
+	s.RecentTS = e.recentTS
+	s.TSOffset = e.tsOffset
+	s.SACKPermitted = e.sackPermitted
+	s.SACK.Blocks = make([]header.SACKBlock, e.sack.NumBlocks)
+	copy(s.SACK.Blocks, e.sack.Blocks[:e.sack.NumBlocks])
+
+	// Copy endpoint send state.
+	e.sndBufMu.Lock()
+	s.SndBufSize = e.sndBufSize
+	s.SndBufUsed = e.sndBufUsed
+	s.SndClosed = e.sndClosed
+	s.SndBufInQueue = e.sndBufInQueue
+	s.PacketTooBigCount = e.packetTooBigCount
+	s.SndMTU = e.sndMTU
+	e.sndBufMu.Unlock()
+
+	// Copy receiver state.
+	s.Receiver = stack.TCPReceiverState{
+		RcvNxt:         e.rcv.rcvNxt,
+		RcvAcc:         e.rcv.rcvAcc,
+		RcvWndScale:    e.rcv.rcvWndScale,
+		PendingBufUsed: e.rcv.pendingBufUsed,
+		PendingBufSize: e.rcv.pendingBufSize,
+	}
+
+	// Copy sender state.
+	s.Sender = stack.TCPSenderState{
+		LastSendTime: e.snd.lastSendTime,
+		DupAckCount:  e.snd.dupAckCount,
+		FastRecovery: stack.TCPFastRecoveryState{
+			Active:  e.snd.fr.active,
+			First:   e.snd.fr.first,
+			Last:    e.snd.fr.last,
+			MaxCwnd: e.snd.fr.maxCwnd,
+		},
+		SndCwnd:          e.snd.sndCwnd,
+		Ssthresh:         e.snd.sndSsthresh,
+		SndCAAckCount:    e.snd.sndCAAckCount,
+		Outstanding:      e.snd.outstanding,
+		SndWnd:           e.snd.sndWnd,
+		SndUna:           e.snd.sndUna,
+		SndNxt:           e.snd.sndNxt,
+		RTTMeasureSeqNum: e.snd.rttMeasureSeqNum,
+		RTTMeasureTime:   e.snd.rttMeasureTime,
+		Closed:           e.snd.closed,
+		SRTT:             e.snd.srtt,
+		RTO:              e.snd.rto,
+		SRTTInited:       e.snd.srttInited,
+		MaxPayloadSize:   e.snd.maxPayloadSize,
+		SndWndScale:      e.snd.sndWndScale,
+		MaxSentAck:       e.snd.maxSentAck,
+	}
+	return s
 }
