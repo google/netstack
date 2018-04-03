@@ -8,7 +8,6 @@ package hash
 import (
 	"crypto/rand"
 	"encoding/binary"
-	"fmt"
 
 	"github.com/google/netstack/tcpip/header"
 )
@@ -19,7 +18,7 @@ var hashIV = RandN32(1)[0]
 func RandN32(n int) []uint32 {
 	b := make([]byte, 4*n)
 	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("unable to get random numbers: %v", err))
+		panic("unable to get random numbers: " + err.Error())
 	}
 	r := make([]uint32, n)
 	for i := range r {
