@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/stack"
-	"github.com/google/netstack/tcpip"
 )
 
 type packetInfo struct {

@@ -7,8 +7,8 @@ package header
 import (
 	"encoding/binary"
 
-	"github.com/google/netstack/tcpip/seqnum"
 	"github.com/google/netstack/tcpip"
+	"github.com/google/netstack/tcpip/seqnum"
 )
 
 const (

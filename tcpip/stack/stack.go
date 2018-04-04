@@ -184,7 +184,7 @@ type TCPEndpointState struct {
 	// ID is a copy of the TransportEndpointID for the endpoint.
 	ID TCPEndpointID
 
-	// SegTime denotes the absolute time when this segment was recieved.
+	// SegTime denotes the absolute time when this segment was received.
 	SegTime time.Time
 
 	// RcvBufSize is the size of the receive socket buffer for the endpoint.
@@ -268,7 +268,7 @@ type Stack struct {
 	*ports.PortManager
 
 	// If not nil, then any new endpoints will have this probe function
-	// invoked everytime they recieve a TCP segment.
+	// invoked everytime they receive a TCP segment.
 	tcpProbeFunc TCPProbeFunc
 }
 
@@ -685,7 +685,7 @@ func (s *Stack) SetSpoofing(nicID tcpip.NICID, enable bool) *tcpip.Error {
 func (s *Stack) AddLinkAddress(nicid tcpip.NICID, addr tcpip.Address, linkAddr tcpip.LinkAddress) {
 	fullAddr := tcpip.FullAddress{NIC: nicid, Addr: addr}
 	s.linkAddrCache.add(fullAddr, linkAddr)
-	// TODO(crawshaw): provide a way for a
+	// TODO: provide a way for a
 	// transport endpoint to receive a signal that AddLinkAddress
 	// for a particular address has been called.
 }

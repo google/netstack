@@ -17,12 +17,12 @@ import (
 // DefaultReassembleTimeout is based on the linux stack: net.ipv4.ipfrag_time.
 const DefaultReassembleTimeout = 30 * time.Second
 
-// HighFragThreshold is the the threshold at which we start trimming old
+// HighFragThreshold is the threshold at which we start trimming old
 // fragmented packets. Linux uses a default value of 4 MB. See
 // net.ipv4.ipfrag_high_thresh for more information.
 const HighFragThreshold = 4 << 20 // 4MB
 
-// LowFragThreshold is the the threshold we reach to when we start dropping
+// LowFragThreshold is the threshold we reach to when we start dropping
 // older fragmented packets. It's important that we keep enough room for newer
 // packets to be re-assembled. Hence, this needs to be lower than
 // HighFragThreshold enough. Linux uses a default value of 3 MB. See

@@ -7,9 +7,9 @@ package waitable
 import (
 	"testing"
 
+	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/stack"
-	"github.com/google/netstack/tcpip"
 )
 
 type countedEndpoint struct {

@@ -990,7 +990,8 @@ func (e *endpoint) Listen(backlog int) *tcpip.Error {
 	}
 	e.workerRunning = true
 
-	go e.protocolListenLoop(seqnum.Size(e.receiveBufferAvailable()))
+	go e.protocolListenLoop(
+		seqnum.Size(e.receiveBufferAvailable()))
 
 	return nil
 }

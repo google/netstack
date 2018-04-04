@@ -83,7 +83,7 @@ type Headers struct {
 	// AckNum represents the acknowledgement number field in the TCP header.
 	AckNum seqnum.Value
 
-	// Flags are the TCP flags in the the TCP header.
+	// Flags are the TCP flags in the TCP header.
 	Flags int
 
 	// RcvWnd is the window to be advertised in the ReceiveWindow field of

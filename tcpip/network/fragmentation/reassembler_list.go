@@ -1,8 +1,3 @@
-// Copyright 2016 The Netstack Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
-// Package ilist provides the implementation of intrusive linked lists.
 package fragmentation
 
 // List is an intrusive list. Entries can be added to or removed from the list

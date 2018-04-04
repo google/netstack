@@ -147,7 +147,7 @@ func (s *Server) handler(ctx context.Context, ch chan header) {
 			if err != nil {
 				continue
 			}
-			// TODO(crawshaw): Handle DHCPRELEASE and DHCPDECLINE.
+			// TODO: Handle DHCPRELEASE and DHCPDECLINE.
 			msgtype, err := opts.dhcpMsgType()
 			if err != nil {
 				continue
@@ -174,7 +174,7 @@ func (s *Server) handleDiscover(hreq header, opts options) {
 	case leaseNew:
 		if len(s.leases) < len(s.addrs) {
 			// Find an unused address.
-			// TODO(crawshaw): avoid building this state on each request.
+			// TODO: avoid building this state on each request.
 			alloced := make(map[tcpip.Address]bool)
 			for _, lease := range s.leases {
 				alloced[lease.addr] = true
@@ -254,7 +254,7 @@ func (s *Server) handleRequest(hreq header, opts options) {
 	s.mu.Unlock()
 
 	if lease.state == leaseNew {
-		// TODO(crawshaw): NACK or accept request
+		// TODO: NACK or accept request
 		return
 	}
 

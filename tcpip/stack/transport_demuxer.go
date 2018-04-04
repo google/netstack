@@ -34,7 +34,7 @@ type transportDemuxer struct {
 func newTransportDemuxer(stack *Stack) *transportDemuxer {
 	d := &transportDemuxer{protocol: make(map[protocolIDs]*transportEndpoints)}
 
-	// Add each network and and transport pair to the demuxer.
+	// Add each network and transport pair to the demuxer.
 	for netProto := range stack.networkProtocols {
 		for proto := range stack.transportProtocols {
 			d.protocol[protocolIDs{netProto, proto}] = &transportEndpoints{endpoints: make(map[TransportEndpointID]TransportEndpoint)}

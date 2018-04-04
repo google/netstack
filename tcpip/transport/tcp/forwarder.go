@@ -105,7 +105,7 @@ func (r *ForwarderRequest) ID() stack.TransportEndpointID {
 	return r.segment.id
 }
 
-// Complete completes the request, and optinally sends a RST segment back to the
+// Complete completes the request, and optionally sends a RST segment back to the
 // sender.
 func (r *ForwarderRequest) Complete(sendReset bool) {
 	r.mu.Lock()
@@ -143,11 +143,12 @@ func (r *ForwarderRequest) CreateEndpoint(queue *waiter.Queue) (tcpip.Endpoint, 
 
 	f := r.forwarder
 	ep, err := f.listen.createEndpointAndPerformHandshake(r.segment, &header.TCPSynOptions{
-		MSS:   r.synOptions.MSS,
-		WS:    r.synOptions.WS,
-		TS:    r.synOptions.TS,
-		TSVal: r.synOptions.TSVal,
-		TSEcr: r.synOptions.TSEcr,
+		MSS:           r.synOptions.MSS,
+		WS:            r.synOptions.WS,
+		TS:            r.synOptions.TS,
+		TSVal:         r.synOptions.TSVal,
+		TSEcr:         r.synOptions.TSEcr,
+		SACKPermitted: r.synOptions.SACKPermitted,
 	})
 	if err != nil {
 		return nil, err

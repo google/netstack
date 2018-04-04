@@ -229,7 +229,7 @@ func (c *linkAddrCache) get(k tcpip.FullAddress, linkRes LinkAddressResolver, lo
 	}
 }
 
-// removeWaker removes a waker previously added throught get().
+// removeWaker removes a waker previously added through get().
 func (c *linkAddrCache) removeWaker(k tcpip.FullAddress, waker *sleep.Waker) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

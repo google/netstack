@@ -35,7 +35,7 @@ type Client struct {
 
 // NewClient creates a DHCP client.
 //
-// TODO(crawshaw): add s.LinkAddr(nicid) to *stack.Stack.
+// TODO: add s.LinkAddr(nicid) to *stack.Stack.
 func NewClient(s *stack.Stack, nicid tcpip.NICID, linkAddr tcpip.LinkAddress) *Client {
 	return &Client{
 		stack:    s,

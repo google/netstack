@@ -107,12 +107,12 @@ func (b IPv4) HeaderLength() uint8 {
 	return (b[versIHL] & 0xf) * 4
 }
 
-// ID returns the value of the identifier field of the the ipv4 header.
+// ID returns the value of the identifier field of the ipv4 header.
 func (b IPv4) ID() uint16 {
 	return binary.BigEndian.Uint16(b[id:])
 }
 
-// Protocol returns the value of the protocol field of the the ipv4 header.
+// Protocol returns the value of the protocol field of the ipv4 header.
 func (b IPv4) Protocol() uint8 {
 	return b[protocol]
 }

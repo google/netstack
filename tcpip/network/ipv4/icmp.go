@@ -94,7 +94,7 @@ func (e *endpoint) handleICMP(r *stack.Route, vv *buffer.VectorisedView) {
 			e.handleControl(stack.ControlPacketTooBig, calculateMTU(mtu), vv)
 		}
 	}
-	// TODO(crawshaw): Handle other ICMP types.
+	// TODO: Handle other ICMP types.
 }
 
 type echoRequest struct {
