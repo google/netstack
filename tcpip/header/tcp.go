@@ -31,10 +31,6 @@ const (
 	// TCPMaxSACKBlocks is the maximum number of SACK blocks that can
 	// be encoded in a TCP option field.
 	TCPMaxSACKBlocks = 4
-
-	// TCPMaxSACKOptionSize represents the maximum size in bytes
-	// occupied by TCP SACK option in a given TCP segment.
-	TCPMaxSACKOptionSize = TCPMaxSACKBlocks*8 + 2
 )
 
 // Flags that may be set in a TCP segment.
@@ -148,14 +144,6 @@ const (
 
 	// TCPProtocolNumber is TCP's transport protocol number.
 	TCPProtocolNumber tcpip.TransportProtocolNumber = 6
-
-	// TCPTimeStampOptionSize is the size of an encoded TCP timestamp
-	// option.
-	//
-	// NOTE: The actual option is 10 bytes but we always include 2
-	// NOP options to quad align the timestamp option and hence it's
-	// 12 and not 10.
-	TCPTimeStampOptionSize = 12
 )
 
 // SourcePort returns the "source port" field of the tcp header.
@@ -504,6 +492,15 @@ func EncodeSACKBlocks(sackBlocks []SACKBlock, b []byte) int {
 		binary.BigEndian.PutUint32(b[i*8+6:], uint32(sackBlocks[i].End))
 	}
 	return int(b[1])
+}
+
+// EncodeNOP adds an explicit NOP to the option list.
+func EncodeNOP(b []byte) int {
+	if len(b) == 0 {
+		return 0
+	}
+	b[0] = TCPOptionNOP
+	return 1
 }
 
 // AddTCPOptionPadding adds the required number of TCPOptionNOP to quad align

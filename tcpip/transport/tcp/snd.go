@@ -153,15 +153,11 @@ func newSender(ep *endpoint, iss, irs seqnum.Value, sndWnd seqnum.Size, mss uint
 func (s *sender) updateMaxPayloadSize(mtu, count int) {
 	m := mtu - header.TCPMinimumSize
 
-	// Adjust the maxPayloadsize to account for the timestamp option.
-	if s.ep.sendTSOk {
-		m -= header.TCPTimeStampOptionSize
-	}
-
-	// Adjust the maxPayloadSize to account for the SACK option.
-	if s.ep.sackPermitted {
-		m -= header.TCPMaxSACKOptionSize
-	}
+	// Calculate the maximum option size.
+	var maxSackBlocks [header.TCPMaxSACKBlocks]header.SACKBlock
+	options := s.ep.makeOptions(maxSackBlocks[:])
+	m -= len(options)
+	putOptions(options)
 
 	// We don't adjust up for now.
 	if m >= s.maxPayloadSize {

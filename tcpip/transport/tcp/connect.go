@@ -6,6 +6,7 @@ package tcp
 
 import (
 	"crypto/rand"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -41,6 +42,11 @@ const (
 	wakerForNewSegment
 	wakerForResend
 	wakerForResolution
+)
+
+const (
+	// Maximum space available for options.
+	maxOptionSize = 40
 )
 
 // handshake holds the state used during a TCP 3-way handshake.
@@ -448,33 +454,86 @@ func parseSynSegmentOptions(s *segment) header.TCPSynOptions {
 	return synOpts
 }
 
-func sendSynTCP(r *stack.Route, id stack.TransportEndpointID, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size, opts header.TCPSynOptions) *tcpip.Error {
-	// The MSS in opts is ignored as this function is called from many
-	// places and we don't want every call point being embedded with the MSS
-	// calculation. So we just do it here and ignore the MSS value passed in
-	// the opts.
-	mss := r.MTU() - header.TCPMinimumSize
+var optionPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, maxOptionSize)
+	},
+}
 
-	options := make([]byte, 40)
-	offset := header.EncodeMSSOption(mss, options)
+func getOptions() []byte {
+	return optionPool.Get().([]byte)
+}
 
-	if opts.TS {
+func putOptions(options []byte) {
+	// Reslice to full capacity.
+	optionPool.Put(options[0:cap(options)])
+}
+
+func makeSynOptions(opts header.TCPSynOptions) []byte {
+	// Emulate linux option order. This is as follows:
+	//
+	// if md5: NOP NOP MD5SIG 18 md5sig(16)
+	// if mss: MSS 4 mss(2)
+	// if ts and sack_advertise:
+	//	SACK 2 TIMESTAMP 2 timestamp(8)
+	// elif ts: NOP NOP TIMESTAMP 10 timestamp(8)
+	// elif sack: NOP NOP SACK 2
+	// if wscale: NOP WINDOW 3 ws(1)
+	// if sack_blocks: NOP NOP SACK ((2 + (#blocks * 8))
+	//	[for each block] start_seq(4) end_seq(4)
+	// if fastopen_cookie:
+	//	if exp: EXP (4 + len(cookie)) FASTOPEN_MAGIC(2)
+	// 	else: FASTOPEN (2 + len(cookie))
+	//	cookie(variable) [padding to four bytes]
+	//
+	options := getOptions()
+
+	// Always encode the mss.
+	offset := header.EncodeMSSOption(uint32(opts.MSS), options)
+
+	// Special ordering is required here. If both TS and SACK are enabled,
+	// then the SACK option precedes TS, with no padding. If they are
+	// enabled individually, then we see padding before the option.
+	if opts.TS && opts.SACKPermitted {
+		offset += header.EncodeSACKPermittedOption(options[offset:])
 		offset += header.EncodeTSOption(opts.TSVal, opts.TSEcr, options[offset:])
-	}
-
-	// NOTE: a WS of zero is a valid value and it indicates a scale of 1.
-	if opts.WS >= 0 {
-		// Initialize the WS option.
-		offset += header.EncodeWSOption(opts.WS, options[offset:])
-	}
-
-	if opts.SACKPermitted {
+	} else if opts.TS {
+		offset += header.EncodeNOP(options[offset:])
+		offset += header.EncodeNOP(options[offset:])
+		offset += header.EncodeTSOption(opts.TSVal, opts.TSEcr, options[offset:])
+	} else if opts.SACKPermitted {
+		offset += header.EncodeNOP(options[offset:])
+		offset += header.EncodeNOP(options[offset:])
 		offset += header.EncodeSACKPermittedOption(options[offset:])
 	}
 
-	offset += header.AddTCPOptionPadding(options, offset)
+	// Initialize the WS option.
+	if opts.WS >= 0 {
+		offset += header.EncodeNOP(options[offset:])
+		offset += header.EncodeWSOption(opts.WS, options[offset:])
+	}
 
-	return sendTCPWithOptions(r, id, nil, flags, seq, ack, rcvWnd, options[:offset])
+	// Padding to the end; note that this never apply unless we add a
+	// fastopen option, we always expect the offset to remain the same.
+	if delta := header.AddTCPOptionPadding(options, offset); delta != 0 {
+		panic("unexpected option encoding")
+	}
+
+	return options[:offset]
+}
+
+func sendSynTCP(r *stack.Route, id stack.TransportEndpointID, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size, opts header.TCPSynOptions) *tcpip.Error {
+	// The MSS in opts is automatically calculated as this function is
+	// called from many places and we don't want every call point being
+	// embedded with the MSS calculation.
+	if opts.MSS == 0 {
+		opts.MSS = uint16(r.MTU() - header.TCPMinimumSize)
+	}
+
+	options := makeSynOptions(opts)
+	err := sendTCPWithOptions(r, id, nil, flags, seq, ack, rcvWnd, options)
+	putOptions(options)
+	return err
 }
 
 // sendTCPWithOptions sends a TCP segment with the provided options via the
@@ -553,10 +612,14 @@ func sendTCP(r *stack.Route, id stack.TransportEndpointID, data buffer.View, fla
 	return r.WritePacket(&hdr, data, ProtocolNumber)
 }
 
-// sendRaw sends a TCP segment to the endpoint's peer.
-func (e *endpoint) sendRaw(data buffer.View, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size) *tcpip.Error {
-	options := make([]byte, 40)
+// makeOptions makes an options slice.
+func (e *endpoint) makeOptions(sackBlocks []header.SACKBlock) []byte {
+	options := getOptions()
 	offset := 0
+
+	// N.B. the ordering here matches the ordering used by Linux internally
+	// and described in the raw makeOptions function. We don't include
+	// unnecessary cases here (post connection.)
 	if e.sendTSOk {
 		// Embed the timestamp if timestamp has been enabled.
 		//
@@ -570,20 +633,39 @@ func (e *endpoint) sendRaw(data buffer.View, flags byte, seq, ack seqnum.Value, 
 		// timestamp clock.
 		//
 		// Ref: https://tools.ietf.org/html/rfc7323#section-5.4.
+		offset += header.EncodeNOP(options[offset:])
+		offset += header.EncodeNOP(options[offset:])
 		offset += header.EncodeTSOption(e.timestamp(), uint32(e.recentTS), options[offset:])
 	}
-	if e.sack.NumBlocks > 0 {
-		if e.sackPermitted && e.state == stateConnected && e.rcv.pendingBufSize > 0 && (flags&flagAck != 0) {
-			offset += header.EncodeSACKBlocks(e.sack.Blocks[:e.sack.NumBlocks], options[offset:])
-		}
+	if e.sackPermitted && len(sackBlocks) > 0 {
+		offset += header.EncodeNOP(options[offset:])
+		offset += header.EncodeNOP(options[offset:])
+		offset += header.EncodeSACKBlocks(sackBlocks, options[offset:])
 	}
-	if offset != 0 {
-		// Now add any padding bytes that might be required to quad
-		// align the options.
-		offset += header.AddTCPOptionPadding(options, offset)
-		return sendTCPWithOptions(&e.route, e.id, data, flags, seq, ack, rcvWnd, options[:offset])
+
+	// We expect the above to produce an aligned offset.
+	if delta := header.AddTCPOptionPadding(options, offset); delta != 0 {
+		panic("unexpected option encoding")
 	}
-	return sendTCP(&e.route, e.id, data, flags, seq, ack, rcvWnd)
+
+	return options[:offset]
+}
+
+// sendRaw sends a TCP segment to the endpoint's peer.
+func (e *endpoint) sendRaw(data buffer.View, flags byte, seq, ack seqnum.Value, rcvWnd seqnum.Size) *tcpip.Error {
+	var sackBlocks []header.SACKBlock
+	if e.state == stateConnected && e.rcv.pendingBufSize > 0 && (flags&flagAck != 0) {
+		sackBlocks = e.sack.Blocks[:e.sack.NumBlocks]
+	}
+	options := e.makeOptions(sackBlocks)
+	if len(options) > 0 {
+		err := sendTCPWithOptions(&e.route, e.id, data, flags, seq, ack, rcvWnd, options)
+		putOptions(options)
+		return err
+	}
+	err := sendTCP(&e.route, e.id, data, flags, seq, ack, rcvWnd)
+	putOptions(options)
+	return err
 }
 
 func (e *endpoint) handleWrite() bool {
