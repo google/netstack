@@ -147,22 +147,24 @@ func (d *deadlineTimer) setDeadline(cancelCh *chan struct{}, timer **time.Timer,
 
 	// "A zero value for t means I/O operations will not time out."
 	// - net.Conn.SetDeadline
-	if !t.IsZero() {
-		timeout := t.Sub(time.Now())
-		if timeout <= 0 {
-			close(*cancelCh)
-			return
-		}
-
-		// Timer.Stop returns whether or not the AfterFunc has started, but
-		// does not indicate whether or not it has completed. Make a copy of
-		// the cancel channel to prevent this code from racing with the next
-		// call of setDeadline replacing *cancelCh.
-		ch := *cancelCh
-		*timer = time.AfterFunc(timeout, func() {
-			close(ch)
-		})
+	if t.IsZero() {
+		return
 	}
+
+	timeout := t.Sub(time.Now())
+	if timeout <= 0 {
+		close(*cancelCh)
+		return
+	}
+
+	// Timer.Stop returns whether or not the AfterFunc has started, but
+	// does not indicate whether or not it has completed. Make a copy of
+	// the cancel channel to prevent this code from racing with the next
+	// call of setDeadline replacing *cancelCh.
+	ch := *cancelCh
+	*timer = time.AfterFunc(timeout, func() {
+		close(ch)
+	})
 }
 
 // SetReadDeadline implements net.Conn.SetReadDeadline and
