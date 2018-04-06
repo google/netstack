@@ -5,6 +5,8 @@
 package tmutex
 
 import (
+	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -133,6 +135,7 @@ func TestMutualExclusionWithTryLock(t *testing.T) {
 	const gr = 1000
 	const iters = 100000
 	total := int64(gr * iters)
+	var tryTotal int64
 	v := int64(0)
 	var wg sync.WaitGroup
 	for i := 0; i < gr; i++ {
@@ -154,14 +157,91 @@ func TestMutualExclusionWithTryLock(t *testing.T) {
 					local++
 				}
 			}
-			atomic.AddInt64(&total, local)
+			atomic.AddInt64(&tryTotal, local)
 			wg.Done()
 		}()
 	}
 
 	wg.Wait()
 
+	t.Logf("tryTotal = %d", tryTotal)
+	total += tryTotal
+
 	if v != total {
 		t.Fatalf("Bad count: got %v, want %v", v, total)
+	}
+}
+
+// BenchmarkTmutex is equivalent to TestMutualExclusion, with the following
+// differences:
+//
+// - The number of goroutines is variable, with the maximum value depending on
+// GOMAXPROCS.
+//
+// - The number of iterations per benchmark is controlled by the benchmarking
+// framework.
+//
+// - Care is taken to ensure that all goroutines participating in the benchmark
+// have been created before the benchmark begins.
+func BenchmarkTmutex(b *testing.B) {
+	for n, max := 1, 4*runtime.GOMAXPROCS(0); n > 0 && n <= max; n *= 2 {
+		b.Run(fmt.Sprintf("%d", n), func(b *testing.B) {
+			var m Mutex
+			m.Init()
+
+			var ready sync.WaitGroup
+			begin := make(chan struct{})
+			var end sync.WaitGroup
+			for i := 0; i < n; i++ {
+				ready.Add(1)
+				end.Add(1)
+				go func() {
+					ready.Done()
+					<-begin
+					for j := 0; j < b.N; j++ {
+						m.Lock()
+						m.Unlock()
+					}
+					end.Done()
+				}()
+			}
+
+			ready.Wait()
+			b.ResetTimer()
+			close(begin)
+			end.Wait()
+		})
+	}
+}
+
+// BenchmarkSyncMutex is equivalent to BenchmarkTmutex, but uses sync.Mutex as
+// a comparison point.
+func BenchmarkSyncMutex(b *testing.B) {
+	for n, max := 1, 4*runtime.GOMAXPROCS(0); n > 0 && n <= max; n *= 2 {
+		b.Run(fmt.Sprintf("%d", n), func(b *testing.B) {
+			var m sync.Mutex
+
+			var ready sync.WaitGroup
+			begin := make(chan struct{})
+			var end sync.WaitGroup
+			for i := 0; i < n; i++ {
+				ready.Add(1)
+				end.Add(1)
+				go func() {
+					ready.Done()
+					<-begin
+					for j := 0; j < b.N; j++ {
+						m.Lock()
+						m.Unlock()
+					}
+					end.Done()
+				}()
+			}
+
+			ready.Wait()
+			b.ResetTimer()
+			close(begin)
+			end.Wait()
+		})
 	}
 }
