@@ -5,6 +5,7 @@
 package gonet
 
 import (
+	"fmt"
 	"net"
 	"reflect"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/google/netstack/tcpip/transport/tcp"
 	"github.com/google/netstack/tcpip/transport/udp"
 	"github.com/google/netstack/waiter"
+	"golang.org/x/net/nettest"
 )
 
 const (
@@ -132,20 +134,16 @@ func TestCloseReader(t *testing.T) {
 
 		// Give c.Read() a chance to block before closing the connection.
 		time.AfterFunc(time.Millisecond*50, func() {
-			t.Log("c.Close()")
 			c.Close()
-			t.Log("c.Close() ok")
 		})
 
 		buf := make([]byte, 256)
-		t.Log("c.Read()")
 		n, err := c.Read(buf)
 		got, ok := err.(*net.OpError)
 		want := tcpip.ErrConnectionAborted
 		if n != 0 || !ok || got.Err.Error() != want.String() {
 			t.Errorf("c.Read() = (%d, %v), want (0, OpError(%v))", n, err, want)
 		}
-		t.Logf("c.Read() = %d, %v", n, err)
 	}()
 	sender, err := connect(s, addr)
 	if err != nil {
@@ -188,20 +186,16 @@ func TestCloseReaderWithForwarder(t *testing.T) {
 
 		// Give c.Read() a chance to block before closing the connection.
 		time.AfterFunc(time.Millisecond*50, func() {
-			t.Log("c.Close()")
 			c.Close()
-			t.Log("c.Close() ok")
 		})
 
 		buf := make([]byte, 256)
-		t.Log("c.Read()")
 		n, e := c.Read(buf)
 		got, ok := e.(*net.OpError)
 		want := tcpip.ErrConnectionAborted
 		if n != 0 || !ok || got.Err.Error() != want.String() {
 			t.Errorf("c.Read() = (%d, %v), want (0, OpError(%v))", n, e, want)
 		}
-		t.Logf("c.Read() = %d, %v", n, e)
 	})
 	s.SetTransportProtocolHandler(tcp.ProtocolNumber, fwd.HandlePacket)
 
@@ -244,20 +238,16 @@ func TestDeadlineChange(t *testing.T) {
 		c.SetDeadline(time.Now().Add(time.Minute))
 		// Give c.Read() a chance to block before closing the connection.
 		time.AfterFunc(time.Millisecond*50, func() {
-			t.Log("c.SetDeadline()")
 			c.SetDeadline(time.Now().Add(time.Millisecond * 10))
-			t.Log("c.SetDeadline() ok")
 		})
 
 		buf := make([]byte, 256)
-		t.Log("c.Read()")
 		n, err := c.Read(buf)
 		got, ok := err.(*net.OpError)
 		want := "i/o timeout"
 		if n != 0 || !ok || got.Err == nil || got.Err.Error() != want {
 			t.Errorf("c.Read() = (%d, %v), want (0, OpError(%s))", n, err, want)
 		}
-		t.Logf("c.Read() = %d, %v", n, err)
 	}()
 	sender, err := connect(s, addr)
 	if err != nil {
@@ -324,10 +314,10 @@ func TestPacketConnTransfer(t *testing.T) {
 	}
 }
 
-func TestTCPConnTransfer(t *testing.T) {
+func makePipe() (c1, c2 net.Conn, stop func(), err error) {
 	s, e := newLoopbackStack()
 	if e != nil {
-		t.Fatalf("newLoopbackStack() = %v", e)
+		return nil, nil, nil, fmt.Errorf("newLoopbackStack() = %v", e)
 	}
 
 	ip := tcpip.Address(net.IPv4(169, 254, 10, 1).To4())
@@ -336,29 +326,44 @@ func TestTCPConnTransfer(t *testing.T) {
 
 	l, err := NewListener(s, addr, ipv4.ProtocolNumber)
 	if err != nil {
-		t.Fatal("NewListener:", err)
+		return nil, nil, nil, fmt.Errorf("NewListener: %v", err)
 	}
-	defer func() {
-		if err := l.Close(); err != nil {
-			t.Error("l.Close():", err)
-		}
-	}()
 
-	c1, err := DialTCP(s, addr, ipv4.ProtocolNumber)
+	c1, err = DialTCP(s, addr, ipv4.ProtocolNumber)
 	if err != nil {
-		t.Fatal("DialTCP:", err)
+		l.Close()
+		return nil, nil, nil, fmt.Errorf("DialTCP: %v", err)
+	}
+
+	c2, err = l.Accept()
+	if err != nil {
+		l.Close()
+		c1.Close()
+		return nil, nil, nil, fmt.Errorf("l.Accept: %v", err)
+	}
+
+	stop = func() {
+		c1.Close()
+		c2.Close()
+	}
+
+	if err := l.Close(); err != nil {
+		stop()
+		return nil, nil, nil, fmt.Errorf("l.Close(): %v", err)
+	}
+
+	return c1, c2, stop, nil
+}
+
+func TestTCPConnTransfer(t *testing.T) {
+	c1, c2, _, err := makePipe()
+	if err != nil {
+		t.Fatal(err)
 	}
 	defer func() {
 		if err := c1.Close(); err != nil {
 			t.Error("c1.Close():", err)
 		}
-	}()
-
-	c2, err := l.Accept()
-	if err != nil {
-		t.Fatal("l.Accept:", err)
-	}
-	defer func() {
 		if err := c2.Close(); err != nil {
 			t.Error("c2.Close():", err)
 		}
@@ -412,4 +417,8 @@ func TestTCPDialError(t *testing.T) {
 	if !ok || got.Err.Error() != want.String() {
 		t.Errorf("Got DialTCP() = %v, want = %v", err, tcpip.ErrNoRoute)
 	}
+}
+
+func TestNetTest(t *testing.T) {
+	nettest.TestConn(t, makePipe)
 }

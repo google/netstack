@@ -136,6 +136,15 @@ func (d *deadlineTimer) setDeadline(cancelCh *chan struct{}, timer **time.Timer,
 		*cancelCh = make(chan struct{})
 	}
 
+	// Create a new channel if we already closed it due to setting an already
+	// expired time. We won't race with the timer because we already handled
+	// that above.
+	select {
+	case <-*cancelCh:
+		*cancelCh = make(chan struct{})
+	default:
+	}
+
 	// "A zero value for t means I/O operations will not time out."
 	// - net.Conn.SetDeadline
 	if !t.IsZero() {
