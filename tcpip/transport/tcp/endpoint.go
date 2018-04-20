@@ -376,10 +376,11 @@ func (e *endpoint) cleanup() {
 // Read reads data from the endpoint.
 func (e *endpoint) Read(*tcpip.FullAddress) (buffer.View, *tcpip.Error) {
 	e.mu.RLock()
-
 	// The endpoint can be read if it's connected, or if it's already closed
-	// but has some pending unread data.
-	if s := e.state; s != stateConnected && s != stateClosed {
+	// but has some pending unread data. Also note that a RST being received
+	// would cause the state to become stateError so we should allow the
+	// reads to proceed before returning a ECONNRESET.
+	if s := e.state; s != stateConnected && s != stateClosed && e.rcvBufUsed == 0 {
 		e.mu.RUnlock()
 		if s == stateError {
 			return buffer.View{}, e.hardError
