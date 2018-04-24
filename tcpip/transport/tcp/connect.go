@@ -855,6 +855,9 @@ func (e *endpoint) protocolMainLoop(passive bool) *tcpip.Error {
 
 	e.waiterQueue.Notify(waiter.EventOut)
 
+	// When the protocol loop exits we should wake up our waiters with EventHUp.
+	defer e.waiterQueue.Notify(waiter.EventHUp)
+
 	// Set up the functions that will be called when the main protocol loop
 	// wakes up.
 	funcs := []struct {
