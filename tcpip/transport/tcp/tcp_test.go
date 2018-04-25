@@ -6,6 +6,7 @@ package tcp_test
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 	"time"
 
@@ -1996,15 +1997,27 @@ func DisabledTestFastRecovery(t *testing.T) {
 		c.CheckNoPacketTimeout("More packets received than expected for this cwnd.", 50*time.Millisecond)
 	}
 
-	// Send 10 duplicate acks. This should force an immediate retransmit of
-	// the pending packet, and inflation of cwnd to expected/2+7.
+	// Send 3 duplicate acks. This should force an immediate retransmit of
+	// the pending packet and put the sender into fast recovery.
 	rtxOffset := bytesRead - maxPayload*expected
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 3; i++ {
 		c.SendAck(790, rtxOffset)
 	}
 
 	// Receive the retransmitted packet.
 	c.ReceiveAndCheckPacket(data, rtxOffset, maxPayload)
+
+	// Now send 7 mode duplicate acks. Each of these should cause a window
+	// inflation by 1 and cause the sender to send an extra packet.
+	for i := 0; i < 7; i++ {
+		c.SendAck(790, rtxOffset)
+	}
+
+	recover := bytesRead
+
+	// Ensure no new packets arrive.
+	c.CheckNoPacketTimeout("More packets received than expected during recovery after dupacks for this cwnd.",
+		50*time.Millisecond)
 
 	// Acknowledge half of the pending data.
 	rtxOffset = bytesRead - expected*maxPayload/2
@@ -2013,24 +2026,37 @@ func DisabledTestFastRecovery(t *testing.T) {
 	// Receive the retransmit due to partial ack.
 	c.ReceiveAndCheckPacket(data, rtxOffset, maxPayload)
 
-	// This part is tricky: when the retransmit happened, we had "expected"
-	// packets pending, cwnd reset to expected/2, and ssthresh set to
-	// expected/2. By acknowledging expected/2 packets, 7 new packets are
-	// allowed to be sent immediately.
-	for j := 0; j < 7; j++ {
+	// Receive the 10 extra packets that should have been released due to
+	// the congestion window inflation in recovery.
+	for i := 0; i < 10; i++ {
 		c.ReceiveAndCheckPacket(data, bytesRead, maxPayload)
 		bytesRead += maxPayload
 	}
 
-	c.CheckNoPacketTimeout("More packets received than expected for this cwnd.", 50*time.Millisecond)
+	// A partial ACK during recovery should reduce congestion window by the
+	// number acked. Since we had "expected" packets outstanding before sending
+	// partial ack and we acked expected/2 , the cwnd and outstanding should
+	// be expected/2 + 7. Which means the sender should not send any more packets
+	// till we ack this one.
+	c.CheckNoPacketTimeout("More packets received than expected during recovery after partial ack for this cwnd.",
+		50*time.Millisecond)
 
-	// Acknowledge all pending data.
-	c.SendAck(790, bytesRead)
+	// Acknowledge all pending data to recover point.
+	c.SendAck(790, recover)
 
-	// Now the inflation is removed, so cwnd is expected/2. But since we've
-	// received expected+7 packets since cwnd changed, it must now be set
-	// expected/2 + 2, given that floor((expected+7)/(expected/2)) == 2.
-	expected = expected/2 + 2
+	// At this point, the cwnd should reset to expected/2 and there are 10
+	// packets outstanding.
+	//
+	// NOTE: Technically netstack is incorrect in that we adjust the cwnd on
+	// the same segment that takes us out of recovery. But because of that
+	// the actual cwnd at exit of recovery will be expected/2 + 1 as we
+	// acked a cwnd worth of packets which will increase the cwnd further by
+	// 1 in congestion avoidance.
+	//
+	// Now in the first iteration since there are 10 packets outstanding.
+	// We would expect to get expected/2 +1 - 10 packets. But subsequent
+	// iterations will send us expected/2 + 1 + 1 (per iteration).
+	expected = expected/2 + 1 - 10
 	for i := 0; i < iterations; i++ {
 		// Read all packets expected on this iteration. Don't
 		// acknowledge any of them just yet, so that we can measure the
@@ -2042,13 +2068,19 @@ func DisabledTestFastRecovery(t *testing.T) {
 
 		// Check we don't receive any more packets on this iteration.
 		// The timeout can't be too high or we'll trigger a timeout.
-		c.CheckNoPacketTimeout("More packets received than expected for this cwnd.", 50*time.Millisecond)
+		c.CheckNoPacketTimeout(fmt.Sprintf("More packets received(after deflation) than expected %d for this cwnd.", expected), 50*time.Millisecond)
 
 		// Acknowledge all the data received so far.
 		c.SendAck(790, bytesRead)
 
 		// In cogestion avoidance, the packets trains increase by 1 in
 		// each iteration.
+		if i == 0 {
+			// After the first iteration we expect to get the full
+			// congestion window worth of packets in every
+			// iteration.
+			expected += 10
+		}
 		expected++
 	}
 }
