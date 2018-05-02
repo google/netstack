@@ -16,6 +16,7 @@ import (
 	"github.com/google/netstack/tcpip/network/arp"
 	"github.com/google/netstack/tcpip/network/ipv4"
 	"github.com/google/netstack/tcpip/stack"
+	"github.com/google/netstack/tcpip/transport/ping"
 )
 
 const (
@@ -32,7 +33,7 @@ type testContext struct {
 }
 
 func newTestContext(t *testing.T) *testContext {
-	s := stack.New(&tcpip.StdClock{}, []string{ipv4.ProtocolName, arp.ProtocolName}, []string{ipv4.PingProtocolName})
+	s := stack.New(&tcpip.StdClock{}, []string{ipv4.ProtocolName, arp.ProtocolName}, []string{ping.ProtocolName4})
 
 	const defaultMTU = 65536
 	id, linkEP := channel.New(256, defaultMTU, stackLinkAddr)
