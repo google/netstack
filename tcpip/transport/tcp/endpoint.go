@@ -203,9 +203,15 @@ type endpoint struct {
 	// The goroutine drain completion notification channel.
 	drainDone chan struct{}
 
+	// The goroutine undrain notification channel.
+	undrain chan struct{}
+
 	// probe if not nil is invoked on every received segment. It is passed
 	// a copy of the current state of the endpoint.
 	probe stack.TCPProbeFunc
+
+	// The following are only used to assist the restore run to re-connect.
+	connectingAddress tcpip.Address
 }
 
 func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waiterQueue *waiter.Queue) *endpoint {
@@ -786,6 +792,8 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) *tcpip.Error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	connectingAddr := addr.Addr
+
 	netProto, err := e.checkV4Mapped(&addr)
 	if err != nil {
 		return err
@@ -891,6 +899,7 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) *tcpip.Error {
 	e.route = r.Clone()
 	e.boundNICID = nicid
 	e.effectiveNetProtos = netProtos
+	e.connectingAddress = connectingAddr
 	e.workerRunning = true
 
 	go e.protocolMainLoop(false)
