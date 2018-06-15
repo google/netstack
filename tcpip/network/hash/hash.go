@@ -6,9 +6,9 @@
 package hash
 
 import (
-	"crypto/rand"
 	"encoding/binary"
 
+	"github.com/google/netstack/rand"
 	"github.com/google/netstack/tcpip/header"
 )
 

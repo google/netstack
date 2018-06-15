@@ -5,12 +5,12 @@
 package tcp
 
 import (
-	"crypto/rand"
 	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/netstack/rand"
 	"github.com/google/netstack/sleep"
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"

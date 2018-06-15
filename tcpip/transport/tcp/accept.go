@@ -5,7 +5,6 @@
 package tcp
 
 import (
-	"crypto/rand"
 	"crypto/sha1"
 	"encoding/binary"
 	"hash"
@@ -13,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/netstack/rand"
 	"github.com/google/netstack/sleep"
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/header"

@@ -7,12 +7,12 @@ package dhcp
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"fmt"
 	"log"
 	"sync"
 	"time"
 
+	"github.com/google/netstack/rand"
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/network/ipv4"
 	"github.com/google/netstack/tcpip/stack"
