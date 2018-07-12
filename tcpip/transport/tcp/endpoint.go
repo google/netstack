@@ -208,10 +208,6 @@ type endpoint struct {
 	// read by Accept() calls.
 	acceptedChan chan *endpoint
 
-	// acceptedEndpoints is only used to save / restore the channel buffer.
-	// FIXME
-	acceptedEndpoints []*endpoint
-
 	// The following are only used from the protocol goroutine, and
 	// therefore don't need locks to protect them.
 	rcv *receiver
