@@ -108,6 +108,9 @@ func New(opts *Options) tcpip.LinkEndpointID {
 // dispatches them via the provided dispatcher.
 func (e *endpoint) Attach(dispatcher stack.NetworkDispatcher) {
 	e.attached = true
+	// Link endpoints are not savable. When transportation endpoints are
+	// saved, they stop sending outgoing packets and all incoming packets
+	// are rejected.
 	go e.dispatchLoop(dispatcher)
 }
 

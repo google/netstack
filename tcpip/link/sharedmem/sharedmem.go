@@ -142,6 +142,9 @@ func (e *endpoint) Attach(dispatcher stack.NetworkDispatcher) {
 	if !e.workerStarted && atomic.LoadUint32(&e.stopRequested) == 0 {
 		e.workerStarted = true
 		e.completed.Add(1)
+		// Link endpoints are not savable. When transportation endpoints
+		// are saved, they stop sending outgoing packets and all
+		// incoming packets are rejected.
 		go e.dispatchLoop(dispatcher)
 	}
 	e.mu.Unlock()
