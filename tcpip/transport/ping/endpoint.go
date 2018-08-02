@@ -26,6 +26,7 @@ import (
 	"github.com/google/netstack/waiter"
 )
 
+// +stateify savable
 type pingPacket struct {
 	pingPacketEntry
 	senderAddress tcpip.FullAddress
