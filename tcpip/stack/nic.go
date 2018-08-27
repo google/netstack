@@ -22,6 +22,7 @@ import (
 	"github.com/google/netstack/ilist"
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
+	"github.com/google/netstack/tcpip/header"
 )
 
 // NIC represents a "network interface card" to which the networking stack is
@@ -286,6 +287,10 @@ func (n *NIC) DeliverNetworkPacket(linkEP LinkEndpoint, remoteLinkAddr tcpip.Lin
 		return
 	}
 
+	if netProto.Number() == header.IPv4ProtocolNumber || netProto.Number() == header.IPv6ProtocolNumber {
+		n.stack.stats.IP.PacketsReceived.Increment()
+	}
+
 	if len(vv.First()) < netProto.MinimumPacketSize() {
 		n.stack.stats.MalformedRcvdPackets.Increment()
 		return
@@ -330,7 +335,7 @@ func (n *NIC) DeliverNetworkPacket(linkEP LinkEndpoint, remoteLinkAddr tcpip.Lin
 	}
 
 	if ref == nil {
-		n.stack.stats.UnknownNetworkEndpointRcvdPackets.Increment()
+		n.stack.stats.IP.InvalidAddressesReceived.Increment()
 		return
 	}
 

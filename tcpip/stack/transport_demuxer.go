@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
+	"github.com/google/netstack/tcpip/header"
 )
 
 type protocolIDs struct {
@@ -111,6 +112,10 @@ func (d *transportDemuxer) deliverPacket(r *Route, protocol tcpip.TransportProto
 
 	// Fail if we didn't find one.
 	if ep == nil {
+		// UDP packet could not be delivered to an unknown destination port.
+		if protocol == header.UDPProtocolNumber {
+			r.Stats().UDP.UnknownPortErrors.Increment()
+		}
 		return false
 	}
 
