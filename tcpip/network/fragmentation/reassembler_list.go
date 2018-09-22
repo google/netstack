@@ -1,5 +1,20 @@
 package fragmentation
 
+// ElementMapper provides an identity mapping by default.
+//
+// This can be replaced to provide a struct that maps elements to linker
+// objects, if they are not the same. An ElementMapper is not typically
+// required if: Linker is left as is, Element is left as is, or Linker and
+// Element are the same type.
+type reassemblerElementMapper struct{}
+
+// linkerFor maps an Element to a Linker.
+//
+// This default implementation should be inlined.
+//
+//go:nosplit
+func (reassemblerElementMapper) linkerFor(elem *reassembler) *reassembler { return elem }
+
 // List is an intrusive list. Entries can be added to or removed from the list
 // in O(1) time and with no additional memory allocations.
 //
@@ -9,6 +24,8 @@ package fragmentation
 //      for e := l.Front(); e != nil; e = e.Next() {
 // 		// do something with e.
 //      }
+//
+// +stateify savable
 type reassemblerList struct {
 	head *reassembler
 	tail *reassembler
@@ -37,11 +54,11 @@ func (l *reassemblerList) Back() *reassembler {
 
 // PushFront inserts the element e at the front of list l.
 func (l *reassemblerList) PushFront(e *reassembler) {
-	e.SetNext(l.head)
-	e.SetPrev(nil)
+	reassemblerElementMapper{}.linkerFor(e).SetNext(l.head)
+	reassemblerElementMapper{}.linkerFor(e).SetPrev(nil)
 
 	if l.head != nil {
-		l.head.SetPrev(e)
+		reassemblerElementMapper{}.linkerFor(l.head).SetPrev(e)
 	} else {
 		l.tail = e
 	}
@@ -51,11 +68,11 @@ func (l *reassemblerList) PushFront(e *reassembler) {
 
 // PushBack inserts the element e at the back of list l.
 func (l *reassemblerList) PushBack(e *reassembler) {
-	e.SetNext(nil)
-	e.SetPrev(l.tail)
+	reassemblerElementMapper{}.linkerFor(e).SetNext(nil)
+	reassemblerElementMapper{}.linkerFor(e).SetPrev(l.tail)
 
 	if l.tail != nil {
-		l.tail.SetNext(e)
+		reassemblerElementMapper{}.linkerFor(l.tail).SetNext(e)
 	} else {
 		l.head = e
 	}
@@ -69,8 +86,8 @@ func (l *reassemblerList) PushBackList(m *reassemblerList) {
 		l.head = m.head
 		l.tail = m.tail
 	} else if m.head != nil {
-		l.tail.SetNext(m.head)
-		m.head.SetPrev(l.tail)
+		reassemblerElementMapper{}.linkerFor(l.tail).SetNext(m.head)
+		reassemblerElementMapper{}.linkerFor(m.head).SetPrev(l.tail)
 
 		l.tail = m.tail
 	}
@@ -81,13 +98,13 @@ func (l *reassemblerList) PushBackList(m *reassemblerList) {
 
 // InsertAfter inserts e after b.
 func (l *reassemblerList) InsertAfter(b, e *reassembler) {
-	a := b.Next()
-	e.SetNext(a)
-	e.SetPrev(b)
-	b.SetNext(e)
+	a := reassemblerElementMapper{}.linkerFor(b).Next()
+	reassemblerElementMapper{}.linkerFor(e).SetNext(a)
+	reassemblerElementMapper{}.linkerFor(e).SetPrev(b)
+	reassemblerElementMapper{}.linkerFor(b).SetNext(e)
 
 	if a != nil {
-		a.SetPrev(e)
+		reassemblerElementMapper{}.linkerFor(a).SetPrev(e)
 	} else {
 		l.tail = e
 	}
@@ -95,13 +112,13 @@ func (l *reassemblerList) InsertAfter(b, e *reassembler) {
 
 // InsertBefore inserts e before a.
 func (l *reassemblerList) InsertBefore(a, e *reassembler) {
-	b := a.Prev()
-	e.SetNext(a)
-	e.SetPrev(b)
-	a.SetPrev(e)
+	b := reassemblerElementMapper{}.linkerFor(a).Prev()
+	reassemblerElementMapper{}.linkerFor(e).SetNext(a)
+	reassemblerElementMapper{}.linkerFor(e).SetPrev(b)
+	reassemblerElementMapper{}.linkerFor(a).SetPrev(e)
 
 	if b != nil {
-		b.SetNext(e)
+		reassemblerElementMapper{}.linkerFor(b).SetNext(e)
 	} else {
 		l.head = e
 	}
@@ -109,17 +126,17 @@ func (l *reassemblerList) InsertBefore(a, e *reassembler) {
 
 // Remove removes e from l.
 func (l *reassemblerList) Remove(e *reassembler) {
-	prev := e.Prev()
-	next := e.Next()
+	prev := reassemblerElementMapper{}.linkerFor(e).Prev()
+	next := reassemblerElementMapper{}.linkerFor(e).Next()
 
 	if prev != nil {
-		prev.SetNext(next)
+		reassemblerElementMapper{}.linkerFor(prev).SetNext(next)
 	} else {
 		l.head = next
 	}
 
 	if next != nil {
-		next.SetPrev(prev)
+		reassemblerElementMapper{}.linkerFor(next).SetPrev(prev)
 	} else {
 		l.tail = prev
 	}
@@ -128,6 +145,8 @@ func (l *reassemblerList) Remove(e *reassembler) {
 // Entry is a default implementation of Linker. Users can add anonymous fields
 // of this type to their structs to make them automatically implement the
 // methods needed by List.
+//
+// +stateify savable
 type reassemblerEntry struct {
 	next *reassembler
 	prev *reassembler
@@ -144,11 +163,11 @@ func (e *reassemblerEntry) Prev() *reassembler {
 }
 
 // SetNext assigns 'entry' as the entry that follows e in the list.
-func (e *reassemblerEntry) SetNext(entry *reassembler) {
-	e.next = entry
+func (e *reassemblerEntry) SetNext(elem *reassembler) {
+	e.next = elem
 }
 
 // SetPrev assigns 'entry' as the entry that precedes e in the list.
-func (e *reassemblerEntry) SetPrev(entry *reassembler) {
-	e.prev = entry
+func (e *reassemblerEntry) SetPrev(elem *reassembler) {
+	e.prev = elem
 }
