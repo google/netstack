@@ -17,6 +17,7 @@ package header
 import (
 	"encoding/binary"
 
+	"github.com/google/btree"
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/seqnum"
 )
@@ -129,6 +130,16 @@ type SACKBlock struct {
 	// End indicates the sequence number immediately following the last
 	// sequence number of this block.
 	End seqnum.Value
+}
+
+// Less returns true if r.Start < b.Start.
+func (r SACKBlock) Less(b btree.Item) bool {
+	return r.Start.LessThan(b.(SACKBlock).Start)
+}
+
+// Contains returns true if b is completely contained in r.
+func (r SACKBlock) Contains(b SACKBlock) bool {
+	return r.Start.LessThanEq(b.Start) && b.End.LessThanEq(r.End)
 }
 
 // TCPOptions are used to parse and cache the TCP segment options for a non
