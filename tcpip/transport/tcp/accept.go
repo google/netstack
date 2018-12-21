@@ -15,13 +15,13 @@
 package tcp
 
 import (
+	"crypto/sha1"
 	"encoding/binary"
 	"hash"
 	"io"
 	"sync"
 	"time"
 
-	"crypto/sha1"
 	"github.com/google/netstack/rand"
 	"github.com/google/netstack/sleep"
 	"github.com/google/netstack/tcpip"
