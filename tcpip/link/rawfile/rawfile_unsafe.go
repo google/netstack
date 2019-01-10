@@ -23,6 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/google/netstack/tcpip"
+	"golang.org/x/sys/unix"
 )
 
 // GetMTU determines the MTU of a network interface device.
@@ -94,12 +95,6 @@ func NonBlockingWrite2(fd int, b1, b2 []byte) *tcpip.Error {
 	return nil
 }
 
-type pollEvent struct {
-	fd      int32
-	events  int16
-	revents int16
-}
-
 // BlockingRead reads from a file descriptor that is set up as non-blocking. If
 // no data is available, it will block in a poll() syscall until the file
 // descirptor becomes readable.
@@ -110,12 +105,14 @@ func BlockingRead(fd int, b []byte) (int, *tcpip.Error) {
 			return int(n), nil
 		}
 
-		event := pollEvent{
-			fd:     int32(fd),
-			events: 1, // POLLIN
+		event := []unix.PollFd{
+			{
+				Fd:     int32(fd),
+				Events: unix.POLLIN,
+			},
 		}
 
-		_, e = blockingPoll(&event, 1, -1)
+		_, e = blockingPoll(event, -1)
 		if e != 0 && e != syscall.EINTR {
 			return 0, TranslateErrno(e)
 		}
@@ -132,14 +129,24 @@ func BlockingReadv(fd int, iovecs []syscall.Iovec) (int, *tcpip.Error) {
 			return int(n), nil
 		}
 
-		event := pollEvent{
-			fd:     int32(fd),
-			events: 1, // POLLIN
+		event := []unix.PollFd{
+			{
+				Fd:     int32(fd),
+				Events: unix.POLLIN,
+			},
 		}
 
-		_, e = blockingPoll(&event, 1, -1)
+		_, e = blockingPoll(event, -1)
 		if e != 0 && e != syscall.EINTR {
 			return 0, TranslateErrno(e)
 		}
 	}
+}
+
+func blockingPoll(fds []unix.PollFd, timeout int) (int, syscall.Errno) {
+	n, err := unix.Poll(fds, timeout)
+	if err != nil {
+		return n, err.(syscall.Errno)
+	}
+	return n, 0
 }
