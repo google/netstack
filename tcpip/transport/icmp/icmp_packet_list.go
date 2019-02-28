@@ -1,4 +1,4 @@
-package ping
+package icmp
 
 // ElementMapper provides an identity mapping by default.
 //
@@ -6,14 +6,14 @@ package ping
 // objects, if they are not the same. An ElementMapper is not typically
 // required if: Linker is left as is, Element is left as is, or Linker and
 // Element are the same type.
-type pingPacketElementMapper struct{}
+type icmpPacketElementMapper struct{}
 
 // linkerFor maps an Element to a Linker.
 //
 // This default implementation should be inlined.
 //
 //go:nosplit
-func (pingPacketElementMapper) linkerFor(elem *pingPacket) *pingPacket { return elem }
+func (icmpPacketElementMapper) linkerFor(elem *icmpPacket) *icmpPacket { return elem }
 
 // List is an intrusive list. Entries can be added to or removed from the list
 // in O(1) time and with no additional memory allocations.
@@ -26,39 +26,39 @@ func (pingPacketElementMapper) linkerFor(elem *pingPacket) *pingPacket { return 
 //      }
 //
 // +stateify savable
-type pingPacketList struct {
-	head *pingPacket
-	tail *pingPacket
+type icmpPacketList struct {
+	head *icmpPacket
+	tail *icmpPacket
 }
 
 // Reset resets list l to the empty state.
-func (l *pingPacketList) Reset() {
+func (l *icmpPacketList) Reset() {
 	l.head = nil
 	l.tail = nil
 }
 
 // Empty returns true iff the list is empty.
-func (l *pingPacketList) Empty() bool {
+func (l *icmpPacketList) Empty() bool {
 	return l.head == nil
 }
 
 // Front returns the first element of list l or nil.
-func (l *pingPacketList) Front() *pingPacket {
+func (l *icmpPacketList) Front() *icmpPacket {
 	return l.head
 }
 
 // Back returns the last element of list l or nil.
-func (l *pingPacketList) Back() *pingPacket {
+func (l *icmpPacketList) Back() *icmpPacket {
 	return l.tail
 }
 
 // PushFront inserts the element e at the front of list l.
-func (l *pingPacketList) PushFront(e *pingPacket) {
-	pingPacketElementMapper{}.linkerFor(e).SetNext(l.head)
-	pingPacketElementMapper{}.linkerFor(e).SetPrev(nil)
+func (l *icmpPacketList) PushFront(e *icmpPacket) {
+	icmpPacketElementMapper{}.linkerFor(e).SetNext(l.head)
+	icmpPacketElementMapper{}.linkerFor(e).SetPrev(nil)
 
 	if l.head != nil {
-		pingPacketElementMapper{}.linkerFor(l.head).SetPrev(e)
+		icmpPacketElementMapper{}.linkerFor(l.head).SetPrev(e)
 	} else {
 		l.tail = e
 	}
@@ -67,12 +67,12 @@ func (l *pingPacketList) PushFront(e *pingPacket) {
 }
 
 // PushBack inserts the element e at the back of list l.
-func (l *pingPacketList) PushBack(e *pingPacket) {
-	pingPacketElementMapper{}.linkerFor(e).SetNext(nil)
-	pingPacketElementMapper{}.linkerFor(e).SetPrev(l.tail)
+func (l *icmpPacketList) PushBack(e *icmpPacket) {
+	icmpPacketElementMapper{}.linkerFor(e).SetNext(nil)
+	icmpPacketElementMapper{}.linkerFor(e).SetPrev(l.tail)
 
 	if l.tail != nil {
-		pingPacketElementMapper{}.linkerFor(l.tail).SetNext(e)
+		icmpPacketElementMapper{}.linkerFor(l.tail).SetNext(e)
 	} else {
 		l.head = e
 	}
@@ -81,13 +81,13 @@ func (l *pingPacketList) PushBack(e *pingPacket) {
 }
 
 // PushBackList inserts list m at the end of list l, emptying m.
-func (l *pingPacketList) PushBackList(m *pingPacketList) {
+func (l *icmpPacketList) PushBackList(m *icmpPacketList) {
 	if l.head == nil {
 		l.head = m.head
 		l.tail = m.tail
 	} else if m.head != nil {
-		pingPacketElementMapper{}.linkerFor(l.tail).SetNext(m.head)
-		pingPacketElementMapper{}.linkerFor(m.head).SetPrev(l.tail)
+		icmpPacketElementMapper{}.linkerFor(l.tail).SetNext(m.head)
+		icmpPacketElementMapper{}.linkerFor(m.head).SetPrev(l.tail)
 
 		l.tail = m.tail
 	}
@@ -97,46 +97,46 @@ func (l *pingPacketList) PushBackList(m *pingPacketList) {
 }
 
 // InsertAfter inserts e after b.
-func (l *pingPacketList) InsertAfter(b, e *pingPacket) {
-	a := pingPacketElementMapper{}.linkerFor(b).Next()
-	pingPacketElementMapper{}.linkerFor(e).SetNext(a)
-	pingPacketElementMapper{}.linkerFor(e).SetPrev(b)
-	pingPacketElementMapper{}.linkerFor(b).SetNext(e)
+func (l *icmpPacketList) InsertAfter(b, e *icmpPacket) {
+	a := icmpPacketElementMapper{}.linkerFor(b).Next()
+	icmpPacketElementMapper{}.linkerFor(e).SetNext(a)
+	icmpPacketElementMapper{}.linkerFor(e).SetPrev(b)
+	icmpPacketElementMapper{}.linkerFor(b).SetNext(e)
 
 	if a != nil {
-		pingPacketElementMapper{}.linkerFor(a).SetPrev(e)
+		icmpPacketElementMapper{}.linkerFor(a).SetPrev(e)
 	} else {
 		l.tail = e
 	}
 }
 
 // InsertBefore inserts e before a.
-func (l *pingPacketList) InsertBefore(a, e *pingPacket) {
-	b := pingPacketElementMapper{}.linkerFor(a).Prev()
-	pingPacketElementMapper{}.linkerFor(e).SetNext(a)
-	pingPacketElementMapper{}.linkerFor(e).SetPrev(b)
-	pingPacketElementMapper{}.linkerFor(a).SetPrev(e)
+func (l *icmpPacketList) InsertBefore(a, e *icmpPacket) {
+	b := icmpPacketElementMapper{}.linkerFor(a).Prev()
+	icmpPacketElementMapper{}.linkerFor(e).SetNext(a)
+	icmpPacketElementMapper{}.linkerFor(e).SetPrev(b)
+	icmpPacketElementMapper{}.linkerFor(a).SetPrev(e)
 
 	if b != nil {
-		pingPacketElementMapper{}.linkerFor(b).SetNext(e)
+		icmpPacketElementMapper{}.linkerFor(b).SetNext(e)
 	} else {
 		l.head = e
 	}
 }
 
 // Remove removes e from l.
-func (l *pingPacketList) Remove(e *pingPacket) {
-	prev := pingPacketElementMapper{}.linkerFor(e).Prev()
-	next := pingPacketElementMapper{}.linkerFor(e).Next()
+func (l *icmpPacketList) Remove(e *icmpPacket) {
+	prev := icmpPacketElementMapper{}.linkerFor(e).Prev()
+	next := icmpPacketElementMapper{}.linkerFor(e).Next()
 
 	if prev != nil {
-		pingPacketElementMapper{}.linkerFor(prev).SetNext(next)
+		icmpPacketElementMapper{}.linkerFor(prev).SetNext(next)
 	} else {
 		l.head = next
 	}
 
 	if next != nil {
-		pingPacketElementMapper{}.linkerFor(next).SetPrev(prev)
+		icmpPacketElementMapper{}.linkerFor(next).SetPrev(prev)
 	} else {
 		l.tail = prev
 	}
@@ -147,27 +147,27 @@ func (l *pingPacketList) Remove(e *pingPacket) {
 // methods needed by List.
 //
 // +stateify savable
-type pingPacketEntry struct {
-	next *pingPacket
-	prev *pingPacket
+type icmpPacketEntry struct {
+	next *icmpPacket
+	prev *icmpPacket
 }
 
 // Next returns the entry that follows e in the list.
-func (e *pingPacketEntry) Next() *pingPacket {
+func (e *icmpPacketEntry) Next() *icmpPacket {
 	return e.next
 }
 
 // Prev returns the entry that precedes e in the list.
-func (e *pingPacketEntry) Prev() *pingPacket {
+func (e *icmpPacketEntry) Prev() *icmpPacket {
 	return e.prev
 }
 
 // SetNext assigns 'entry' as the entry that follows e in the list.
-func (e *pingPacketEntry) SetNext(elem *pingPacket) {
+func (e *icmpPacketEntry) SetNext(elem *icmpPacket) {
 	e.next = elem
 }
 
 // SetPrev assigns 'entry' as the entry that precedes e in the list.
-func (e *pingPacketEntry) SetPrev(elem *pingPacket) {
+func (e *icmpPacketEntry) SetPrev(elem *icmpPacket) {
 	e.prev = elem
 }
