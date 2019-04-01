@@ -59,8 +59,6 @@ package waiter
 
 import (
 	"sync"
-
-	"github.com/google/netstack/ilist"
 )
 
 // EventMask represents io events as used in the poll() syscall.
@@ -127,7 +125,7 @@ type Entry struct {
 
 	// The following fields are protected by the queue lock.
 	mask EventMask
-	ilist.Entry
+	waiterEntry
 }
 
 type channelCallback struct{}
@@ -162,7 +160,7 @@ func NewChannelEntry(c chan struct{}) (Entry, chan struct{}) {
 //
 // +stateify savable
 type Queue struct {
-	list ilist.List
+	list waiterList
 	mu   sync.RWMutex
 }
 
@@ -186,8 +184,7 @@ func (q *Queue) EventUnregister(e *Entry) {
 // in common with the notification mask.
 func (q *Queue) Notify(mask EventMask) {
 	q.mu.RLock()
-	for it := q.list.Front(); it != nil; it = it.Next() {
-		e := it.(*Entry)
+	for e := q.list.Front(); e != nil; e = e.Next() {
 		if mask&e.mask != 0 {
 			e.Callback.Callback(e)
 		}
@@ -201,8 +198,7 @@ func (q *Queue) Events() EventMask {
 	ret := EventMask(0)
 
 	q.mu.RLock()
-	for it := q.list.Front(); it != nil; it = it.Next() {
-		e := it.(*Entry)
+	for e := q.list.Front(); e != nil; e = e.Next() {
 		ret |= e.mask
 	}
 	q.mu.RUnlock()
