@@ -30,6 +30,7 @@ import (
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/stack"
+	"github.com/google/netstack/tcpip/transport/raw"
 	"github.com/google/netstack/waiter"
 )
 
@@ -73,7 +74,7 @@ func (p *protocol) NewEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtoco
 	if netProto != p.netProto() {
 		return nil, tcpip.ErrUnknownProtocol
 	}
-	return newEndpoint(stack, netProto, p.number, waiterQueue, false)
+	return newEndpoint(stack, netProto, p.number, waiterQueue)
 }
 
 // NewRawEndpoint creates a new raw icmp endpoint. It implements
@@ -82,7 +83,7 @@ func (p *protocol) NewRawEndpoint(stack *stack.Stack, netProto tcpip.NetworkProt
 	if netProto != p.netProto() {
 		return nil, tcpip.ErrUnknownProtocol
 	}
-	return newEndpoint(stack, netProto, p.number, waiterQueue, true)
+	return raw.NewEndpoint(stack, netProto, p.number, waiterQueue)
 }
 
 // MinimumPacketSize returns the minimum valid icmp packet size.
