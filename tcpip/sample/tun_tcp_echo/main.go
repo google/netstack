@@ -161,9 +161,9 @@ func main() {
 
 	// Create TCP endpoint, bind it, then start listening.
 	var wq waiter.Queue
-	ep, e := s.NewEndpoint(tcp.ProtocolNumber, proto, &wq)
+	ep, err := s.NewEndpoint(tcp.ProtocolNumber, proto, &wq)
 	if err != nil {
-		log.Fatal(e)
+		log.Fatal(err)
 	}
 
 	defer ep.Close()
