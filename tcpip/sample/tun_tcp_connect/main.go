@@ -161,9 +161,9 @@ func main() {
 
 	// Create TCP endpoint.
 	var wq waiter.Queue
-	ep, e := s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &wq)
+	ep, err := s.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &wq)
 	if err != nil {
-		log.Fatal(e)
+		log.Fatal(err)
 	}
 
 	// Bind if a port is specified.
