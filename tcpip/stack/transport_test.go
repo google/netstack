@@ -1,4 +1,4 @@
-// Copyright 2018 Google LLC
+// Copyright 2018 The gVisor Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -453,7 +453,7 @@ func TestTransportForwarding(t *testing.T) {
 	s := stack.New([]string{"fakeNet"}, []string{"fakeTrans"}, stack.Options{})
 	s.SetForwarding(true)
 
-	// TODO: Change this to a channel NIC.
+	// TODO(b/123449044): Change this to a channel NIC.
 	id1 := loopback.New()
 	if err := s.CreateNIC(1, id1); err != nil {
 		t.Fatalf("CreateNIC #1 failed: %v", err)

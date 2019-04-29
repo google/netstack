@@ -1,4 +1,4 @@
-// Copyright 2018 Google LLC
+// Copyright 2018 The gVisor Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -476,7 +476,7 @@ func (s *Stack) Stats() tcpip.Stats {
 
 // SetForwarding enables or disables the packet forwarding between NICs.
 func (s *Stack) SetForwarding(enable bool) {
-	// TODO: Expose via /proc/sys/net/ipv4/ip_forward.
+	// TODO(igudger, bgeffon): Expose via /proc/sys/net/ipv4/ip_forward.
 	s.mu.Lock()
 	s.forwarding = enable
 	s.mu.Unlock()
@@ -484,7 +484,7 @@ func (s *Stack) SetForwarding(enable bool) {
 
 // Forwarding returns if the packet forwarding between NICs is enabled.
 func (s *Stack) Forwarding() bool {
-	// TODO: Expose via /proc/sys/net/ipv4/ip_forward.
+	// TODO(igudger, bgeffon): Expose via /proc/sys/net/ipv4/ip_forward.
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.forwarding
