@@ -2381,7 +2381,7 @@ func TestFinWithPartialAck(t *testing.T) {
 }
 
 func DisabledTestExponentialIncreaseDuringSlowStart(t *testing.T) {
-	maxPayload := 10
+	maxPayload := 32
 	c := context.New(t, uint32(header.TCPMinimumSize+header.IPv4MinimumSize+maxPayload))
 	defer c.Cleanup()
 
@@ -2423,7 +2423,7 @@ func DisabledTestExponentialIncreaseDuringSlowStart(t *testing.T) {
 }
 
 func DisabledTestCongestionAvoidance(t *testing.T) {
-	maxPayload := 10
+	maxPayload := 32
 	c := context.New(t, uint32(header.TCPMinimumSize+header.IPv4MinimumSize+maxPayload))
 	defer c.Cleanup()
 
@@ -2525,7 +2525,7 @@ func cubicCwnd(origCwnd int, wMax int, congEventTime time.Time, sRTT time.Durati
 }
 
 func TestCubicCongestionAvoidance(t *testing.T) {
-	maxPayload := 10
+	maxPayload := 32
 	c := context.New(t, uint32(header.TCPMinimumSize+header.IPv4MinimumSize+maxPayload))
 	defer c.Cleanup()
 
@@ -2636,7 +2636,7 @@ func TestCubicCongestionAvoidance(t *testing.T) {
 }
 
 func DisabledTestFastRecovery(t *testing.T) {
-	maxPayload := 10
+	maxPayload := 32
 	c := context.New(t, uint32(header.TCPMinimumSize+header.IPv4MinimumSize+maxPayload))
 	defer c.Cleanup()
 
@@ -2788,7 +2788,7 @@ func DisabledTestFastRecovery(t *testing.T) {
 }
 
 func DisabledTestRetransmit(t *testing.T) {
-	maxPayload := 10
+	maxPayload := 32
 	c := context.New(t, uint32(header.TCPMinimumSize+header.IPv4MinimumSize+maxPayload))
 	defer c.Cleanup()
 
