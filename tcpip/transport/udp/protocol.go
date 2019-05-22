@@ -25,6 +25,7 @@ import (
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/stack"
+	"github.com/google/netstack/tcpip/transport/raw"
 	"github.com/google/netstack/waiter"
 )
 
@@ -48,10 +49,10 @@ func (*protocol) NewEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolN
 	return newEndpoint(stack, netProto, waiterQueue), nil
 }
 
-// NewRawEndpoint creates a new raw UDP endpoint. Raw UDP sockets are currently
-// unsupported. It implements stack.TransportProtocol.NewRawEndpoint.
+// NewRawEndpoint creates a new raw UDP endpoint. It implements
+// stack.TransportProtocol.NewRawEndpoint.
 func (p *protocol) NewRawEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, waiterQueue *waiter.Queue) (tcpip.Endpoint, *tcpip.Error) {
-	return nil, tcpip.ErrUnknownProtocol
+	return raw.NewEndpoint(stack, netProto, header.UDPProtocolNumber, waiterQueue)
 }
 
 // MinimumPacketSize returns the minimum valid udp packet size.
