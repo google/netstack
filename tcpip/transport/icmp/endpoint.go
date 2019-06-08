@@ -86,7 +86,7 @@ type endpoint struct {
 	route    stack.Route
 }
 
-func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, transProto tcpip.TransportProtocolNumber, waiterQueue *waiter.Queue) (tcpip.Endpoint, *tcpip.Error) {
+func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, transProto tcpip.TransportProtocolNumber, waiterQueue *waiter.Queue) (*endpoint, *tcpip.Error) {
 	return &endpoint{
 		stack:         stack,
 		netProto:      netProto,
@@ -365,7 +365,7 @@ func (e *endpoint) send4(r *stack.Route, data buffer.View) *tcpip.Error {
 	data = data[header.ICMPv4EchoMinimumSize:]
 
 	// Linux performs these basic checks.
-	if icmpv4.Type() != header.ICMPv4Echo || icmpv4.Code() != 0 {
+	if (icmpv4.Type() != header.ICMPv4Echo && icmpv4.Type() != header.ICMPv4EchoReply) || icmpv4.Code() != 0 {
 		return tcpip.ErrInvalidEndpointState
 	}
 
@@ -658,11 +658,13 @@ func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv
 	// Only accept echo replies.
 	switch e.netProto {
 	case header.IPv4ProtocolNumber:
-		h := header.ICMPv4(vv.First())
-		if h.Type() != header.ICMPv4EchoReply {
-			e.stack.Stats().DroppedPackets.Increment()
-			return
-		}
+	//	h := header.ICMPv4(vv.First())
+	/*	if h.Type() != header.ICMPv4EchoReply && h.Type() != header.ICMPv4Echo {
+		typea := h.Type()
+		log.Printf("type:%v", string(typea))
+		e.stack.Stats().DroppedPackets.Increment()
+		return
+	}*/
 	case header.IPv6ProtocolNumber:
 		h := header.ICMPv6(vv.First())
 		if h.Type() != header.ICMPv6EchoReply {
@@ -707,10 +709,4 @@ func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv
 
 // HandleControlPacket implements stack.TransportEndpoint.HandleControlPacket.
 func (e *endpoint) HandleControlPacket(id stack.TransportEndpointID, typ stack.ControlType, extra uint32, vv buffer.VectorisedView) {
-}
-
-// State implements tcpip.Endpoint.State. The ICMP endpoint currently doesn't
-// expose internal socket state.
-func (e *endpoint) State() uint32 {
-	return 0
 }
