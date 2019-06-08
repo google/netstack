@@ -660,7 +660,6 @@ func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv
 	case header.IPv4ProtocolNumber:
 		h := header.ICMPv4(vv.First())
 		if h.Type() != header.ICMPv4EchoReply && h.Type() != header.ICMPv4Echo {
-			typea := h.Type()
 			e.stack.Stats().DroppedPackets.Increment()
 			return
 		}
