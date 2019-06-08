@@ -658,13 +658,12 @@ func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv
 	// Only accept echo replies.
 	switch e.netProto {
 	case header.IPv4ProtocolNumber:
-	//	h := header.ICMPv4(vv.First())
-	/*	if h.Type() != header.ICMPv4EchoReply && h.Type() != header.ICMPv4Echo {
-		typea := h.Type()
-		log.Printf("type:%v", string(typea))
-		e.stack.Stats().DroppedPackets.Increment()
-		return
-	}*/
+		h := header.ICMPv4(vv.First())
+		if h.Type() != header.ICMPv4EchoReply && h.Type() != header.ICMPv4Echo {
+			typea := h.Type()
+			e.stack.Stats().DroppedPackets.Increment()
+			return
+		}
 	case header.IPv6ProtocolNumber:
 		h := header.ICMPv6(vv.First())
 		if h.Type() != header.ICMPv6EchoReply {
