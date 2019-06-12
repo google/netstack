@@ -23,6 +23,7 @@ import (
 // control algorithm state.
 //
 // See: https://tools.ietf.org/html/rfc8312.
+// +stateify savable
 type cubicState struct {
 	// wLastMax is the previous wMax value.
 	wLastMax float64
