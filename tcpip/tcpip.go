@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/google/netstack/tcpip/buffer"
+	"github.com/google/netstack/tcpip/iptables"
 	"github.com/google/netstack/waiter"
 )
 
@@ -403,6 +404,9 @@ type Endpoint interface {
 	//
 	// NOTE: This method is a no-op for sockets other than TCP.
 	ModerateRecvBuf(copied int)
+
+	// IPTables returns the iptables for this endpoint's stack.
+	IPTables() (iptables.IPTables, error)
 }
 
 // WriteOptions contains options for Endpoint.Write.

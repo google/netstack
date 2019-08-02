@@ -27,6 +27,7 @@ import (
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
+	"github.com/google/netstack/tcpip/iptables"
 	"github.com/google/netstack/tcpip/seqnum"
 	"github.com/google/netstack/tcpip/stack"
 	"github.com/google/netstack/tmutex"
@@ -681,6 +682,11 @@ func (e *endpoint) ModerateRecvBuf(copied int) {
 	e.rcvAutoParams.measureTime = now
 	e.rcvAutoParams.copied = 0
 	e.rcvListMu.Unlock()
+}
+
+// IPTables implements tcpip.Endpoint.IPTables.
+func (e *endpoint) IPTables() (iptables.IPTables, error) {
+	return e.stack.IPTables(), nil
 }
 
 // Read reads data from the endpoint.

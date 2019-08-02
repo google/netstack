@@ -21,6 +21,7 @@ import (
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
+	"github.com/google/netstack/tcpip/iptables"
 	"github.com/google/netstack/tcpip/stack"
 	"github.com/google/netstack/waiter"
 )
@@ -171,6 +172,11 @@ func (e *endpoint) Close() {
 
 // ModerateRecvBuf implements tcpip.Endpoint.ModerateRecvBuf.
 func (e *endpoint) ModerateRecvBuf(copied int) {}
+
+// IPTables implements tcpip.Endpoint.IPTables.
+func (e *endpoint) IPTables() (iptables.IPTables, error) {
+	return e.stack.IPTables(), nil
+}
 
 // Read reads data from the endpoint. This method does not block if
 // there is no data pending.

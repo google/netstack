@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
+	"github.com/google/netstack/tcpip/iptables"
 	"github.com/google/netstack/tcpip/link/channel"
 	"github.com/google/netstack/tcpip/link/loopback"
 	"github.com/google/netstack/tcpip/stack"
@@ -198,6 +199,10 @@ func (f *fakeTransportEndpoint) State() uint32 {
 }
 
 func (f *fakeTransportEndpoint) ModerateRecvBuf(copied int) {
+}
+
+func (f *fakeTransportEndpoint) IPTables() (iptables.IPTables, error) {
+	return iptables.IPTables{}, nil
 }
 
 type fakeTransportGoodOption bool

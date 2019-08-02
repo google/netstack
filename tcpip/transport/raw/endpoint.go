@@ -32,6 +32,7 @@ import (
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
 	"github.com/google/netstack/tcpip/header"
+	"github.com/google/netstack/tcpip/iptables"
 	"github.com/google/netstack/tcpip/stack"
 	"github.com/google/netstack/waiter"
 )
@@ -167,6 +168,11 @@ func (ep *endpoint) Close() {
 
 // ModerateRecvBuf implements tcpip.Endpoint.ModerateRecvBuf.
 func (ep *endpoint) ModerateRecvBuf(copied int) {}
+
+// IPTables implements tcpip.Endpoint.IPTables.
+func (ep *endpoint) IPTables() (iptables.IPTables, error) {
+	return ep.stack.IPTables(), nil
+}
 
 // Read implements tcpip.Endpoint.Read.
 func (ep *endpoint) Read(addr *tcpip.FullAddress) (buffer.View, tcpip.ControlMessages, *tcpip.Error) {
@@ -484,7 +490,7 @@ func (ep *endpoint) Readiness(mask waiter.EventMask) waiter.EventMask {
 
 // SetSockOpt implements tcpip.Endpoint.SetSockOpt.
 func (ep *endpoint) SetSockOpt(opt interface{}) *tcpip.Error {
-	return nil
+	return tcpip.ErrUnknownProtocolOption
 }
 
 // GetSockOptInt implements tcpip.Endpoint.GetSockOptInt.
