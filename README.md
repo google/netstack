@@ -28,6 +28,13 @@ tun_tcp_echo <device-name> <ipv4-address> <port>
 
 Please see [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
 
+## Issues/Bug Reports
+
+Netstack is primarily developed as part of
+[gVisor](http://www.github.com/google/gvisor) and any issues/bugs should be
+filed against the gVisor repository as this repo is not actively monitored for
+bug reports.
+
 ### Disclaimer
 
 This is not an official Google product (experimental or otherwise), it is just
