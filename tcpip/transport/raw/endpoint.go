@@ -174,31 +174,6 @@ func (ep *endpoint) IPTables() (iptables.IPTables, error) {
 	return ep.stack.IPTables(), nil
 }
 
-// Resume implements tcpip.ResumableEndpoint.Resume.
-func (ep *endpoint) Resume(s *stack.Stack) {
-	ep.stack = s
-
-	// If the endpoint is connected, re-connect.
-	if ep.connected {
-		var err *tcpip.Error
-		ep.route, err = ep.stack.FindRoute(ep.registeredNIC, ep.boundAddr, ep.route.RemoteAddress, ep.netProto, false)
-		if err != nil {
-			panic(*err)
-		}
-	}
-
-	// If the endpoint is bound, re-bind.
-	if ep.bound {
-		if ep.stack.CheckLocalAddress(ep.registeredNIC, ep.netProto, ep.boundAddr) == 0 {
-			panic(tcpip.ErrBadLocalAddress)
-		}
-	}
-
-	if err := ep.stack.RegisterRawTransportEndpoint(ep.registeredNIC, ep.netProto, ep.transProto, ep); err != nil {
-		panic(*err)
-	}
-}
-
 // Read implements tcpip.Endpoint.Read.
 func (ep *endpoint) Read(addr *tcpip.FullAddress) (buffer.View, tcpip.ControlMessages, *tcpip.Error) {
 	if !ep.associated {
@@ -374,15 +349,15 @@ func (ep *endpoint) Peek([][]byte) (int64, tcpip.ControlMessages, *tcpip.Error) 
 	return 0, tcpip.ControlMessages{}, nil
 }
 
+// Disconnect implements tcpip.Endpoint.Disconnect.
+func (*endpoint) Disconnect() *tcpip.Error {
+	return tcpip.ErrNotSupported
+}
+
 // Connect implements tcpip.Endpoint.Connect.
 func (ep *endpoint) Connect(addr tcpip.FullAddress) *tcpip.Error {
 	ep.mu.Lock()
 	defer ep.mu.Unlock()
-
-	if addr.Addr == "" {
-		// AF_UNSPEC isn't supported.
-		return tcpip.ErrAddressFamilyNotSupported
-	}
 
 	if ep.closed {
 		return tcpip.ErrInvalidEndpointState
