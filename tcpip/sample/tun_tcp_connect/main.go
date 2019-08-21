@@ -52,6 +52,7 @@ import (
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
+	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/link/fdbased"
 	"github.com/google/netstack/tcpip/link/rawfile"
 	"github.com/google/netstack/tcpip/link/sniffer"
@@ -152,9 +153,7 @@ func main() {
 	// Add default route.
 	s.SetRouteTable([]tcpip.Route{
 		{
-			Destination: "\x00\x00\x00\x00",
-			Mask:        "\x00\x00\x00\x00",
-			Gateway:     "",
+			Destination: header.IPv4EmptySubnet,
 			NIC:         1,
 		},
 	})

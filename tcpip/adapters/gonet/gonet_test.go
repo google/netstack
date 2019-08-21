@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/google/netstack/tcpip"
+	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/link/loopback"
 	"github.com/google/netstack/tcpip/network/ipv4"
 	"github.com/google/netstack/tcpip/network/ipv6"
@@ -69,17 +70,13 @@ func newLoopbackStack() (*stack.Stack, *tcpip.Error) {
 	s.SetRouteTable([]tcpip.Route{
 		// IPv4
 		{
-			Destination: tcpip.Address(strings.Repeat("\x00", 4)),
-			Mask:        tcpip.AddressMask(strings.Repeat("\x00", 4)),
-			Gateway:     "",
+			Destination: header.IPv4EmptySubnet,
 			NIC:         NICID,
 		},
 
 		// IPv6
 		{
-			Destination: tcpip.Address(strings.Repeat("\x00", 16)),
-			Mask:        tcpip.AddressMask(strings.Repeat("\x00", 16)),
-			Gateway:     "",
+			Destination: header.IPv6EmptySubnet,
 			NIC:         NICID,
 		},
 	})
