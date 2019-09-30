@@ -86,7 +86,7 @@ type endpoint struct {
 	route    stack.Route
 }
 
-func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, transProto tcpip.TransportProtocolNumber, waiterQueue *waiter.Queue) (tcpip.Endpoint, *tcpip.Error) {
+func newEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, transProto tcpip.TransportProtocolNumber, waiterQueue *waiter.Queue) (*endpoint, *tcpip.Error) {
 	return &endpoint{
 		stack:         stack,
 		netProto:      netProto,
@@ -382,7 +382,7 @@ func send4(r *stack.Route, ident uint16, data buffer.View) *tcpip.Error {
 	data = data[header.ICMPv4MinimumSize:]
 
 	// Linux performs these basic checks.
-	if icmpv4.Type() != header.ICMPv4Echo || icmpv4.Code() != 0 {
+	if (icmpv4.Type() != header.ICMPv4Echo && icmpv4.Type() != header.ICMPv4EchoReply) || icmpv4.Code() != 0 {
 		return tcpip.ErrInvalidEndpointState
 	}
 
@@ -680,7 +680,7 @@ func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv
 	switch e.netProto {
 	case header.IPv4ProtocolNumber:
 		h := header.ICMPv4(vv.First())
-		if h.Type() != header.ICMPv4EchoReply {
+		if h.Type() != header.ICMPv4EchoReply && h.Type() != header.ICMPv4Echo {
 			e.stack.Stats().DroppedPackets.Increment()
 			return
 		}
