@@ -17,13 +17,19 @@ package raw
 import (
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/stack"
+	"github.com/google/netstack/tcpip/transport/packet"
 	"github.com/google/netstack/waiter"
 )
 
-// EndpointFactory implements stack.UnassociatedEndpointFactory.
+// EndpointFactory implements stack.RawFactory.
 type EndpointFactory struct{}
 
-// NewUnassociatedRawEndpoint implements stack.UnassociatedEndpointFactory.
-func (EndpointFactory) NewUnassociatedRawEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, transProto tcpip.TransportProtocolNumber, waiterQueue *waiter.Queue) (tcpip.Endpoint, *tcpip.Error) {
+// NewUnassociatedEndpoint implements stack.RawFactory.NewUnassociatedEndpoint.
+func (EndpointFactory) NewUnassociatedEndpoint(stack *stack.Stack, netProto tcpip.NetworkProtocolNumber, transProto tcpip.TransportProtocolNumber, waiterQueue *waiter.Queue) (tcpip.Endpoint, *tcpip.Error) {
 	return newEndpoint(stack, netProto, transProto, waiterQueue, false /* associated */)
+}
+
+// NewPacketEndpoint implements stack.RawFactory.NewPacketEndpoint.
+func (EndpointFactory) NewPacketEndpoint(stack *stack.Stack, cooked bool, netProto tcpip.NetworkProtocolNumber, waiterQueue *waiter.Queue) (tcpip.Endpoint, *tcpip.Error) {
+	return packet.NewEndpoint(stack, cooked, netProto, waiterQueue)
 }
